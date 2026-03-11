@@ -506,10 +506,7 @@ async fn test_edge_case_numeric_extremes() {
     let table = ws.get_table("nums").unwrap();
     assert_eq!(table.get_value("r1", "value"), Some(&json!(0)));
     assert_eq!(table.get_value("r2", "value"), Some(&json!(-999999)));
-    assert_eq!(
-        table.get_value("r3", "value"),
-        Some(&json!(9.87654321))
-    );
+    assert_eq!(table.get_value("r3", "value"), Some(&json!(9.87654321)));
     assert_eq!(
         table.get_value("r4", "value"),
         Some(&json!(9007199254740991_i64))
