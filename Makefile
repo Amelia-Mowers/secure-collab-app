@@ -20,6 +20,8 @@ build: ## Build all crates
 wasm: ## Build WASM modules
 	@echo "Building WASM modules..."
 	cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm
+	@# Restore hand-written loader.ts if wasm-pack overwrote it
+	@git checkout -- ui/src/wasm/loader.ts 2>/dev/null || true
 	@echo "✓ WASM build complete"
 
 ui: wasm ## Build the UI (requires WASM)

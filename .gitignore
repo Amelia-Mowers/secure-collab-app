@@ -3,7 +3,7 @@
 **/*.rs.bk
 *.pdb
 
-# WASM
+# WASM (wasm-pack output — loader.ts is hand-written and force-tracked)
 /pkg
 /wasm-pack.log
 ui/src/wasm/
