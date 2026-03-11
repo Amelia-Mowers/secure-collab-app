@@ -1,0 +1,46 @@
+[package]
+name = "tables-over-matrix"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "LWW-based collaborative tables over Matrix protocol with E2E encryption"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Matrix SDK - only for native builds (not WASM)
+matrix-sdk = { workspace = true, optional = true }
+ruma = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+
+# WASM support
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+getrandom = { workspace = true }
+tracing-wasm = { workspace = true, optional = true }
+
+# Additional dependencies
+indexmap = { version = "2.1", features = ["serde"] }
+url = "2.5"
+
+[dev-dependencies]
+proptest = { workspace = true }
+quickcheck = { workspace = true }
+tokio-test = "0.4"
+
+[features]
+default = ["matrix"]
+matrix = ["matrix-sdk", "ruma", "tokio", "futures"]
+wasm = ["wasm-bindgen", "wasm-bindgen-futures", "tracing-wasm"]

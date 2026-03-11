@@ -1,0 +1,182 @@
+//! Cell type and Last-Write-Wins resolution logic.
+
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
+
+/// A unique identifier for a cell in the table system.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CellId {
+    pub table_id: String,
+    pub row_id: String,
+    pub column_id: String,
+}
+
+impl CellId {
+    pub fn new(table_id: impl Into<String>, row_id: impl Into<String>, column_id: impl Into<String>) -> Self {
+        Self {
+            table_id: table_id.into(),
+            row_id: row_id.into(),
+            column_id: column_id.into(),
+        }
+    }
+}
+
+/// A cell value with LWW timestamp for conflict resolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cell {
+    pub id: CellId,
+    pub value: serde_json::Value,
+    pub timestamp: u64,
+    /// Server timestamp for tie-breaking when logical timestamps match
+    pub server_timestamp: Option<u64>,
+}
+
+impl Cell {
+    pub fn new(id: CellId, value: serde_json::Value, timestamp: u64) -> Self {
+        Self {
+            id,
+            value,
+            timestamp,
+            server_timestamp: None,
+        }
+    }
+
+    pub fn with_server_timestamp(mut self, server_timestamp: u64) -> Self {
+        self.server_timestamp = Some(server_timestamp);
+        self
+    }
+
+    /// Determines which cell wins in a Last-Write-Wins conflict.
+    /// Returns the cell with the higher timestamp. If timestamps are equal,
+    /// uses server timestamp as a tie-breaker.
+    pub fn resolve_lww<'a>(&'a self, other: &'a Cell) -> &'a Cell {
+        match self.timestamp.cmp(&other.timestamp) {
+            Ordering::Greater => self,
+            Ordering::Less => other,
+            Ordering::Equal => {
+                // Tie-breaker: use server timestamp if available
+                match (self.server_timestamp, other.server_timestamp) {
+                    (Some(st1), Some(st2)) => {
+                        if st1 >= st2 {
+                            self
+                        } else {
+                            other
+                        }
+                    }
+                    (Some(_), None) => self,
+                    (None, Some(_)) => other,
+                    (None, None) => self, // Arbitrary but deterministic
+                }
+            }
+        }
+    }
+
+    /// Checks if this cell should win over another cell based on LWW.
+    pub fn wins_over(&self, other: &Cell) -> bool {
+        std::ptr::eq(self.resolve_lww(other), self)
+    }
+}
+
+/// A cell update event that can be sent over Matrix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CellUpdate {
+    pub table_id: String,
+    pub row_id: String,
+    pub column_id: String,
+    pub value: serde_json::Value,
+    pub timestamp: u64,
+}
+
+impl CellUpdate {
+    pub fn new(
+        table_id: impl Into<String>,
+        row_id: impl Into<String>,
+        column_id: impl Into<String>,
+        value: serde_json::Value,
+        timestamp: u64,
+    ) -> Self {
+        Self {
+            table_id: table_id.into(),
+            row_id: row_id.into(),
+            column_id: column_id.into(),
+            value,
+            timestamp,
+        }
+    }
+
+    pub fn to_cell(&self) -> Cell {
+        Cell::new(
+            CellId::new(&self.table_id, &self.row_id, &self.column_id),
+            self.value.clone(),
+            self.timestamp,
+        )
+    }
+
+    /// Convert to Cell by consuming self (avoids clones)
+    pub fn into_cell(self) -> Cell {
+        Cell::new(
+            CellId::new(self.table_id, self.row_id, self.column_id),
+            self.value,
+            self.timestamp,
+        )
+    }
+
+    pub fn cell_id(&self) -> CellId {
+        CellId::new(&self.table_id, &self.row_id, &self.column_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_lww_resolution_newer_wins() {
+        let cell1 = Cell::new(
+            CellId::new("table1", "row1", "col1"),
+            json!("old value"),
+            100,
+        );
+        let cell2 = Cell::new(
+            CellId::new("table1", "row1", "col1"),
+            json!("new value"),
+            200,
+        );
+
+        assert!(cell2.wins_over(&cell1));
+        assert!(!cell1.wins_over(&cell2));
+    }
+
+    #[test]
+    fn test_lww_resolution_server_timestamp_tiebreaker() {
+        let cell1 = Cell::new(
+            CellId::new("table1", "row1", "col1"),
+            json!("value1"),
+            100,
+        )
+        .with_server_timestamp(1000);
+
+        let cell2 = Cell::new(
+            CellId::new("table1", "row1", "col1"),
+            json!("value2"),
+            100,
+        )
+        .with_server_timestamp(2000);
+
+        assert!(cell2.wins_over(&cell1));
+        assert!(!cell1.wins_over(&cell2));
+    }
+
+    #[test]
+    fn test_cell_update_conversion() {
+        let update = CellUpdate::new("table1", "row1", "col1", json!("test"), 123);
+        let cell = update.to_cell();
+
+        assert_eq!(cell.id.table_id, "table1");
+        assert_eq!(cell.id.row_id, "row1");
+        assert_eq!(cell.id.column_id, "col1");
+        assert_eq!(cell.value, json!("test"));
+        assert_eq!(cell.timestamp, 123);
+    }
+}

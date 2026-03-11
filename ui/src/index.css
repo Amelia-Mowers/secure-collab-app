@@ -1,0 +1,13 @@
+/* index.css — minimal overrides; main design system lives in styles/theme.css */
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  display: flex;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}

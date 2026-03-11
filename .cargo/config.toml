@@ -1,0 +1,5 @@
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "link-arg=--initial-memory=33554432",   # 32MB initial memory (browser safe)
+  "-C", "link-arg=--max-memory=134217728",      # 128MB max memory
+]

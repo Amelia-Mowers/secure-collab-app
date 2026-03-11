@@ -1,0 +1,107 @@
+/* Field renderer — horizontal label + value layout to match mockup */
+.field-renderer {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 32px;
+  padding: 4px 0;
+}
+
+.field-renderer.focused .field-label {
+  color: var(--text-secondary);
+}
+
+.field-label {
+  width: 120px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 450;
+  color: var(--text-tertiary);
+  padding-top: 7px;
+  line-height: 1.4;
+}
+
+.required-indicator {
+  color: var(--red);
+  margin-left: 2px;
+}
+
+/* ── All inputs share these base styles ──────────────────────── */
+.field-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text);
+  font-family: inherit;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.field-input:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.field-input:focus {
+  outline: none;
+  background: var(--bg-elevated);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.field-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ── Type-specific overrides ─────────────────────────────────── */
+.field-number,
+.field-date {
+  max-width: 180px;
+}
+
+.field-select {
+  max-width: 260px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.field-select:hover {
+  background: var(--bg-hover);
+}
+
+.field-reference {
+  font-family: 'JetBrains Mono', 'Monaco', monospace;
+  font-size: 12px;
+}
+
+/* Checkbox row */
+.field-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  padding-top: 4px;
+}
+
+.field-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  border-radius: 4px;
+}
+
+/* JSON / document textarea */
+.field-json,
+textarea.field-input {
+  font-family: 'JetBrains Mono', 'Monaco', monospace;
+  font-size: 12px;
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.6;
+}

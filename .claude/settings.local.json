@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(nix flake update:*)",
+      "Bash(git add:*)",
+      "Bash(cargo build:*)",
+      "Bash(nix develop --command cargo build:*)",
+      "Bash(nix develop:*)",
+      "Bash(make dev:*)",
+      "Bash(make test:*)",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(cargo test:*)",
+      "Bash(npm install:*)",
+      "Bash(make:*)",
+      "Bash(npm run test:*)",
+      "Bash(tree:*)",
+      "Bash(npx vitest run:*)",
+      "Bash(md5sum:*)",
+      "Bash(git stash:*)",
+      "Bash(cat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

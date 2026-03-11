@@ -1,0 +1,133 @@
+.markdown-editor {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+
+.markdown-toolbar {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-button {
+  padding: 3px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.toolbar-button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.toolbar-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.markdown-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 14px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', 'Monaco', monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  resize: vertical;
+  outline: none;
+}
+
+.markdown-textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.markdown-preview {
+  padding: 16px;
+  min-height: 200px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.markdown-preview h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+}
+
+.markdown-preview h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+  color: var(--accent);
+}
+
+.markdown-preview h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 16px 0 6px;
+  color: var(--text);
+}
+
+.markdown-preview p {
+  margin-bottom: 12px;
+}
+
+.markdown-preview code {
+  background: var(--amber-muted);
+  color: var(--amber);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+}
+
+.markdown-preview strong {
+  font-weight: 600;
+  color: var(--purple);
+  font-style: italic;
+}
+
+.markdown-preview em {
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.markdown-preview a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.markdown-preview a:hover {
+  text-decoration: underline;
+}
+
+.markdown-hint {
+  background: var(--bg-surface);
+  padding: 5px 14px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-subtle);
+}

@@ -1,0 +1,263 @@
+/* ============================================================
+   Design tokens — derived from the DM Sans / JetBrains Mono
+   mockup.  Both light and dark palettes are defined here so
+   every component can reference CSS variables instead of
+   hard-coded hex values.
+   ============================================================ */
+
+/* ---- Dark theme (default) --------------------------------- */
+:root,
+[data-theme="dark"] {
+  /* Backgrounds */
+  --bg:           #0a0a0b;
+  --bg-surface:   #111113;
+  --bg-elevated:  #18181b;
+  --bg-hover:     #1e1e22;
+  --bg-active:    #252529;
+
+  /* Borders */
+  --border:        #27272a;
+  --border-subtle: #1c1c1f;
+
+  /* Text */
+  --text:           #ececef;
+  --text-secondary: #8b8b92;
+  --text-tertiary:  #55555c;
+
+  /* Accent (blue) */
+  --accent:       #6d9fff;
+  --accent-muted: rgba(109,159,255,0.12);
+  --accent-hover: #85b0ff;
+
+  /* Semantic colours */
+  --green:        #4ade80;
+  --green-muted:  rgba(74,222,128,0.12);
+  --amber:        #f59e0b;
+  --amber-muted:  rgba(245,158,11,0.12);
+  --red:          #f87171;
+  --red-muted:    rgba(248,113,113,0.12);
+  --purple:       #a78bfa;
+  --purple-muted: rgba(167,139,250,0.12);
+  --pink:         #f472b6;
+  --pink-muted:   rgba(244,114,182,0.12);
+
+  /* Shadows */
+  --shadow:    0 1px 3px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+
+  /* Legacy aliases (keeps old components from breaking) */
+  --bg-primary:   var(--bg);
+  --bg-secondary: var(--bg-surface);
+  --bg-tertiary:  var(--bg-elevated);
+  --text-primary: var(--text);
+  --border-color: var(--border);
+  --border-hover: var(--border-subtle);
+  --accent-primary: var(--accent);
+  --accent-hover-color: var(--accent-hover);
+  --accent-text:  #ffffff;
+  --success:      var(--green);
+  --warning:      var(--amber);
+  --error:        var(--red);
+  --shadow-sm:    var(--shadow);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg-var: var(--shadow-lg);
+}
+
+/* ---- Light theme ------------------------------------------ */
+[data-theme="light"] {
+  --bg:           #f8f8fa;
+  --bg-surface:   #ffffff;
+  --bg-elevated:  #ffffff;
+  --bg-hover:     #f0f0f3;
+  --bg-active:    #e8e8ec;
+
+  --border:        #e2e2e6;
+  --border-subtle: #ededf0;
+
+  --text:           #111113;
+  --text-secondary: #65656d;
+  --text-tertiary:  #9c9ca5;
+
+  --accent:       #3b7ddd;
+  --accent-muted: rgba(59,125,221,0.08);
+  --accent-hover: #2d6bc4;
+
+  --green:        #16a34a;
+  --green-muted:  rgba(22,163,74,0.08);
+  --amber:        #d97706;
+  --amber-muted:  rgba(217,119,6,0.08);
+  --red:          #dc2626;
+  --red-muted:    rgba(220,38,38,0.08);
+  --purple:       #7c3aed;
+  --purple-muted: rgba(124,58,237,0.08);
+  --pink:         #db2777;
+  --pink-muted:   rgba(219,39,119,0.08);
+
+  --shadow:    0 1px 3px rgba(0,0,0,0.06);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.08);
+
+  --bg-primary:   var(--bg);
+  --bg-secondary: var(--bg-surface);
+  --bg-tertiary:  var(--bg-elevated);
+  --text-primary: var(--text);
+  --border-color: var(--border);
+  --border-hover: var(--border-subtle);
+  --accent-primary: var(--accent);
+  --accent-hover-color: var(--accent-hover);
+  --accent-text:  #ffffff;
+  --success:      var(--green);
+  --warning:      var(--amber);
+  --error:        var(--red);
+  --shadow-sm:    var(--shadow);
+  --shadow-md:    0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg-var: var(--shadow-lg);
+}
+
+/* ============================================================
+   Global reset & base typography
+   ============================================================ */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg);
+  color: var(--text);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* ============================================================
+   Scrollbars
+   ============================================================ */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* ============================================================
+   Form elements — sensible defaults, themed
+   ============================================================ */
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+  background-color: var(--bg-surface);
+}
+
+input:hover:not(:focus),
+textarea:hover:not(:focus),
+select:hover:not(:focus) {
+  border-color: var(--text-tertiary);
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+button {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+button:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--text-tertiary);
+  color: var(--text);
+}
+
+button:active {
+  background-color: var(--bg-active);
+}
+
+button.primary {
+  background-color: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 500;
+}
+
+button.primary:hover {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+button.secondary {
+  background-color: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+button.secondary:hover {
+  color: var(--text);
+  background-color: var(--bg-hover);
+}
+
+button.danger {
+  color: var(--red);
+  border-color: transparent;
+  background: transparent;
+}
+
+button.danger:hover {
+  background-color: var(--red-muted);
+  border-color: transparent;
+}
+
+button.ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+button.ghost:hover {
+  background-color: var(--bg-hover);
+  border-color: transparent;
+  color: var(--text);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

@@ -1,0 +1,287 @@
+.table-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.table-view__content {
+  flex: 1;
+  overflow: auto;
+}
+
+/* ── States ─────────────────────────────────────────────────── */
+.state-empty,
+.state-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.state-error {
+  color: var(--red);
+}
+
+.state-error h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+/* ── Table ──────────────────────────────────────────────────── */
+.table-scroll {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* Header */
+.data-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-surface);
+}
+
+.data-table th {
+  padding: 8px 20px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.col-name {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.col-add-header {
+  white-space: nowrap;
+  padding: 6px 12px;
+}
+
+.col-add-btn {
+  height: 28px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.col-add-btn:hover {
+  color: var(--text);
+  border-color: var(--text-tertiary);
+  background: var(--bg-hover);
+}
+
+.col-name-input {
+  width: 120px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.col-actions-header {
+  width: 40px;
+}
+
+/* Body rows */
+.data-table tbody tr {
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.data-table tbody tr:hover {
+  background-color: var(--bg-hover);
+}
+
+.data-table td {
+  padding: 0;
+  vertical-align: middle;
+}
+
+/* Cell inputs */
+.cell-input {
+  display: block;
+  width: 100%;
+  min-width: 100px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-secondary);
+  outline: none;
+}
+
+.cell-input--title {
+  font-weight: 450;
+  color: var(--text);
+}
+
+.cell-input:focus {
+  background: var(--bg-active);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Select dropdown cell */
+.cell-select {
+  display: block;
+  width: 100%;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-secondary);
+  outline: none;
+  cursor: pointer;
+  appearance: auto;
+}
+
+.cell-select:focus {
+  background: var(--bg-active);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Empty-table CTA row */
+.row-empty-cta {
+  cursor: default;
+}
+
+.row-empty-cta:hover {
+  background-color: transparent;
+}
+
+.empty-cta-btn {
+  display: block;
+  width: 100%;
+  padding: 14px 20px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.empty-cta-btn:hover {
+  color: var(--accent);
+  background: var(--accent-muted, rgba(99, 102, 241, 0.06));
+}
+
+/* Actions cell */
+.cell-actions {
+  width: 40px;
+  text-align: center;
+  padding: 6px;
+}
+
+.cell-delete-btn {
+  opacity: 0;
+  padding: 4px;
+  color: var(--text-tertiary);
+  border-radius: 4px;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
+}
+
+.data-table tbody tr:hover .cell-delete-btn {
+  opacity: 1;
+}
+
+.cell-delete-btn:hover {
+  color: var(--red);
+  background: var(--red-muted);
+}
+
+/* Status pills */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.status-pill--green  { color: var(--green);  background: var(--green-muted); }
+.status-pill--accent { color: var(--accent); background: var(--accent-muted); }
+.status-pill--red    { color: var(--red);    background: var(--red-muted); }
+.status-pill--neutral { color: var(--text-tertiary); background: var(--bg-active); }
+
+/* ── Modal ──────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  max-width: 480px;
+  width: 90%;
+  box-shadow: var(--shadow-lg);
+}
+
+.modal h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 20px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}

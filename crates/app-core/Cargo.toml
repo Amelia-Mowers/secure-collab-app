@@ -1,0 +1,53 @@
+[package]
+name = "app-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Application-specific logic for the secure collaborative workspace"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Internal dependencies
+tables-over-matrix = { path = "../tables-over-matrix", default-features = false }
+
+# Workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Matrix SDK - only for native builds (not WASM)
+matrix-sdk = { workspace = true, optional = true }
+ruma = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+
+# WASM support
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = ["console"] }
+getrandom = { workspace = true }
+tracing-wasm = { workspace = true }
+
+# Additional dependencies
+indexmap = { version = "2.1", features = ["serde"] }
+console_error_panic_hook = "0.1"
+wee_alloc = "0.4.5"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = ["matrix"]
+matrix = ["tables-over-matrix/matrix", "matrix-sdk", "ruma", "tokio", "futures"]
+wasm = ["tables-over-matrix/wasm"]

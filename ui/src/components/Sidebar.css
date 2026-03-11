@@ -1,0 +1,208 @@
+.sidebar {
+  width: 220px;
+  min-width: 220px;
+  height: 100vh;
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.2s, min-width 0.2s;
+  flex-shrink: 0;
+}
+
+.sidebar--collapsed {
+  width: 48px;
+  min-width: 48px;
+}
+
+/* ── Workspace header ──────────────────────────────────────── */
+.sidebar__workspace {
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar__logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  flex-shrink: 0;
+}
+
+.sidebar__workspace-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sidebar__workspace-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar__workspace-badge {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* ── Search ─────────────────────────────────────────────────── */
+.sidebar__search-wrap {
+  padding: 10px 10px 4px;
+}
+
+.sidebar__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.sidebar__search-placeholder {
+  flex: 1;
+}
+
+.sidebar__search-shortcut {
+  font-size: 10px;
+  opacity: 0.5;
+}
+
+/* ── Sections ───────────────────────────────────────────────── */
+.sidebar__section {
+  padding: 10px 6px 4px;
+  overflow-y: auto;
+}
+
+.sidebar__section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 0 8px 6px;
+}
+
+/* ── Items ──────────────────────────────────────────────────── */
+.sidebar__item-group {
+  margin-bottom: 1px;
+}
+
+.sidebar__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.sidebar__item:hover {
+  background-color: var(--bg-hover);
+  color: var(--text);
+  border: none;
+}
+
+.sidebar__item--active {
+  background-color: var(--bg-active) !important;
+  color: var(--text) !important;
+  font-weight: 500;
+}
+
+.sidebar__item--child {
+  padding-left: 22px;
+  font-size: 12px;
+}
+
+.sidebar__item--add {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.sidebar__item--theme {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sidebar__item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Table-name badge shown on view items */
+.sidebar__item-badge {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+/* Settings gear shown on the active view item */
+.sidebar__item-settings {
+  display: flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.sidebar__item--active .sidebar__item-settings,
+.sidebar__item:hover .sidebar__item-settings {
+  opacity: 1;
+}
+
+/* ── New table form ─────────────────────────────────────────── */
+.sidebar__new-table-form {
+  padding: 4px 8px;
+}
+
+.sidebar__new-table-form input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+}
+
+.sidebar__empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ── Footer ─────────────────────────────────────────────────── */
+.sidebar__footer {
+  padding: 10px 6px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
