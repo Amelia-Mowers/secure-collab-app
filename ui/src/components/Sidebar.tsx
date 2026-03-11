@@ -128,6 +128,7 @@ export function Sidebar({ workspace }: SidebarProps) {
 
   useEffect(() => {
     if (workspace) refreshData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace, location.pathname])
 
   const refreshData = () => {

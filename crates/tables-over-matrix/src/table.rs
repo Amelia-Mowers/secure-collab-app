@@ -229,9 +229,27 @@ mod tests {
     fn test_stalest_cell() {
         let mut table = Table::new("test_table");
 
-        table.apply_update(CellUpdate::new("test_table", "row1", "col1", json!("a"), 100));
-        table.apply_update(CellUpdate::new("test_table", "row1", "col2", json!("b"), 200));
-        table.apply_update(CellUpdate::new("test_table", "row2", "col1", json!("c"), 50));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col1",
+            json!("a"),
+            100,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col2",
+            json!("b"),
+            200,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row2",
+            "col1",
+            json!("c"),
+            50,
+        ));
 
         let stalest = table.get_stalest_cell().unwrap();
         assert_eq!(stalest.row_id, "row2");

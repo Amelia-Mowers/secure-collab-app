@@ -20,7 +20,11 @@
       "Bash(npx vitest run:*)",
       "Bash(md5sum:*)",
       "Bash(git stash:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(gh run list:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(npm run lint)"
     ],
     "deny": [],
     "ask": []

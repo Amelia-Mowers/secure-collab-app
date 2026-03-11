@@ -19,7 +19,7 @@ export function MarkdownEditor({ value, onChange, onBlur, onFocus }: MarkdownEdi
   const renderMarkdown = (text: string): string => {
     if (!text) return ''
 
-    let html = text
+    const html = text
       // Headers
       .replace(/^### (.*$)/gim, '<h3>$1</h3>')
       .replace(/^## (.*$)/gim, '<h2>$1</h2>')

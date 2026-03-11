@@ -108,8 +108,10 @@ impl TimelinePaginator {
                 event.column_id.clone(),
             );
 
-            if !self.seen_cells.contains_key(&cell_key) {
-                self.seen_cells.insert(cell_key, event.timestamp);
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                self.seen_cells.entry(cell_key)
+            {
+                e.insert(event.timestamp);
 
                 let table = self
                     .tables

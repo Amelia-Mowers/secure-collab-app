@@ -52,7 +52,7 @@ pub use matrix::{MatrixClient, SessionInfo, CELL_UPDATE_EVENT_TYPE, CELL_UPDATE_
 pub enum Error {
     #[cfg(feature = "matrix")]
     #[error("Matrix error: {0}")]
-    Matrix(#[from] matrix_sdk::Error),
+    Matrix(#[from] Box<matrix_sdk::Error>),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
