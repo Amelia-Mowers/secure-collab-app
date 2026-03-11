@@ -319,6 +319,7 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
 
             <NewViewButton
               workspace={workspace}
+              workspaceId={workspaceId}
               onCreated={() => refreshData()}
             />
 
