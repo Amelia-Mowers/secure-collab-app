@@ -70,7 +70,6 @@
 /* ── Dropdown ────────────────────────────────────────────── */
 .account-switcher__dropdown {
   position: absolute;
-  left: 0;
   right: 0;
   background: var(--bg-surface);
   border: 1px solid var(--border);
