@@ -1,6 +1,6 @@
-import { useState, FormEvent } from 'react'
+import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '@/hooks/useAuth'
+import { useAuth, InvitedRoom } from '@/hooks/useAuth'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import './WorkspacesPage.css'
 
@@ -9,14 +9,78 @@ function formatDate(ts: number): string {
 }
 
 export function WorkspacesPage() {
-  const { workspaces, createWorkspace, joinWorkspace, refreshWorkspaces } = useAuth()
+  const {
+    workspaces, matrixSession,
+    createWorkspace, joinWorkspace, refreshWorkspaces,
+    listInvitedRooms, acceptInvite, declineInvite,
+    sessionSyncCount, startSessionSync, stopSessionSync,
+  } = useAuth()
   const navigate = useNavigate()
   const [isCreating, setIsCreating] = useState(false)
   const [isJoining, setIsJoining] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [newName, setNewName] = useState('')
   const [joinRoomId, setJoinRoomId] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+
+  // ── Pending invitations ──────────────────────────────────────
+  const [invitations, setInvitations] = useState<InvitedRoom[]>([])
+  const [inviteLoading, setInviteLoading] = useState<string | null>(null)
+
+  // Start the session-level sync loop when the page is mounted and a Matrix
+  // session is available.  This fires sessionSyncCount whenever the room list
+  // changes (new invites, new rooms, rooms left).  Stop on unmount so it
+  // doesn't conflict with ConnectedWorkspace.startSync() inside a workspace.
+  useEffect(() => {
+    if (!matrixSession) return
+    startSessionSync()
+    return () => stopSessionSync()
+  }, [matrixSession, startSessionSync, stopSessionSync])
+
+  // Fetch invitations + workspaces on mount and whenever the session sync
+  // detects room-list changes (sessionSyncCount bumps).
+  // Note: we call refreshWorkspaces only on mount (sessionSyncCount === 0)
+  // because the sync loop has already updated the SDK cache for subsequent
+  // refreshes — we just need to re-read listRooms/listInvitedRooms.
+  useEffect(() => {
+    if (!matrixSession) return
+    listInvitedRooms().then(setInvitations)
+    // refreshWorkspaces calls initialSync + listRooms.  When the session sync
+    // loop is running, the SDK cache is already up-to-date so we only need to
+    // re-read the room list without calling initialSync (which would compete
+    // for the sync token).  refreshWorkspaces is still safe to call — on mount
+    // the sync loop may not have started yet, and for sync-triggered refreshes
+    // the initialSync inside refreshWorkspaces is a fast no-op.
+    refreshWorkspaces()
+  }, [matrixSession, listInvitedRooms, refreshWorkspaces, sessionSyncCount])
+
+  const handleAccept = async (roomId: string) => {
+    setInviteLoading(roomId)
+    setActionError(null)
+    try {
+      const ws = await acceptInvite(roomId)
+      setInvitations(prev => prev.filter(i => i.id !== roomId))
+      navigate(`/workspace/${encodeURIComponent(ws.id)}`)
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Failed to accept invitation')
+    } finally {
+      setInviteLoading(null)
+    }
+  }
+
+  const handleDecline = async (roomId: string) => {
+    setInviteLoading(roomId)
+    setActionError(null)
+    try {
+      await declineInvite(roomId)
+      setInvitations(prev => prev.filter(i => i.id !== roomId))
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Failed to decline invitation')
+    } finally {
+      setInviteLoading(null)
+    }
+  }
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
@@ -56,6 +120,8 @@ export function WorkspacesPage() {
     setActionLoading(true)
     try {
       await refreshWorkspaces()
+      const inv = await listInvitedRooms()
+      setInvitations(inv)
     } finally {
       setActionLoading(false)
     }
@@ -169,40 +235,87 @@ export function WorkspacesPage() {
             </div>
           )}
 
-          {/* Join workspace */}
-          {isJoining ? (
-            <div className="workspace-card">
-              <form className="workspace-new-form" onSubmit={handleJoin}>
-                <input
-                  type="text"
-                  placeholder="!room_id:homeserver.com"
-                  value={joinRoomId}
-                  onChange={e => setJoinRoomId(e.target.value)}
-                  autoFocus
-                  disabled={actionLoading}
-                />
-                <div className="workspace-new-form__actions">
+        </div>
+
+        {/* ── Pending invitations ──────────────────────────────── */}
+        {invitations.length > 0 && (
+          <div className="invitations-section">
+            <h2 className="invitations-section__heading">Pending invitations</h2>
+            <div className="invitations-list">
+              {invitations.map(inv => (
+                <div key={inv.id} className="invitation-card">
+                  <div className="invitation-card__icon">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+                      <polyline points="1.5,3.5 8,9 14.5,3.5" />
+                    </svg>
+                  </div>
+                  <div className="invitation-card__info">
+                    <span className="invitation-card__name">{inv.name || inv.id}</span>
+                    {inv.inviter && (
+                      <span className="invitation-card__from">from {inv.inviter}</span>
+                    )}
+                  </div>
+                  <div className="invitation-card__actions">
+                    <button
+                      className="primary"
+                      onClick={() => handleAccept(inv.id)}
+                      disabled={inviteLoading === inv.id}
+                    >
+                      {inviteLoading === inv.id ? 'Joining...' : 'Accept'}
+                    </button>
+                    <button
+                      className="ghost"
+                      onClick={() => handleDecline(inv.id)}
+                      disabled={inviteLoading === inv.id}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Advanced: Join by room ID ────────────────────────── */}
+        <div className="advanced-section">
+          <button
+            className="advanced-section__toggle"
+            onClick={() => setShowAdvanced(v => !v)}
+          >
+            <svg
+              width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5"
+              className={`advanced-section__chevron ${showAdvanced ? 'advanced-section__chevron--open' : ''}`}
+            >
+              <polyline points="3,2 7,5 3,8" />
+            </svg>
+            Advanced
+          </button>
+          {showAdvanced && (
+            <div className="advanced-section__content">
+              {isJoining ? (
+                <form className="advanced-join-form" onSubmit={handleJoin}>
+                  <input
+                    type="text"
+                    placeholder="!room_id:homeserver.com"
+                    value={joinRoomId}
+                    onChange={e => setJoinRoomId(e.target.value)}
+                    autoFocus
+                    disabled={actionLoading}
+                  />
                   <button type="submit" className="primary" disabled={!joinRoomId.trim() || actionLoading}>
                     {actionLoading ? 'Joining...' : 'Join'}
                   </button>
                   <button type="button" className="ghost" onClick={() => { setIsJoining(false); setJoinRoomId('') }}>
                     Cancel
                   </button>
-                </div>
-              </form>
-            </div>
-          ) : (
-            <div
-              className="workspace-card workspace-card--new"
-              onClick={() => setIsJoining(true)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => e.key === 'Enter' && setIsJoining(true)}
-            >
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M10 4v12M4 10h12" />
-              </svg>
-              Join workspace
+                </form>
+              ) : (
+                <button className="ghost" onClick={() => setIsJoining(true)}>
+                  Join workspace by room ID
+                </button>
+              )}
             </div>
           )}
         </div>

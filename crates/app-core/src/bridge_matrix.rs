@@ -153,6 +153,51 @@ impl MatrixSession {
         serde_json::to_string(&rooms).unwrap_or_else(|_| "[]".to_string())
     }
 
+    /// List rooms the user has been invited to but not yet joined.
+    /// Returns a JSON array of `{id, name, inviter}` objects.
+    /// The UI can display these as pending workspace invitations.
+    #[wasm_bindgen(js_name = listInvitedRooms)]
+    pub async fn list_invited_rooms(&self) -> String {
+        let mut rooms = Vec::new();
+        for room in self.client.invited_rooms() {
+            let name = room.name().unwrap_or_default();
+            // Try to find who sent the invite from the room's invite state
+            let inviter = room
+                .invite_details()
+                .await
+                .ok()
+                .and_then(|details| details.inviter.map(|m| m.user_id().to_string()))
+                .unwrap_or_default();
+
+            rooms.push(serde_json::json!({
+                "id": room.room_id().to_string(),
+                "name": name,
+                "inviter": inviter,
+            }));
+        }
+        serde_json::to_string(&rooms).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Decline a room invitation (leave the invited room).
+    #[wasm_bindgen(js_name = declineInvite)]
+    pub async fn decline_invite(&self, room_id: String) -> Result<(), JsValue> {
+        let room_id: OwnedRoomId = room_id
+            .as_str()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Invalid room ID"))?;
+
+        let room = self
+            .client
+            .get_room(&room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+
+        room.leave()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to decline invite: {e}")))?;
+
+        Ok(())
+    }
+
     /// Return session data as a JSON string so the JS side can persist it
     /// and later call `restore()` without needing the password again.
     ///
@@ -251,6 +296,42 @@ impl MatrixSession {
             .await
             .map_err(|e| JsValue::from_str(&format!("Initial sync failed: {e}")))?;
         Ok(())
+    }
+
+    /// Start a session-level sync loop that fires `on_change` whenever the
+    /// room list changes (new invites, new joins, rooms left, etc.).
+    ///
+    /// This is intended for the Workspaces page where no workspace sync is
+    /// running.  The callback receives no data — the JS side should call
+    /// `listRooms()` / `listInvitedRooms()` to refresh.
+    ///
+    /// This spawns an async task — it does NOT block.
+    #[wasm_bindgen(js_name = startSessionSync)]
+    pub fn start_session_sync(&self, on_change: js_sys::Function) {
+        let client = self.client.clone();
+
+        spawn_local(async move {
+            let settings = SyncSettings::default();
+
+            let _ = client
+                .sync_with_callback(settings, |response| {
+                    let on_change = on_change.clone();
+
+                    async move {
+                        // Fire when ANY room activity happens (invites, joins, leaves)
+                        let has_changes = !response.rooms.invited.is_empty()
+                            || !response.rooms.joined.is_empty()
+                            || !response.rooms.left.is_empty();
+
+                        if has_changes {
+                            let _ = on_change.call0(&JsValue::NULL);
+                        }
+
+                        LoopCtrl::Continue
+                    }
+                })
+                .await;
+        });
     }
 }
 

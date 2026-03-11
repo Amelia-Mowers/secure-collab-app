@@ -291,3 +291,93 @@
   background: var(--bg-hover);
   border: none;
 }
+
+/* ── Member list ───────────────────────────────────────────── */
+.sidebar__member-count {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+.sidebar__member-list {
+  padding: 2px 4px;
+}
+
+.sidebar__member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.sidebar__member-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Share modal ───────────────────────────────────────────── */
+.share-modal {
+  max-width: 420px;
+  width: 90vw;
+}
+
+.share-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.share-modal__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.share-modal__close {
+  padding: 4px 8px;
+  font-size: 18px;
+}
+
+.share-modal__description {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.share-modal__form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.share-modal__input {
+  flex: 1;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.share-modal__form button {
+  font-size: 12px;
+  padding: 7px 14px;
+  white-space: nowrap;
+}
+
+.share-modal__error {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--red, #ef4444);
+}
+
+.share-modal__success {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--green, #22c55e);
+}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
@@ -109,6 +109,88 @@ const SettingsIcon = () => (
   </svg>
 )
 
+const ShareIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <circle cx="9" cy="2.5" r="1.8" />
+    <circle cx="9" cy="9.5" r="1.8" />
+    <circle cx="3" cy="6" r="1.8" />
+    <line x1="4.6" y1="5.1" x2="7.4" y2="3.4" />
+    <line x1="4.6" y1="6.9" x2="7.4" y2="8.6" />
+  </svg>
+)
+
+const UserIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <circle cx="5.5" cy="3.5" r="2" />
+    <path d="M1.5 10a4 4 0 018 0" />
+  </svg>
+)
+
+// ── Share modal ──────────────────────────────────────────────
+interface ShareModalProps {
+  workspace: any
+  onClose: () => void
+}
+
+function ShareModal({ workspace, onClose }: ShareModalProps) {
+  const [userId, setUserId] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = userId.trim()
+    if (!trimmed) return
+
+    setLoading(true)
+    setError(null)
+    setSuccess(null)
+
+    try {
+      await workspace.inviteUser(trimmed)
+      setSuccess(`Invited ${trimmed}`)
+      setUserId('')
+    } catch (err: any) {
+      setError(err?.message ?? 'Failed to invite user')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal share-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="share-modal__header">
+          <h2 className="share-modal__title">Share workspace</h2>
+          <button className="share-modal__close ghost" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <p className="share-modal__description">
+          Invite someone by their Matrix user ID (e.g. <code>@user:server</code>).
+          The server part is the homeserver domain without the port.
+          They'll see it as a pending invitation on their Workspaces page.
+        </p>
+        <form className="share-modal__form" onSubmit={handleInvite}>
+          <input
+            type="text"
+            className="share-modal__input"
+            placeholder="@user:server"
+            value={userId}
+            onChange={e => setUserId(e.target.value)}
+            disabled={loading}
+            autoFocus
+          />
+          <button type="submit" className="primary" disabled={!userId.trim() || loading}>
+            {loading ? 'Inviting...' : 'Invite'}
+          </button>
+        </form>
+        {error && <p className="share-modal__error">{error}</p>}
+        {success && <p className="share-modal__success">{success}</p>}
+      </div>
+    </div>
+  )
+}
+
 function viewIcon(viewType: string) {
   if (viewType === 'kanban') return <KanbanIcon />
   if (viewType === 'card') return <CardIcon />
@@ -127,11 +209,30 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [isCreatingTable, setIsCreatingTable] = useState(false)
   const [newTableName, setNewTableName] = useState('')
   const [collapsed, setCollapsed] = useState(false)
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [members, setMembers] = useState<string[]>([])
+  const [showMembers, setShowMembers] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
   const { theme, toggleTheme } = useTheme()
   const { workspaces } = useAuth()
   const workspaceName = workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace'
+
+  // ── Fetch member list ───────────────────────────────────────
+  const loadMembers = useCallback(async () => {
+    if (!workspace?.listMembers) return
+    try {
+      const json = await workspace.listMembers()
+      const memberIds = JSON.parse(json) as string[]
+      setMembers(memberIds)
+    } catch (err) {
+      console.error('Failed to load members:', err)
+    }
+  }, [workspace])
+
+  useEffect(() => {
+    loadMembers()
+  }, [loadMembers])
 
   useEffect(() => {
     if (workspace) refreshData()
@@ -326,6 +427,49 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
             )}
           </div>
 
+          {/* Members section */}
+          <div className="sidebar__section">
+            <div className="sidebar__section-label">
+              Members
+              <span className="sidebar__member-count">{members.length}</span>
+            </div>
+
+            <button
+              className="sidebar__item sidebar__item--add"
+              onClick={() => setShowShareModal(true)}
+            >
+              <ShareIcon />
+              <span>Share workspace</span>
+            </button>
+
+            {showMembers ? (
+              <>
+                <div className="sidebar__member-list">
+                  {members.map(m => (
+                    <div key={m} className="sidebar__member">
+                      <UserIcon />
+                      <span className="sidebar__member-id">{m}</span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className="sidebar__item sidebar__item--add"
+                  onClick={() => setShowMembers(false)}
+                >
+                  <span>Hide members</span>
+                </button>
+              </>
+            ) : members.length > 0 ? (
+              <button
+                className="sidebar__item sidebar__item--add"
+                onClick={() => { setShowMembers(true); loadMembers() }}
+              >
+                <UserIcon />
+                <span>Show {members.length} member{members.length !== 1 ? 's' : ''}</span>
+              </button>
+            ) : null}
+          </div>
+
           {/* Spacer */}
           <div style={{ flex: 1 }} />
 
@@ -338,6 +482,13 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
             <AccountSwitcher />
           </div>
         </>
+      )}
+
+      {showShareModal && workspace && (
+        <ShareModal
+          workspace={workspace}
+          onClose={() => { setShowShareModal(false); loadMembers() }}
+        />
       )}
     </aside>
   )

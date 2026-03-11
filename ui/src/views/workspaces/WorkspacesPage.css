@@ -268,3 +268,137 @@
   font-size: 12px;
   padding: 6px 10px;
 }
+
+/* ── Pending invitations ─────────────────────────────────── */
+.invitations-section {
+  margin-top: 36px;
+}
+
+.invitations-section__heading {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.invitations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invitation-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.invitation-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+}
+
+.invitation-card__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--accent-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.invitation-card__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.invitation-card__name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.invitation-card__from {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.invitation-card__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.invitation-card__actions button {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+/* ── Advanced section ────────────────────────────────────── */
+.advanced-section {
+  margin-top: 32px;
+}
+
+.advanced-section__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.12s;
+}
+
+.advanced-section__toggle:hover {
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+}
+
+.advanced-section__chevron {
+  transition: transform 0.15s ease;
+}
+
+.advanced-section__chevron--open {
+  transform: rotate(90deg);
+}
+
+.advanced-section__content {
+  margin-top: 10px;
+  padding-left: 16px;
+}
+
+.advanced-join-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.advanced-join-form input {
+  flex: 1;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.advanced-join-form button {
+  font-size: 12px;
+  padding: 6px 12px;
+  white-space: nowrap;
+}

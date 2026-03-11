@@ -62,6 +62,8 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
     navigate('/workspaces')
   }
 
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
   const handleRemove = (e: React.MouseEvent, userId: string) => {
     e.stopPropagation()
     if (userId === activeAccountId) {
@@ -70,6 +72,14 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
     } else {
       removeAccount(userId)
     }
+  }
+
+  const handleCopyId = (e: React.MouseEvent, userId: string) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(userId).then(() => {
+      setCopiedId(userId)
+      setTimeout(() => setCopiedId(null), 1500)
+    })
   }
 
   const handleAddAccount = () => {
@@ -116,7 +126,7 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
               <div className="account-switcher__item-info">
                 <span className="account-switcher__item-name">{account.username}</span>
                 <span className="account-switcher__item-server">
-                  {account.homeserverUrl.replace(/^https?:\/\//, '')}
+                  {account.userId}
                 </span>
               </div>
               {account.userId === activeAccountId && (
@@ -124,6 +134,22 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
                   <path d="M2.5 6.5L5 9l4.5-6" />
                 </svg>
               )}
+              <button
+                className="account-switcher__item-copy"
+                title={copiedId === account.userId ? 'Copied!' : 'Copy user ID'}
+                onClick={e => handleCopyId(e, account.userId)}
+              >
+                {copiedId === account.userId ? (
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M2 5.5L4 7.5 8 3" />
+                  </svg>
+                ) : (
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3">
+                    <rect x="3" y="3" width="5.5" height="5.5" rx="1" />
+                    <path d="M7 3V2a1 1 0 00-1-1H2a1 1 0 00-1 1v4a1 1 0 001 1h1" />
+                  </svg>
+                )}
+              </button>
               <button
                 className="account-switcher__item-remove"
                 title={account.userId === activeAccountId ? 'Sign out' : 'Remove account'}

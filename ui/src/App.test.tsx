@@ -90,7 +90,7 @@ describe('App shell', () => {
     renderAt('/workspaces')
     await waitFor(() => expect(screen.getByText('Workspaces')).toBeInTheDocument())
     expect(screen.getByText('New workspace')).toBeInTheDocument()
-    expect(screen.getByText('Join workspace')).toBeInTheDocument()
+    expect(screen.getByText('Advanced')).toBeInTheDocument()
   })
 
   it('shows the workspace shell (sidebar) when navigating into a workspace', async () => {

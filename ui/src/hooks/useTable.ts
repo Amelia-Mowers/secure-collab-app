@@ -101,6 +101,7 @@ export function useTable(
   const [rows, setRows] = useState<TableRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const prevSyncCountRef = useRef(syncCount)
 
   const fetchRows = useCallback(async () => {
     if (!workspace) {
@@ -126,9 +127,14 @@ export function useTable(
     fetchRows()
   }, [fetchRows])
 
-  // Re-read rows when syncCount changes (remote changes already applied in WASM)
+  // Re-read rows when syncCount changes (remote changes already applied in WASM).
+  // We track the previous value via a ref to avoid a redundant fetch on mount
+  // (the mount effect above already handles that) while still catching every
+  // transition, including the first 0 → 1 bump.
   useEffect(() => {
-    if (syncCount === undefined || syncCount === 0) return
+    if (syncCount === undefined) return
+    if (syncCount === prevSyncCountRef.current) return // no actual change (mount)
+    prevSyncCountRef.current = syncCount
     fetchRows()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncCount])

@@ -186,6 +186,7 @@
   flex-shrink: 0;
 }
 
+.account-switcher__item-copy,
 .account-switcher__item-remove {
   background: none;
   border: none;
@@ -198,8 +199,15 @@
   flex-shrink: 0;
 }
 
+.account-switcher__item:hover .account-switcher__item-copy,
 .account-switcher__item:hover .account-switcher__item-remove {
   opacity: 1;
+}
+
+.account-switcher__item-copy:hover {
+  color: var(--accent);
+  background: var(--accent-muted);
+  border: none;
 }
 
 .account-switcher__item-remove:hover {

@@ -11,6 +11,12 @@ export interface WorkspaceEntry {
   createdAt: number
 }
 
+export interface InvitedRoom {
+  id: string
+  name: string
+  inviter: string
+}
+
 /** Persisted per-account data (shared across tabs via localStorage). */
 export interface AccountSession {
   homeserverUrl: string
@@ -31,6 +37,11 @@ interface AuthState {
   loading: boolean
   error: string | null
 
+  /** Incremented whenever the session-level sync detects room list changes
+   *  (new invites, new rooms, rooms left). Consumers can use this to
+   *  auto-refresh workspace and invitation lists. */
+  sessionSyncCount: number
+
   // Multi-account
   accounts: AccountSession[]
   activeAccountId: string | null
@@ -41,6 +52,16 @@ interface AuthState {
   createWorkspace: (name: string) => Promise<WorkspaceEntry>
   joinWorkspace: (roomId: string) => Promise<WorkspaceEntry>
   refreshWorkspaces: () => Promise<void>
+  listInvitedRooms: () => Promise<InvitedRoom[]>
+  acceptInvite: (roomId: string) => Promise<WorkspaceEntry>
+  declineInvite: (roomId: string) => Promise<void>
+
+  /** Start the session-level sync loop. Call this on pages where no
+   *  workspace sync is running (e.g. the Workspaces page). The sync fires
+   *  sessionSyncCount whenever the room list changes. */
+  startSessionSync: () => void
+  /** Stop the session-level sync loop (e.g. when navigating into a workspace). */
+  stopSessionSync: () => void
 
   // Multi-account actions
   switchAccount: (userId: string) => Promise<void>
@@ -182,9 +203,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return !!accs.find(a => a.userId === activeId)?.matrixSessionData
   })
   const [error, setError] = useState<string | null>(null)
+  const [sessionSyncCount, setSessionSyncCount] = useState(0)
 
   // Keep a ref so callbacks always see the latest matrixSession
   const matrixSessionRef = useRef<any>(null)
+
+  // Track whether session-level sync is active (so we can avoid starting it twice)
+  const sessionSyncActiveRef = useRef(false)
 
   // Track whether we've attempted auto-restore (to avoid double-restoring)
   const restoredRef = useRef(false)
@@ -515,11 +540,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   // ── refreshWorkspaces ──────────────────────────────────────────────────────
+  //
+  // When the session sync loop is active (sessionSyncActiveRef is true), the
+  // SDK cache is already being maintained by the continuous sync — calling
+  // initialSync() would compete for the sync token.  In that case, just
+  // re-read the room list.
   const refreshWorkspaces = useCallback(async () => {
     const ms = matrixSessionRef.current
     if (!ms) return
     try {
-      await ms.initialSync()
+      if (!sessionSyncActiveRef.current) {
+        await ms.initialSync()
+      }
       const roomsJson = await ms.listRooms()
       const entries = parseWorkspaceRooms(roomsJson)
       setWorkspaces(entries)
@@ -528,6 +560,112 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error('Failed to refresh workspaces:', err)
     }
   }, [activeAccountId])
+
+  // ── listInvitedRooms: fetch pending invitations from Matrix ────────────────
+  const listInvitedRooms = useCallback(async (): Promise<InvitedRoom[]> => {
+    const ms = matrixSessionRef.current
+    if (!ms) return []
+    try {
+      const json = await ms.listInvitedRooms()
+      return JSON.parse(json) as InvitedRoom[]
+    } catch (err) {
+      console.error('Failed to list invited rooms:', err)
+      return []
+    }
+  }, [])
+
+  // ── acceptInvite: join an invited room and add it to workspaces ────────────
+  const acceptInvite = useCallback(
+    async (roomId: string): Promise<WorkspaceEntry> => {
+      const ms = matrixSessionRef.current
+      if (!ms) throw new Error('Not signed in')
+
+      // Joining an invited room is how you accept in Matrix
+      await ms.joinRoom(roomId)
+
+      // Re-sync so the SDK knows about the newly joined room
+      try {
+        await ms.initialSync()
+      } catch {
+        // Non-fatal — the room may still be usable from cache
+      }
+
+      // Look up the room name from the room list
+      let roomName = roomId
+      try {
+        const roomsJson = await ms.listRooms()
+        const rooms: { id: string; name: string }[] = JSON.parse(roomsJson)
+        const room = rooms.find(r => r.id === roomId)
+        if (room?.name) roomName = room.name
+
+        // Refresh the full workspace list while we have it
+        const entries = parseWorkspaceRooms(roomsJson)
+        setWorkspaces(entries)
+        if (activeAccountId) saveWorkspaces(activeAccountId, entries)
+      } catch {
+        // Fall back to just adding this room
+      }
+
+      const entry: WorkspaceEntry = {
+        id: roomId,
+        name: roomName,
+        createdAt: Date.now(),
+      }
+
+      // Ensure this room is in our workspace list
+      setWorkspaces(prev => {
+        if (prev.some(w => w.id === roomId)) return prev
+        const next = [...prev, entry]
+        if (activeAccountId) saveWorkspaces(activeAccountId, next)
+        return next
+      })
+
+      return entry
+    },
+    [activeAccountId],
+  )
+
+  // ── declineInvite: leave an invited room ───────────────────────────────────
+  const declineInvite = useCallback(async (roomId: string): Promise<void> => {
+    const ms = matrixSessionRef.current
+    if (!ms) throw new Error('Not signed in')
+    await ms.declineInvite(roomId)
+  }, [])
+
+  // ── startSessionSync / stopSessionSync ──────────────────────────────────────
+  //
+  // Starts a Matrix sync loop on the MatrixSession that fires whenever the
+  // room list changes (new invites, new rooms joined, rooms left).  This is
+  // used on the Workspaces page where no ConnectedWorkspace sync is running.
+  //
+  // Important: only ONE sync loop should run per Client at a time.  When a
+  // ConnectedWorkspace.startSync is active (inside a workspace), do NOT call
+  // startSessionSync — they share the same Client and would compete for the
+  // sync stream.
+  const startSessionSync = useCallback(() => {
+    const ms = matrixSessionRef.current
+    if (!ms || sessionSyncActiveRef.current) return
+    if (!ms.startSessionSync) {
+      console.warn('[auth] startSessionSync not available on MatrixSession (mock?)')
+      return
+    }
+
+    console.log('[auth] Starting session-level sync')
+    sessionSyncActiveRef.current = true
+
+    ms.startSessionSync(() => {
+      console.log('[session-sync] Room list changed, triggering refresh')
+      setSessionSyncCount(c => c + 1)
+    })
+  }, [])
+
+  const stopSessionSync = useCallback(() => {
+    // The sync loop runs inside a WASM spawn_local — we can't cancel it
+    // directly.  Instead we mark it as inactive so we don't start a second
+    // one.  The sync loop is tied to the Client lifetime and will stop when
+    // the MatrixSession is dropped (on sign-out / account switch).
+    sessionSyncActiveRef.current = false
+  }, [])
 
   // ── resetApp: clear everything and reload ─────────────────────────────────
   const resetApp = useCallback(() => {
@@ -557,6 +695,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     workspaces,
     loading,
     error,
+    sessionSyncCount,
     accounts,
     activeAccountId,
     signIn,
@@ -564,6 +703,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     createWorkspace,
     joinWorkspace,
     refreshWorkspaces,
+    listInvitedRooms,
+    acceptInvite,
+    declineInvite,
+    startSessionSync,
+    stopSessionSync,
     switchAccount,
     removeAccount,
     resetApp,
