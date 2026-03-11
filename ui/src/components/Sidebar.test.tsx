@@ -9,8 +9,8 @@ function renderSidebar(workspace: any, initialPath = '/') {
     <MemoryRouter initialEntries={[initialPath]}>
       <Sidebar workspace={workspace} username="Alice" workspaceId="ws_test" />
       <Routes>
-        <Route path="/table/:tableId" element={<div data-testid="table-view" />} />
-        <Route path="/table/:tableId/view/:viewId" element={<div data-testid="view-route" />} />
+        <Route path="/workspace/:workspaceId/table/:tableId" element={<div data-testid="table-view" />} />
+        <Route path="/workspace/:workspaceId/table/:tableId/view/:viewId" element={<div data-testid="view-route" />} />
         <Route path="/workspaces" element={<div data-testid="workspaces-page" />} />
         <Route path="/" element={<div data-testid="home" />} />
       </Routes>
@@ -169,13 +169,10 @@ describe('Sidebar', () => {
   })
 
   describe('navigation', () => {
-    it('clicking a table navigates to /table/:tableId', () => {
+    it('clicking a table navigates to /workspace/:id/table/:tableId', () => {
       const ws = makeKanbanWorkspace()
       renderSidebar(ws)
-      // "Tasks" appears as both the table label and as a badge in the view item.
-      // Click the one that is inside a table-section button (the first label match).
       const taskLabels = screen.getAllByText('Tasks')
-      // The table item label is a sidebar__item-label span; click the button containing it
       const tableBtn = taskLabels.find(el => el.classList.contains('sidebar__item-label'))?.closest('button')
       if (tableBtn) {
         fireEvent.click(tableBtn)
@@ -194,8 +191,7 @@ describe('Sidebar', () => {
 
     it('active table is highlighted when current path matches', () => {
       const ws = makeKanbanWorkspace()
-      renderSidebar(ws, '/table/tasks')
-      // "Tasks" appears as table label AND as a badge; find the label span inside a button
+      renderSidebar(ws, '/workspace/ws_test/table/tasks')
       const taskLabels = screen.getAllByText('Tasks')
       const tableBtn = taskLabels.find(el => el.classList.contains('sidebar__item-label'))?.closest('button')
       expect(tableBtn).toBeTruthy()
@@ -204,7 +200,7 @@ describe('Sidebar', () => {
 
     it('active view is highlighted when current path matches', () => {
       const ws = makeKanbanWorkspace()
-      renderSidebar(ws, '/table/tasks/view/tasks-kanban')
+      renderSidebar(ws, '/workspace/ws_test/table/tasks/view/tasks-kanban')
       const viewBtn = screen.getByTestId('view-item-tasks-kanban')
       expect(viewBtn.className).toContain('sidebar__item--active')
     })

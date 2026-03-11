@@ -114,9 +114,9 @@ function viewIcon(viewType: string) {
 }
 
 /** Build a navigation path for a view based on its type. */
-export function viewPath(view: ViewInfo): string {
-  if (view.view_type === 'table') return `/table/${view.table_id}`
-  return `/table/${view.table_id}/view/${view.id}`
+export function viewPath(view: ViewInfo, workspaceId: string): string {
+  if (view.view_type === 'table') return `/workspace/${workspaceId}/table/${view.table_id}`
+  return `/workspace/${workspaceId}/table/${view.table_id}/view/${view.id}`
 }
 
 export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
@@ -196,7 +196,7 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
       setNewTableName('')
       setIsCreatingTable(false)
       refreshData()
-      navigate(`/table/${tableId}`)
+      navigate(`/workspace/${workspaceId}/table/${tableId}`)
     } catch (err) {
       console.error('Failed to create table:', err)
       alert('Failed to create table: ' + (err as Error).message)
@@ -250,12 +250,12 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
             <div className="sidebar__section-label">Tables</div>
 
             {tables.map(table => {
-              const active = isActive(`/table/${table.id}`)
+              const active = isActive(`/workspace/${workspaceId}/table/${table.id}`)
               return (
                 <button
                   key={table.id}
                   className={`sidebar__item ${active ? 'sidebar__item--active' : ''}`}
-                  onClick={() => navigate(`/table/${table.id}`)}
+                  onClick={() => navigate(`/workspace/${workspaceId}/table/${table.id}`)}
                 >
                   <HashIcon />
                   <span className="sidebar__item-label">{table.name}</span>
@@ -294,7 +294,7 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
             <div className="sidebar__section-label">Views</div>
 
             {views.map(view => {
-              const path = viewPath(view)
+              const path = viewPath(view, workspaceId)
               const active = isActive(path)
               return (
                 <button
