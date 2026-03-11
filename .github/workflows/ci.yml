@@ -74,9 +74,8 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build WASM
-        run: |
-          cd crates/app-core
-          wasm-pack build --target web
+        working-directory: crates/app-core
+        run: wasm-pack build --target web --no-default-features --features wasm
 
   ui:
     name: UI Build and Test
