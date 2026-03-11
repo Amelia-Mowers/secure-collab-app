@@ -1,0 +1,218 @@
+.workspaces-page {
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Top bar ─────────────────────────────────────────────── */
+.workspaces-page__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.workspaces-page__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workspaces-page__brand-icon {
+  width: 28px;
+  height: 28px;
+  background: var(--accent);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.workspaces-page__brand-icon svg {
+  color: #fff;
+}
+
+.workspaces-page__user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.workspaces-page__avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.workspaces-page__signout {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 5px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.workspaces-page__signout:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+  border: none;
+}
+
+/* ── Content ─────────────────────────────────────────────── */
+.workspaces-page__content {
+  flex: 1;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 48px 28px;
+}
+
+.workspaces-page__heading {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.workspaces-page__sub {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-bottom: 32px;
+}
+
+/* ── Workspace grid ──────────────────────────────────────── */
+.workspaces-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.workspace-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 18px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+
+.workspace-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+
+.workspace-card__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--accent-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.workspace-card__name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.workspace-card__meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.workspace-card__delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  opacity: 0;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+
+.workspace-card:hover .workspace-card__delete {
+  opacity: 1;
+}
+
+.workspace-card__delete:hover {
+  color: var(--red);
+  background: var(--red-muted);
+  border: none;
+}
+
+/* ── New workspace card ──────────────────────────────────── */
+.workspace-card--new {
+  border-style: dashed;
+  align-items: center;
+  justify-content: center;
+  min-height: 110px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  gap: 6px;
+}
+
+.workspace-card--new:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  box-shadow: none;
+}
+
+/* ── New workspace inline form ───────────────────────────── */
+.workspace-new-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.workspace-new-form input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 13px;
+}
+
+.workspace-new-form__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-new-form__actions button {
+  flex: 1;
+  font-size: 12px;
+  padding: 6px 10px;
+}

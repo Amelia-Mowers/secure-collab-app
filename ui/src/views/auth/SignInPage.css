@@ -1,0 +1,87 @@
+.signin {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.signin__card {
+  width: 100%;
+  max-width: 380px;
+  padding: 40px 36px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+}
+
+.signin__logo {
+  width: 40px;
+  height: 40px;
+  background: var(--accent);
+  border-radius: 10px;
+  margin: 0 auto 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.signin__logo svg {
+  color: #fff;
+}
+
+.signin__title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.signin__subtitle {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.signin__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.signin__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.signin__input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.signin__btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.signin__stub-note {
+  margin-top: 20px;
+  padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.signin__stub-note strong {
+  color: var(--text-secondary);
+}

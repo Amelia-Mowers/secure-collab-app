@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTheme } from '@/hooks/useTheme'
+import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
 import './Sidebar.css'
 
 interface SidebarProps {
   workspace: any
+  username: string | null
+  workspaceId: string
 }
 
 interface TableInfo {
@@ -116,7 +119,7 @@ export function viewPath(view: ViewInfo): string {
   return `/table/${view.table_id}/view/${view.id}`
 }
 
-export function Sidebar({ workspace }: SidebarProps) {
+export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
   const [tables, setTables] = useState<TableInfo[]>([])
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
@@ -125,6 +128,13 @@ export function Sidebar({ workspace }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const { theme, toggleTheme } = useTheme()
+  const { workspaces, signOut } = useAuth()
+  const workspaceName = workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace'
+
+  const handleSignOut = () => {
+    signOut()
+    navigate('/signin')
+  }
 
   useEffect(() => {
     if (workspace) refreshData()
@@ -202,7 +212,7 @@ export function Sidebar({ workspace }: SidebarProps) {
         <div className="sidebar__logo" />
         {!collapsed && (
           <div className="sidebar__workspace-text">
-            <span className="sidebar__workspace-name">Workspace</span>
+            <span className="sidebar__workspace-name">{workspaceName}</span>
             <span className="sidebar__workspace-badge">
               <LockIcon /> E2E Encrypted
             </span>
@@ -306,12 +316,22 @@ export function Sidebar({ workspace }: SidebarProps) {
           {/* Spacer */}
           <div style={{ flex: 1 }} />
 
-          {/* Theme toggle */}
+          {/* Footer: user + theme + sign out */}
           <div className="sidebar__footer">
             <button className="sidebar__item sidebar__item--theme" onClick={toggleTheme}>
               {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
               <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
             </button>
+            <div className="sidebar__user">
+              <div className="sidebar__user-avatar">{username?.[0]?.toUpperCase()}</div>
+              <span className="sidebar__user-name">{username}</span>
+              <button className="sidebar__signout" title="Sign out" onClick={handleSignOut}>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4">
+                  <path d="M8 6H1M5 3l-3 3 3 3" />
+                  <path d="M6 1h4a1 1 0 011 1v8a1 1 0 01-1 1H6" />
+                </svg>
+              </button>
+            </div>
           </div>
         </>
       )}
