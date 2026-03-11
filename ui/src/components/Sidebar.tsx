@@ -208,15 +208,29 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
   return (
     <aside className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''}`}>
       {/* Workspace header / collapse toggle */}
-      <div className="sidebar__workspace" onClick={() => setCollapsed(c => !c)}>
-        <div className="sidebar__logo" />
+      <div className="sidebar__workspace">
+        <div className="sidebar__logo" onClick={() => setCollapsed(c => !c)} />
         {!collapsed && (
-          <div className="sidebar__workspace-text">
+          <div className="sidebar__workspace-text" onClick={() => setCollapsed(c => !c)}>
             <span className="sidebar__workspace-name">{workspaceName}</span>
             <span className="sidebar__workspace-badge">
               <LockIcon /> E2E Encrypted
             </span>
           </div>
+        )}
+        {!collapsed && (
+          <button
+            className="sidebar__back-btn"
+            title="All workspaces"
+            onClick={() => navigate('/workspaces')}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M8 2H3a1 1 0 00-1 1v6a1 1 0 001 1h6a1 1 0 001-1V4L8 2z" />
+              <path d="M8 2v2h2" />
+              <line x1="4" y1="7" x2="8" y2="7" />
+              <line x1="4" y1="5" x2="6" y2="5" />
+            </svg>
+          </button>
         )}
       </div>
 

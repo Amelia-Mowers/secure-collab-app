@@ -11,6 +11,7 @@ function renderSidebar(workspace: any, initialPath = '/') {
       <Routes>
         <Route path="/table/:tableId" element={<div data-testid="table-view" />} />
         <Route path="/table/:tableId/view/:viewId" element={<div data-testid="view-route" />} />
+        <Route path="/workspaces" element={<div data-testid="workspaces-page" />} />
         <Route path="/" element={<div data-testid="home" />} />
       </Routes>
     </MemoryRouter>,
@@ -210,24 +211,42 @@ describe('Sidebar', () => {
   })
 
   describe('collapse', () => {
-    it('clicking the workspace header collapses the sidebar', () => {
+    it('clicking the workspace name collapses the sidebar', () => {
       const ws = new MockWorkspace()
       renderSidebar(ws)
-      const header = screen.getByText('Workspace').closest('div')!
-      fireEvent.click(header)
+      const nameEl = screen.getByText('Workspace')
+      fireEvent.click(nameEl)
       // Tables/Views sections should no longer be visible
       expect(screen.queryByText('No tables yet')).not.toBeInTheDocument()
     })
 
-    it('clicking the workspace header again re-expands the sidebar', () => {
+    it('clicking the workspace name again re-expands the sidebar', () => {
       const ws = new MockWorkspace()
       renderSidebar(ws)
-      // The workspace header div is always in the DOM (logo stays visible when collapsed)
-      const header = screen.getByText('Workspace').closest('.sidebar__workspace')!
-      fireEvent.click(header) // collapse
-      // After collapsing "Workspace" text is hidden; click the same header element again
-      fireEvent.click(header) // re-expand
+      const nameEl = screen.getByText('Workspace')
+      fireEvent.click(nameEl) // collapse
+      // After collapsing the workspace-text is hidden; click the logo instead
+      const logo = document.querySelector('.sidebar__logo')!
+      fireEvent.click(logo) // re-expand
       expect(screen.getByText('No tables yet')).toBeInTheDocument()
+    })
+  })
+
+  describe('workspaces navigation', () => {
+    it('clicking "All workspaces" button navigates to /workspaces', () => {
+      const ws = new MockWorkspace()
+      renderSidebar(ws)
+      const backBtn = screen.getByTitle('All workspaces')
+      fireEvent.click(backBtn)
+      expect(screen.getByTestId('workspaces-page')).toBeInTheDocument()
+    })
+
+    it('the "All workspaces" button is hidden when sidebar is collapsed', () => {
+      const ws = new MockWorkspace()
+      renderSidebar(ws)
+      const nameEl = screen.getByText('Workspace')
+      fireEvent.click(nameEl) // collapse
+      expect(screen.queryByTitle('All workspaces')).not.toBeInTheDocument()
     })
   })
 })
