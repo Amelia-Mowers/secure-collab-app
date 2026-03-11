@@ -7,7 +7,7 @@ import { MockWorkspace, makeKanbanWorkspace } from '@/test/mockWorkspace'
 function renderSidebar(workspace: any, initialPath = '/') {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <Sidebar workspace={workspace} />
+      <Sidebar workspace={workspace} username="Alice" workspaceId="ws_test" />
       <Routes>
         <Route path="/table/:tableId" element={<div data-testid="table-view" />} />
         <Route path="/table/:tableId/view/:viewId" element={<div data-testid="view-route" />} />
