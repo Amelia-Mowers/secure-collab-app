@@ -4,16 +4,28 @@ import { useAuth } from '@/hooks/useAuth'
 import './SignInPage.css'
 
 export function SignInPage() {
-  const { signIn } = useAuth()
+  const { signIn, loading, error } = useAuth()
   const navigate = useNavigate()
-  const [name, setName] = useState('')
+  const [homeserver, setHomeserver] = useState('http://localhost:6167')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [localError, setLocalError] = useState<string | null>(null)
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) return
-    signIn(name.trim())
-    navigate('/workspaces')
+    if (!homeserver.trim() || !username.trim() || !password.trim()) return
+    setLocalError(null)
+
+    try {
+      await signIn(homeserver.trim(), username.trim(), password)
+      navigate('/workspaces')
+    } catch (err: any) {
+      setLocalError(err?.message ?? 'Sign-in failed')
+    }
   }
+
+  const displayError = localError ?? error
+  const canSubmit = !loading && homeserver.trim() && username.trim() && password.trim()
 
   return (
     <div className="signin">
@@ -30,26 +42,60 @@ export function SignInPage() {
 
         <form className="signin__form" onSubmit={handleSubmit}>
           <div>
-            <label className="signin__label" htmlFor="username">Your name</label>
+            <label className="signin__label" htmlFor="homeserver">Homeserver</label>
+            <input
+              id="homeserver"
+              className="signin__input"
+              type="url"
+              placeholder="https://matrix.example.com"
+              value={homeserver}
+              onChange={e => setHomeserver(e.target.value)}
+              autoComplete="url"
+            />
+          </div>
+          <div>
+            <label className="signin__label" htmlFor="username">Username</label>
             <input
               id="username"
               className="signin__input"
               type="text"
-              placeholder="e.g. Alice"
-              value={name}
-              onChange={e => setName(e.target.value)}
+              placeholder="e.g. alice"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
               autoFocus
-              autoComplete="off"
+              autoComplete="username"
             />
           </div>
-          <button className="primary signin__btn" type="submit" disabled={!name.trim()}>
-            Continue
+          <div>
+            <label className="signin__label" htmlFor="password">Password</label>
+            <input
+              id="password"
+              className="signin__input"
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </div>
+
+          {displayError && (
+            <div className="signin__error" role="alert">
+              {displayError}
+            </div>
+          )}
+
+          <button
+            className="primary signin__btn"
+            type="submit"
+            disabled={!canSubmit}
+          >
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
 
-        <p className="signin__stub-note">
-          <strong>Matrix authentication coming soon.</strong><br />
-          For now, enter any name to get started locally.
+        <p className="signin__hint">
+          Connect to any Matrix homeserver. Your data stays end-to-end encrypted.
         </p>
       </div>
     </div>

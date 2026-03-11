@@ -19,7 +19,7 @@ build: ## Build all crates
 
 wasm: ## Build WASM modules
 	@echo "Building WASM modules..."
-	cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm
+	cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm
 	@echo "✓ WASM build complete"
 
 ui: wasm ## Build the UI (requires WASM)

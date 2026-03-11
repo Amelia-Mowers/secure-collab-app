@@ -99,7 +99,7 @@ jobs:
 
       - name: Build WASM
         working-directory: crates/app-core
-        run: wasm-pack build --target web --no-default-features --features wasm
+        run: wasm-pack build --target web --no-default-features --features wasm,matrix-wasm
 
   ui:
     name: UI Build and Test
@@ -128,7 +128,7 @@ jobs:
 
       - name: Build WASM
         working-directory: crates/app-core
-        run: wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm
+        run: wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -222,7 +222,7 @@ jobs:
 
       - name: Build WASM
         working-directory: crates/app-core
-        run: wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm
+        run: wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

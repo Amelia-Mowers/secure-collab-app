@@ -8,23 +8,61 @@ function formatDate(ts: number): string {
 }
 
 export function WorkspacesPage() {
-  const { username, workspaces, signOut, createWorkspace, deleteWorkspace } = useAuth()
+  const { username, userId, workspaces, signOut, createWorkspace, joinWorkspace, refreshWorkspaces } = useAuth()
   const navigate = useNavigate()
   const [isCreating, setIsCreating] = useState(false)
+  const [isJoining, setIsJoining] = useState(false)
   const [newName, setNewName] = useState('')
+  const [joinRoomId, setJoinRoomId] = useState('')
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
-  const handleCreate = (e: FormEvent) => {
+  const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
-    if (!newName.trim()) return
-    const ws = createWorkspace(newName.trim())
-    setNewName('')
-    setIsCreating(false)
-    navigate(`/workspace/${ws.id}`)
+    if (!newName.trim() || actionLoading) return
+    setActionLoading(true)
+    setActionError(null)
+    try {
+      const ws = await createWorkspace(newName.trim())
+      setNewName('')
+      setIsCreating(false)
+      navigate(`/workspace/${encodeURIComponent(ws.id)}`)
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Failed to create workspace')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleJoin = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!joinRoomId.trim() || actionLoading) return
+    setActionLoading(true)
+    setActionError(null)
+    try {
+      const ws = await joinWorkspace(joinRoomId.trim())
+      setJoinRoomId('')
+      setIsJoining(false)
+      navigate(`/workspace/${encodeURIComponent(ws.id)}`)
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Failed to join workspace')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   const handleSignOut = () => {
     signOut()
     navigate('/signin')
+  }
+
+  const handleRefresh = async () => {
+    setActionLoading(true)
+    try {
+      await refreshWorkspaces()
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   return (
@@ -42,25 +80,50 @@ export function WorkspacesPage() {
         </div>
         <div className="workspaces-page__user">
           <div className="workspaces-page__avatar">{username?.[0]?.toUpperCase()}</div>
-          <span>{username}</span>
+          <span title={userId ?? undefined}>{username}</span>
           <button className="workspaces-page__signout" onClick={handleSignOut}>Sign out</button>
         </div>
       </div>
 
       {/* Content */}
       <div className="workspaces-page__content">
-        <h1 className="workspaces-page__heading">Workspaces</h1>
-        <p className="workspaces-page__sub">Select a workspace or create a new one.</p>
+        <div className="workspaces-page__header-row">
+          <div>
+            <h1 className="workspaces-page__heading">Workspaces</h1>
+            <p className="workspaces-page__sub">Select a workspace or create a new one.</p>
+          </div>
+          <button
+            className="workspaces-page__refresh"
+            onClick={handleRefresh}
+            disabled={actionLoading}
+            title="Refresh from server"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M1.5 7a5.5 5.5 0 019.8-3.3M12.5 7a5.5 5.5 0 01-9.8 3.3" />
+              <polyline points="11.3,1.2 11.3,3.7 8.8,3.7" />
+              <polyline points="2.7,12.8 2.7,10.3 5.2,10.3" />
+            </svg>
+          </button>
+        </div>
+
+        {actionError && (
+          <div className="workspaces-page__error" role="alert">
+            {actionError}
+            <button className="workspaces-page__error-dismiss" onClick={() => setActionError(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <div className="workspaces-grid">
           {workspaces.map(ws => (
             <div
               key={ws.id}
               className="workspace-card"
-              onClick={() => navigate(`/workspace/${ws.id}`)}
+              onClick={() => navigate(`/workspace/${encodeURIComponent(ws.id)}`)}
               role="button"
               tabIndex={0}
-              onKeyDown={e => e.key === 'Enter' && navigate(`/workspace/${ws.id}`)}
+              onKeyDown={e => e.key === 'Enter' && navigate(`/workspace/${encodeURIComponent(ws.id)}`)}
             >
               <div className="workspace-card__icon">
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -69,18 +132,9 @@ export function WorkspacesPage() {
                 </svg>
               </div>
               <div className="workspace-card__name">{ws.name}</div>
-              <div className="workspace-card__meta">Created {formatDate(ws.createdAt)}</div>
-              <button
-                className="workspace-card__delete"
-                title="Delete workspace"
-                onClick={e => { e.stopPropagation(); deleteWorkspace(ws.id) }}
-              >
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
-                  <polyline points="1,3 12,3" />
-                  <path d="M4.5 3V2a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1" />
-                  <rect x="2.5" y="3" width="8" height="8.5" rx="1" />
-                </svg>
-              </button>
+              <div className="workspace-card__meta">
+                {ws.id.startsWith('!') ? ws.id : `Created ${formatDate(ws.createdAt)}`}
+              </div>
             </div>
           ))}
 
@@ -94,10 +148,15 @@ export function WorkspacesPage() {
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
                   autoFocus
+                  disabled={actionLoading}
                 />
                 <div className="workspace-new-form__actions">
-                  <button type="submit" className="primary" disabled={!newName.trim()}>Create</button>
-                  <button type="button" className="ghost" onClick={() => { setIsCreating(false); setNewName('') }}>Cancel</button>
+                  <button type="submit" className="primary" disabled={!newName.trim() || actionLoading}>
+                    {actionLoading ? 'Creating...' : 'Create'}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => { setIsCreating(false); setNewName('') }}>
+                    Cancel
+                  </button>
                 </div>
               </form>
             </div>
@@ -113,6 +172,43 @@ export function WorkspacesPage() {
                 <path d="M10 4v12M4 10h12" />
               </svg>
               New workspace
+            </div>
+          )}
+
+          {/* Join workspace */}
+          {isJoining ? (
+            <div className="workspace-card">
+              <form className="workspace-new-form" onSubmit={handleJoin}>
+                <input
+                  type="text"
+                  placeholder="!room_id:homeserver.com"
+                  value={joinRoomId}
+                  onChange={e => setJoinRoomId(e.target.value)}
+                  autoFocus
+                  disabled={actionLoading}
+                />
+                <div className="workspace-new-form__actions">
+                  <button type="submit" className="primary" disabled={!joinRoomId.trim() || actionLoading}>
+                    {actionLoading ? 'Joining...' : 'Join'}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => { setIsJoining(false); setJoinRoomId('') }}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : (
+            <div
+              className="workspace-card workspace-card--new"
+              onClick={() => setIsJoining(true)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => e.key === 'Enter' && setIsJoining(true)}
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M10 4v12M4 10h12" />
+              </svg>
+              Join workspace
             </div>
           )}
         </div>

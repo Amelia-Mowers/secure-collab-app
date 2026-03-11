@@ -1,14 +1,18 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 /**
- * Type definitions for the WASM workspace
- * These will be provided by the app-core WASM module
+ * Shared workspace interface.
+ *
+ * Both the local-only WasmWorkspace and the Matrix-connected ConnectedWorkspace
+ * expose these methods. The only difference is that ConnectedWorkspace's
+ * mutation methods (updateCell, createTable, etc.) are async and send updates
+ * to the Matrix room.
  */
-interface WasmWorkspace {
-  createTable(definition: string): string
-  createView(config: string): string
-  addColumn(tableId: string, columnJson: string): void
-  updateCell(tableId: string, rowId: string, columnId: string, value: string): void
+export interface WorkspaceHandle {
+  createTable(definition: string): string | Promise<string>
+  createView(config: string): string | Promise<string>
+  addColumn(tableId: string, columnJson: string): void | Promise<void>
+  updateCell(tableId: string, rowId: string, columnId: string, value: string): void | Promise<void>
   applyUpdate(update: string): void
   getTableRows(tableId: string): string
   getTableSchema(tableId: string): string
@@ -16,6 +20,10 @@ interface WasmWorkspace {
   listTables(): string
   listViewsForTable(tableId: string): string
   deleteRow(tableId: string, rowId: string): void
+  // ConnectedWorkspace-only methods (optional)
+  startSync?(onChange: () => void): void
+  inviteUser?(userId: string): Promise<void>
+  listMembers?(): Promise<string>
 }
 
 interface TableRow {
@@ -33,18 +41,14 @@ interface UseTableResult {
 }
 
 /**
- * Hook for using a table from the WASM workspace.
+ * Hook for using a table from the workspace.
  *
- * This hook implements a pull model with change notifications:
- * - The WASM core emits "table changed" events
- * - The hook subscribes and re-fetches materialized table state when notified
- *
- * @param workspace - The WASM workspace instance
- * @param tableId - The ID of the table to use
- * @returns Table data and operations
+ * Works with both WasmWorkspace (local-only) and ConnectedWorkspace (Matrix).
+ * When a ConnectedWorkspace is used, remote changes trigger automatic
+ * re-fetches via the startSync onChange callback.
  */
 export function useTable(
-  workspace: WasmWorkspace | null,
+  workspace: WorkspaceHandle | null,
   tableId: string
 ): UseTableResult {
   const [rows, setRows] = useState<TableRow[]>([])
@@ -82,7 +86,8 @@ export function useTable(
 
       try {
         const valueJson = JSON.stringify(value)
-        workspace.updateCell(tableId, rowId, columnId, valueJson)
+        // updateCell may be async (ConnectedWorkspace) or sync (WasmWorkspace)
+        await workspace.updateCell(tableId, rowId, columnId, valueJson)
 
         // Refresh to show the update
         await fetchRows()
@@ -122,12 +127,19 @@ export function useTable(
 }
 
 /**
- * Hook for using the WASM workspace.
+ * Hook for creating a ConnectedWorkspace backed by a Matrix room.
+ *
+ * This creates a ConnectedWorkspace from the MatrixSession and room ID,
+ * starts the sync loop, and provides an onChange counter that increments
+ * whenever remote changes arrive. Components using `useTable` will
+ * automatically re-fetch rows when this happens.
  */
-export function useWorkspace(workspaceId: string) {
-  const [workspace, setWorkspace] = useState<WasmWorkspace | null>(null)
+export function useWorkspace(workspaceId: string, matrixSession?: any) {
+  const [workspace, setWorkspace] = useState<WorkspaceHandle | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const [syncCount, setSyncCount] = useState(0)
+  const workspaceRef = useRef<WorkspaceHandle | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -136,31 +148,47 @@ export function useWorkspace(workspaceId: string) {
       try {
         console.log('Loading WASM module...')
 
-        // Dynamically import the WASM module
         const wasmModule = await import('../wasm/app_core.js')
 
         console.log('Initializing WASM binary...')
-        // Initialize the WASM module (loads the .wasm file)
         await wasmModule.default()
 
         console.log('Setting up panic hook...')
-        // Initialize panic hook for better error messages
         wasmModule.init_panic_hook()
-        // Note: Tracing disabled to reduce memory usage in WASM
-        // wasmModule.init_tracing()
 
-        console.log('Creating workspace:', workspaceId)
+        if (matrixSession) {
+          // Matrix-connected workspace
+          console.log('Creating connected workspace for room:', workspaceId)
+          const cws = new wasmModule.ConnectedWorkspace(matrixSession, workspaceId)
 
-        // Create workspace instance
-        const wasmWorkspace = new wasmModule.WasmWorkspace(workspaceId)
+          // Start the sync loop with a change callback
+          cws.startSync(() => {
+            if (mounted) {
+              console.log('[sync] Remote change detected, triggering refresh')
+              setSyncCount(c => c + 1)
+            }
+          })
 
-        if (mounted) {
-          setWorkspace(wasmWorkspace)
-          setLoading(false)
-          console.log('✅ Workspace initialized successfully')
+          if (mounted) {
+            workspaceRef.current = cws
+            setWorkspace(cws)
+            setLoading(false)
+            console.log('Connected workspace initialized with sync')
+          }
+        } else {
+          // Local-only workspace (fallback when no MatrixSession)
+          console.log('Creating local workspace:', workspaceId)
+          const wasmWorkspace = new wasmModule.WasmWorkspace(workspaceId)
+
+          if (mounted) {
+            workspaceRef.current = wasmWorkspace
+            setWorkspace(wasmWorkspace)
+            setLoading(false)
+            console.log('Local workspace initialized')
+          }
         }
       } catch (err) {
-        console.error('❌ Failed to initialize workspace:', err)
+        console.error('Failed to initialize workspace:', err)
         if (mounted) {
           setError(err instanceof Error ? err : new Error(String(err)))
           setLoading(false)
@@ -173,7 +201,7 @@ export function useWorkspace(workspaceId: string) {
     return () => {
       mounted = false
     }
-  }, [workspaceId])
+  }, [workspaceId, matrixSession])
 
-  return { workspace, loading, error }
+  return { workspace, loading, error, syncCount }
 }

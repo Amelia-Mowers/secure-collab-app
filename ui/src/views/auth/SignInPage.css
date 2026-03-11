@@ -70,18 +70,20 @@
   margin-top: 4px;
 }
 
-.signin__stub-note {
-  margin-top: 20px;
+.signin__error {
   padding: 10px 14px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
+  background: var(--red-muted, #fef2f2);
+  border: 1px solid var(--red, #ef4444);
   border-radius: 8px;
+  font-size: 12px;
+  color: var(--red, #ef4444);
+  line-height: 1.5;
+}
+
+.signin__hint {
+  margin-top: 20px;
   font-size: 11px;
   color: var(--text-tertiary);
   text-align: center;
   line-height: 1.5;
-}
-
-.signin__stub-note strong {
-  color: var(--text-secondary);
 }

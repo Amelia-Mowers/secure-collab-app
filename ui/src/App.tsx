@@ -26,9 +26,10 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 /** The main workspace shell — loads WASM for a specific workspace ID */
 function WorkspaceShell() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const { username } = useAuth()
+  const { username, matrixSession } = useAuth()
   const location = useLocation()
-  const { workspace, loading, error } = useWorkspace(workspaceId!)
+  const decodedWorkspaceId = decodeURIComponent(workspaceId!)
+  const { workspace, loading, error, syncCount } = useWorkspace(decodedWorkspaceId, matrixSession)
 
   if (loading) {
     return (
@@ -56,20 +57,20 @@ function WorkspaceShell() {
 
   return (
     <div className="app">
-      <Sidebar workspace={workspace} username={username} workspaceId={workspaceId!} />
+      <Sidebar workspace={workspace} username={username} workspaceId={decodedWorkspaceId} />
       <div className="app-main">
         <Routes>
-          <Route path="/" element={<WorkspaceHome />} />
-          <Route path="/table/:tableId" element={<TableView workspace={workspace} />} />
-          <Route path="/table/:tableId/view/:viewId" element={<ViewRouter workspace={workspace} />} />
-          <Route path="/table/:tableId/cards" element={<CardView workspace={workspace} />} />
+          <Route path="/" element={<WorkspaceHome syncing={!!matrixSession} />} />
+          <Route path="/table/:tableId" element={<TableView workspace={workspace} key={syncCount} />} />
+          <Route path="/table/:tableId/view/:viewId" element={<ViewRouter workspace={workspace} key={syncCount} />} />
+          <Route path="/table/:tableId/cards" element={<CardView workspace={workspace} key={syncCount} />} />
           <Route
             path="/table/:tableId/entry/:rowId"
-            element={<EntryView workspace={workspace} key={location.key} />}
+            element={<EntryView workspace={workspace} key={`${location.key}-${syncCount}`} />}
           />
           <Route
             path="/table/:tableId/entry/new"
-            element={<EntryView workspace={workspace} key={location.key} />}
+            element={<EntryView workspace={workspace} key={`${location.key}-${syncCount}`} />}
           />
         </Routes>
       </div>
@@ -77,13 +78,18 @@ function WorkspaceShell() {
   )
 }
 
-function WorkspaceHome() {
+function WorkspaceHome({ syncing }: { syncing?: boolean }) {
   return (
     <div className="welcome">
       <div className="welcome-content">
         <div className="welcome-logo" />
         <h1 className="welcome-title">Your Workspace</h1>
         <p className="welcome-subtitle">Create a table from the sidebar to get started.</p>
+        {syncing && (
+          <p className="welcome-sync-hint">
+            Connected to Matrix. Changes sync in real time.
+          </p>
+        )}
       </div>
     </div>
   )

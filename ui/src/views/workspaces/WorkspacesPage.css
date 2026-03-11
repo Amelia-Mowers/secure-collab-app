@@ -101,6 +101,58 @@
   margin-bottom: 32px;
 }
 
+.workspaces-page__header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.workspaces-page__refresh {
+  padding: 6px;
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  background: none;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+  margin-top: 4px;
+}
+
+.workspaces-page__refresh:hover:not(:disabled) {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.workspaces-page__refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.workspaces-page__error {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--red-muted, #fef2f2);
+  border: 1px solid var(--red, #ef4444);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--red, #ef4444);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspaces-page__error-dismiss {
+  font-size: 11px;
+  color: var(--red, #ef4444);
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+  padding: 0;
+}
+
 /* ── Workspace grid ──────────────────────────────────────── */
 .workspaces-grid {
   display: grid;
