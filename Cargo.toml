@@ -15,15 +15,13 @@ authors = ["Secure Collab Contributors"]
 # Core dependencies
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 
-# Matrix SDK
-matrix-sdk = { version = "0.7", features = ["e2e-encryption", "sqlite"] }
-ruma = { version = "0.10", features = ["client-api"] }
-
-# Async runtime
-tokio = { version = "1.35", features = ["full"] }
+# Matrix SDK — default-features off; sub-crates enable indexeddb + js for WASM.
+# Using 0.14 to avoid rustc 1.94 query depth overflow in 0.16's sync() impl.
+# rustls-tls works in both native and WASM contexts (no system OpenSSL needed).
+matrix-sdk = { version = "0.14", default-features = false, features = ["e2e-encryption", "rustls-tls"] }
 futures = "0.3"
 
 # Logging

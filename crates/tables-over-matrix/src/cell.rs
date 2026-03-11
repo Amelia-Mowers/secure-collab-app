@@ -81,9 +81,24 @@ impl Cell {
     }
 }
 
+/// Current wire format version for cell updates.
+pub const CELL_UPDATE_VERSION: u8 = 1;
+
+fn default_version() -> u8 {
+    CELL_UPDATE_VERSION
+}
+
 /// A cell update event that can be sent over Matrix.
+///
+/// The `version` field is included for forward compatibility: old clients
+/// ignore fields they don't understand, and new clients can detect older
+/// event formats. Defaults to [`CELL_UPDATE_VERSION`] on construction
+/// and deserialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellUpdate {
+    /// Wire format version (defaults to 1).
+    #[serde(default = "default_version")]
+    pub version: u8,
     pub table_id: String,
     pub row_id: String,
     pub column_id: String,
@@ -100,6 +115,7 @@ impl CellUpdate {
         timestamp: u64,
     ) -> Self {
         Self {
+            version: CELL_UPDATE_VERSION,
             table_id: table_id.into(),
             row_id: row_id.into(),
             column_id: column_id.into(),

@@ -33,14 +33,18 @@
 
 // Use wee_alloc as the global allocator in WASM builds
 // wee_alloc is optimized for code size and works well with moderate allocations
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
+#[cfg(feature = "wasm")]
 pub mod bridge;
 pub mod schema;
 pub mod views;
 pub mod workspace;
+
+#[cfg(all(feature = "wasm", feature = "matrix"))]
+pub mod bridge_matrix;
 
 // Re-export main types
 pub use schema::{ColumnDefinition, ColumnType, SchemaManager, TableDefinition};
@@ -50,12 +54,13 @@ pub use views::{
 };
 pub use workspace::Workspace;
 
-#[cfg(feature = "matrix")]
-pub use workspace::WorkspaceHandle;
-
-// Re-export bridge for WASM
-#[cfg(target_arch = "wasm32")]
+// Re-export bridge for WASM (local-only workspace)
+#[cfg(feature = "wasm")]
 pub use bridge::{init_panic_hook, init_tracing, WasmWorkspace};
+
+// Re-export Matrix bridge for WASM builds with Matrix enabled
+#[cfg(all(feature = "wasm", feature = "matrix"))]
+pub use bridge_matrix::{ConnectedWorkspace, MatrixSession};
 
 /// Error types for the app-core library.
 /// Uses static strings to avoid allocations in WASM.

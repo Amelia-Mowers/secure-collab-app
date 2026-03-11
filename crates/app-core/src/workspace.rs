@@ -9,9 +9,7 @@ use tables_over_matrix::{CellUpdate, CompactionManager, Table};
 use tracing::info;
 
 #[cfg(feature = "matrix")]
-use std::sync::Arc;
-#[cfg(feature = "matrix")]
-use tokio::sync::RwLock;
+use tables_over_matrix::MatrixClient;
 
 /// A workspace containing tables, schema, and views.
 pub struct Workspace {
@@ -28,6 +26,12 @@ pub struct Workspace {
     compaction_manager: CompactionManager,
     /// Logical timestamp counter
     timestamp_counter: u64,
+    /// Matrix client (when connected)
+    #[cfg(feature = "matrix")]
+    matrix_client: Option<MatrixClient>,
+    /// Whether we have an active Matrix connection
+    #[cfg(feature = "matrix")]
+    connected: bool,
 }
 
 impl Workspace {
@@ -40,6 +44,10 @@ impl Workspace {
             view_manager: ViewManager::new(),
             compaction_manager: CompactionManager::new(),
             timestamp_counter: 0,
+            #[cfg(feature = "matrix")]
+            matrix_client: None,
+            #[cfg(feature = "matrix")]
+            connected: false,
         }
     }
 
@@ -47,6 +55,36 @@ impl Workspace {
     fn next_timestamp(&mut self) -> u64 {
         self.timestamp_counter += 1;
         self.timestamp_counter
+    }
+
+    /// Public version of next_timestamp for the connected bridge.
+    pub fn next_timestamp_pub(&mut self) -> u64 {
+        self.next_timestamp()
+    }
+
+    /// Whether this workspace has a Matrix connection.
+    #[cfg(feature = "matrix")]
+    pub fn is_connected(&self) -> bool {
+        self.connected
+    }
+
+    /// Get a reference to the Matrix client (if connected).
+    #[cfg(feature = "matrix")]
+    pub fn matrix_client(&self) -> Option<&MatrixClient> {
+        self.matrix_client.as_ref()
+    }
+
+    /// Get a mutable reference to the Matrix client (if connected).
+    #[cfg(feature = "matrix")]
+    pub fn matrix_client_mut(&mut self) -> Option<&mut MatrixClient> {
+        self.matrix_client.as_mut()
+    }
+
+    /// Set the Matrix client for this workspace.
+    #[cfg(feature = "matrix")]
+    pub fn set_matrix_client(&mut self, client: MatrixClient) {
+        self.matrix_client = Some(client);
+        self.connected = true;
     }
 
     /// Create a new table in the workspace
@@ -197,10 +235,6 @@ impl Workspace {
         Ok(table.get_all_rows())
     }
 }
-
-/// Thread-safe workspace handle (only available with matrix feature)
-#[cfg(feature = "matrix")]
-pub type WorkspaceHandle = Arc<RwLock<Workspace>>;
 
 #[cfg(test)]
 mod tests {

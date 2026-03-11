@@ -42,9 +42,10 @@ test: ## Run all tests
 test-unit: ## Run only unit tests (fast)
 	cargo test --lib
 
-test-integration: ## Run integration tests (requires homeserver)
-	cargo test --test two_client_sync --ignored
-	cargo test --test cold_start --ignored
+test-integration: ## Run integration tests (requires Conduit in PATH)
+	cargo test -p tables-over-matrix --no-default-features --features matrix-native --test two_client_sync -- --ignored --nocapture
+	cargo test -p tables-over-matrix --no-default-features --features matrix-native --test cold_start_matrix -- --ignored --nocapture
+	cargo test -p app-core --no-default-features --features matrix-native --test workspace_matrix -- --ignored --nocapture --test-threads=4
 
 test-property: ## Run property-based tests
 	cargo test --release -- lww_properties

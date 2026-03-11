@@ -40,6 +40,9 @@
           # System libraries
           openssl
           sqlite
+
+          # Test Matrix homeserver
+          matrix-conduit
         ];
 
         # Runtime libraries

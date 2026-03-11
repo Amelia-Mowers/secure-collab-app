@@ -19,10 +19,8 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 
-# Matrix SDK - only for native builds (not WASM)
+# Matrix SDK (includes ruma re-exports — no separate ruma dep needed)
 matrix-sdk = { workspace = true, optional = true }
-ruma = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 
 # WASM support
@@ -31,6 +29,10 @@ wasm-bindgen-futures = { workspace = true, optional = true }
 getrandom = { workspace = true }
 tracing-wasm = { workspace = true, optional = true }
 
+# getrandom v0.3 (transitive via matrix-sdk) needs the wasm_js feature
+# for WASM targets. Including it here ensures the feature is activated.
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"], optional = true }
+
 # Additional dependencies
 indexmap = { version = "2.1", features = ["serde"] }
 url = "2.5"
@@ -38,9 +40,19 @@ url = "2.5"
 [dev-dependencies]
 proptest = { workspace = true }
 quickcheck = { workspace = true }
-tokio-test = "0.4"
+tokio = { version = "1.35", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
-default = ["matrix"]
-matrix = ["matrix-sdk", "ruma", "tokio", "futures"]
+default = ["wasm"]
+# Core Matrix SDK support (gates all Matrix-specific code).
+# Does NOT enable a store backend — combine with matrix-wasm or matrix-native.
+matrix = ["matrix-sdk", "futures"]
+# Matrix for WASM targets (IndexedDB store + JS interop)
+matrix-wasm = ["matrix", "matrix-sdk/indexeddb", "matrix-sdk/js", "getrandom_03"]
+# Matrix for native targets (SQLite store — used by integration tests)
+matrix-native = ["matrix", "matrix-sdk/sqlite"]
+# WASM bridge support (always on for our browser-first target)
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "tracing-wasm"]

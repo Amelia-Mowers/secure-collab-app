@@ -38,22 +38,21 @@ pub mod table;
 pub mod matrix;
 
 // Re-export main types
-pub use cell::{Cell, CellId, CellUpdate};
+pub use cell::{Cell, CellId, CellUpdate, CELL_UPDATE_VERSION};
 pub use coldstart::{materialize_from_timeline, ColdStartResult, TimelinePaginator};
 pub use compaction::CompactionManager;
 pub use table::Table;
 
 // Re-export Matrix types only when the matrix feature is enabled
 #[cfg(feature = "matrix")]
-pub use matrix::{MatrixClient, SessionInfo, CELL_UPDATE_EVENT_TYPE, CELL_UPDATE_MSGTYPE};
+pub use matrix::{
+    CellUpdateEventContent, MatrixClient, ReceivedCellUpdate, SessionInfo,
+    CELL_UPDATE_EVENT_TYPE,
+};
 
 /// Error types for the library.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[cfg(feature = "matrix")]
-    #[error("Matrix error: {0}")]
-    Matrix(#[from] Box<matrix_sdk::Error>),
-
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 

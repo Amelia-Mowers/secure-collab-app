@@ -33,11 +33,24 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run tests
-        run: cargo test --all-features
+      # Run unit tests without Matrix or WASM features (pure logic tests)
+      - name: Run unit tests
+        run: cargo test -p tables-over-matrix --no-default-features
+
+      # Run unit tests with Matrix SDK on native (sqlite store)
+      - name: Run Matrix unit tests
+        run: cargo test -p tables-over-matrix --no-default-features --features matrix-native --lib
+
+      # Run app-core tests without WASM features
+      - name: Run app-core tests
+        run: cargo test -p app-core --no-default-features
+
+      # Run app-core tests with Matrix SDK on native (sqlite store)
+      - name: Run app-core Matrix unit tests
+        run: cargo test -p app-core --no-default-features --features matrix-native --lib
 
       - name: Run doctests
-        run: cargo test --doc
+        run: cargo test -p tables-over-matrix --no-default-features --doc
 
   fmt:
     name: Rustfmt
@@ -57,7 +70,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      # Lint core library (no WASM or Matrix features)
+      - name: Clippy (core)
+        run: cargo clippy -p tables-over-matrix --no-default-features --all-targets -- -D warnings
+      # Lint with Matrix SDK on native (sqlite store)
+      - name: Clippy (matrix-native)
+        run: cargo clippy -p tables-over-matrix --no-default-features --features matrix-native --all-targets -- -D warnings
+      # Lint app-core (no WASM features)
+      - name: Clippy (app-core)
+        run: cargo clippy -p app-core --no-default-features --all-targets -- -D warnings
+      # Lint app-core with Matrix SDK on native
+      - name: Clippy (app-core matrix-native)
+        run: cargo clippy -p app-core --no-default-features --features matrix-native --all-targets -- -D warnings
 
   wasm:
     name: WASM Build
@@ -132,6 +156,35 @@ jobs:
       - name: Build
         working-directory: ui
         run: npm run build
+
+  integration:
+    name: Matrix Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Run tables-over-matrix integration tests
+        run: |
+          nix develop --command cargo test \
+            -p tables-over-matrix \
+            --no-default-features \
+            --features matrix-native \
+            -- --ignored --nocapture
+
+      - name: Run app-core integration tests
+        run: |
+          nix develop --command cargo test \
+            -p app-core \
+            --no-default-features \
+            --features matrix-native \
+            --test workspace_matrix \
+            -- --ignored --nocapture --test-threads=4
 
   deploy:
     name: Deploy to GitHub Pages

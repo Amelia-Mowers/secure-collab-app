@@ -2,4 +2,6 @@
 rustflags = [
   "-C", "link-arg=--initial-memory=33554432",   # 32MB initial memory (browser safe)
   "-C", "link-arg=--max-memory=134217728",      # 128MB max memory
+  # getrandom v0.3 requires this cfg to enable the JS backend on wasm32
+  "--cfg", "getrandom_backend=\"wasm_js\"",
 ]
