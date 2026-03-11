@@ -18,7 +18,7 @@ mod matrix_impl {
         config::SyncSettings,
         room::Room,
         ruma::{
-            events::macros::EventContent, OwnedEventId, OwnedRoomId, MilliSecondsSinceUnixEpoch,
+            events::macros::EventContent, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId,
             UInt,
         },
         Client,
@@ -89,8 +89,7 @@ mod matrix_impl {
     where
         S: serde::Serializer,
     {
-        let json_string = serde_json::to_string(value)
-            .map_err(serde::ser::Error::custom)?;
+        let json_string = serde_json::to_string(value).map_err(serde::ser::Error::custom)?;
         serializer.serialize_str(&json_string)
     }
 
@@ -261,10 +260,7 @@ mod matrix_impl {
         }
 
         /// Send multiple cell updates in sequence (e.g., user write + bump).
-        pub async fn send_cell_updates(
-            &self,
-            updates: &[CellUpdate],
-        ) -> Result<Vec<OwnedEventId>> {
+        pub async fn send_cell_updates(&self, updates: &[CellUpdate]) -> Result<Vec<OwnedEventId>> {
             let mut event_ids = Vec::with_capacity(updates.len());
             for update in updates {
                 let event_id = self.send_cell_update(update).await?;
@@ -299,9 +295,7 @@ mod matrix_impl {
                 .and_then(|v| v.as_u64())
                 .and_then(|ms| UInt::try_from(ms).ok())
                 .map(MilliSecondsSinceUnixEpoch)
-                .unwrap_or_else(|| {
-                    MilliSecondsSinceUnixEpoch(UInt::from(0u32))
-                });
+                .unwrap_or_else(|| MilliSecondsSinceUnixEpoch(UInt::from(0u32)));
 
             Some(ReceivedCellUpdate {
                 update: cell_content.into(),
@@ -402,9 +396,8 @@ mod matrix_impl {
         #[test]
         fn test_event_content_serialization_roundtrip_object() {
             let complex = json!({"tags": ["urgent"], "priority": 1});
-            let content = CellUpdateEventContent::new(
-                "tasks", "row_1", "metadata", complex.clone(), 200,
-            );
+            let content =
+                CellUpdateEventContent::new("tasks", "row_1", "metadata", complex.clone(), 200);
 
             let json_str = serde_json::to_string(&content).unwrap();
             let decoded: CellUpdateEventContent = serde_json::from_str(&json_str).unwrap();
@@ -446,8 +439,7 @@ mod matrix_impl {
                 "sender": "@alice:example.com"
             });
 
-            let received =
-                MatrixClient::extract_cell_update(&event_json.to_string()).unwrap();
+            let received = MatrixClient::extract_cell_update(&event_json.to_string()).unwrap();
 
             assert_eq!(received.update.table_id, "tasks");
             assert_eq!(received.update.row_id, "task_1");
@@ -474,8 +466,7 @@ mod matrix_impl {
                 "sender": "@alice:example.com"
             });
 
-            let received =
-                MatrixClient::extract_cell_update(&event_json.to_string()).unwrap();
+            let received = MatrixClient::extract_cell_update(&event_json.to_string()).unwrap();
             assert_eq!(received.update.value, json!(3.14));
         }
 

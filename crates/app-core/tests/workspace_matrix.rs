@@ -21,12 +21,20 @@ use app_core::views::{KanbanConfig, ViewConfig, ViewType};
 /// Helper: send a single CellUpdate through the workspace's MatrixClient.
 /// Drops the immutable borrow before returning so the caller can mutate `ws` again.
 async fn send_update(ws: &app_core::Workspace, update: &CellUpdate) {
-    ws.matrix_client().unwrap().send_cell_update(update).await.unwrap();
+    ws.matrix_client()
+        .unwrap()
+        .send_cell_update(update)
+        .await
+        .unwrap();
 }
 
 /// Helper: send a batch of CellUpdates.
 async fn send_updates(ws: &app_core::Workspace, updates: &[CellUpdate]) {
-    ws.matrix_client().unwrap().send_cell_updates(updates).await.unwrap();
+    ws.matrix_client()
+        .unwrap()
+        .send_cell_updates(updates)
+        .await
+        .unwrap();
 }
 
 // ─── Realistic scenarios ────────────────────────────────────────────
@@ -42,17 +50,26 @@ async fn test_workspace_create_table_and_send_updates() {
     // Create a table
     let def = TableDefinition::new("tasks", "Tasks")
         .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text))
-        .with_column(ColumnDefinition::new("status", "Status", ColumnType::Select));
+        .with_column(ColumnDefinition::new(
+            "status",
+            "Status",
+            ColumnType::Select,
+        ));
 
     let updates = ws.create_table(def).unwrap();
-    assert!(!updates.is_empty(), "create_table should produce schema updates");
+    assert!(
+        !updates.is_empty(),
+        "create_table should produce schema updates"
+    );
 
     // Send the schema updates to Matrix
     send_updates(&ws, &updates).await;
 
     // Now add some data
-    ws.update_cell("tasks", "t1", "title", json!("Design homepage")).unwrap();
-    ws.update_cell("tasks", "t1", "status", json!("todo")).unwrap();
+    ws.update_cell("tasks", "t1", "title", json!("Design homepage"))
+        .unwrap();
+    ws.update_cell("tasks", "t1", "status", json!("todo"))
+        .unwrap();
 
     let ts = ws.next_timestamp_pub();
     let update = CellUpdate::new("tasks", "t1", "title", json!("Design homepage"), ts);
@@ -60,7 +77,10 @@ async fn test_workspace_create_table_and_send_updates() {
 
     // Verify local state
     let table = ws.get_table("tasks").unwrap();
-    assert_eq!(table.get_value("t1", "title"), Some(&json!("Design homepage")));
+    assert_eq!(
+        table.get_value("t1", "title"),
+        Some(&json!("Design homepage"))
+    );
     assert_eq!(table.get_value("t1", "status"), Some(&json!("todo")));
 
     eprintln!("[PASS] workspace_create_table_and_send_updates");
@@ -80,14 +100,19 @@ async fn test_two_workspaces_sync_via_matrix() {
     let mut bob_ws = connected_workspace(&room_id, bob_client);
 
     // Alice creates a table and sends updates
-    let def = TableDefinition::new("notes", "Notes")
-        .with_column(ColumnDefinition::new("body", "Body", ColumnType::Text));
+    let def = TableDefinition::new("notes", "Notes").with_column(ColumnDefinition::new(
+        "body",
+        "Body",
+        ColumnType::Text,
+    ));
 
     let schema_updates = alice_ws.create_table(def.clone()).unwrap();
     send_updates(&alice_ws, &schema_updates).await;
 
     // Alice adds a note
-    alice_ws.update_cell("notes", "n1", "body", json!("Hello from Alice")).unwrap();
+    alice_ws
+        .update_cell("notes", "n1", "body", json!("Hello from Alice"))
+        .unwrap();
     let ts = alice_ws.next_timestamp_pub();
     let update = CellUpdate::new("notes", "n1", "body", json!("Hello from Alice"), ts);
     send_update(&alice_ws, &update).await;
@@ -120,12 +145,24 @@ async fn test_workspace_multiple_tables_and_views() {
     // Create two tables
     let tasks_def = TableDefinition::new("tasks", "Tasks")
         .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text))
-        .with_column(ColumnDefinition::new("status", "Status", ColumnType::Select))
-        .with_column(ColumnDefinition::new("assignee", "Assignee", ColumnType::Text));
+        .with_column(ColumnDefinition::new(
+            "status",
+            "Status",
+            ColumnType::Select,
+        ))
+        .with_column(ColumnDefinition::new(
+            "assignee",
+            "Assignee",
+            ColumnType::Text,
+        ));
 
     let projects_def = TableDefinition::new("projects", "Projects")
         .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text))
-        .with_column(ColumnDefinition::new("budget", "Budget", ColumnType::Number));
+        .with_column(ColumnDefinition::new(
+            "budget",
+            "Budget",
+            ColumnType::Number,
+        ));
 
     let task_updates = ws.create_table(tasks_def).unwrap();
     let proj_updates = ws.create_table(projects_def).unwrap();
@@ -134,12 +171,17 @@ async fn test_workspace_multiple_tables_and_views() {
     send_updates(&ws, &proj_updates).await;
 
     // Add data to both tables
-    ws.update_cell("tasks", "t1", "title", json!("Fix bug")).unwrap();
-    ws.update_cell("tasks", "t1", "status", json!("In Progress")).unwrap();
-    ws.update_cell("tasks", "t1", "assignee", json!("Alice")).unwrap();
+    ws.update_cell("tasks", "t1", "title", json!("Fix bug"))
+        .unwrap();
+    ws.update_cell("tasks", "t1", "status", json!("In Progress"))
+        .unwrap();
+    ws.update_cell("tasks", "t1", "assignee", json!("Alice"))
+        .unwrap();
 
-    ws.update_cell("projects", "p1", "name", json!("Website Redesign")).unwrap();
-    ws.update_cell("projects", "p1", "budget", json!(50000)).unwrap();
+    ws.update_cell("projects", "p1", "name", json!("Website Redesign"))
+        .unwrap();
+    ws.update_cell("projects", "p1", "budget", json!(50000))
+        .unwrap();
 
     // Create a kanban view for tasks
     let kanban_config = KanbanConfig {
@@ -182,14 +224,18 @@ async fn test_workspace_add_column_after_creation() {
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
     // Create a table with one column
-    let def = TableDefinition::new("items", "Items")
-        .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text));
+    let def = TableDefinition::new("items", "Items").with_column(ColumnDefinition::new(
+        "name",
+        "Name",
+        ColumnType::Text,
+    ));
 
     let updates = ws.create_table(def).unwrap();
     send_updates(&ws, &updates).await;
 
     // Add data
-    ws.update_cell("items", "i1", "name", json!("Widget A")).unwrap();
+    ws.update_cell("items", "i1", "name", json!("Widget A"))
+        .unwrap();
 
     // Add a new column
     let new_col = ColumnDefinition::new("price", "Price", ColumnType::Number);
@@ -197,7 +243,8 @@ async fn test_workspace_add_column_after_creation() {
     send_updates(&ws, &col_updates).await;
 
     // Set value in the new column
-    ws.update_cell("items", "i1", "price", json!(29.99)).unwrap();
+    ws.update_cell("items", "i1", "price", json!(29.99))
+        .unwrap();
 
     // Verify schema has both columns
     let schema = ws.get_table_schema("items").unwrap();
@@ -221,14 +268,19 @@ async fn test_workspace_delete_row_and_verify() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("users", "Users")
-        .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text));
+    let def = TableDefinition::new("users", "Users").with_column(ColumnDefinition::new(
+        "name",
+        "Name",
+        ColumnType::Text,
+    ));
     ws.create_table(def).unwrap();
 
     // Add 3 rows
-    ws.update_cell("users", "u1", "name", json!("Alice")).unwrap();
+    ws.update_cell("users", "u1", "name", json!("Alice"))
+        .unwrap();
     ws.update_cell("users", "u2", "name", json!("Bob")).unwrap();
-    ws.update_cell("users", "u3", "name", json!("Charlie")).unwrap();
+    ws.update_cell("users", "u3", "name", json!("Charlie"))
+        .unwrap();
 
     assert_eq!(ws.get_table("users").unwrap().rows().len(), 3);
 
@@ -254,8 +306,7 @@ async fn test_workspace_invite_and_member_listing() {
     let alice = &clients[0];
     alice.sync_once().await.unwrap();
 
-    let room_id_parsed: matrix_sdk::ruma::OwnedRoomId =
-        room_id.as_str().try_into().unwrap();
+    let room_id_parsed: matrix_sdk::ruma::OwnedRoomId = room_id.as_str().try_into().unwrap();
     let room = alice.inner().get_room(&room_id_parsed).unwrap();
 
     // The room should have at least 2 members
@@ -286,8 +337,11 @@ async fn test_edge_case_empty_string_values() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("edge", "Edge Cases")
-        .with_column(ColumnDefinition::new("text", "Text", ColumnType::Text));
+    let def = TableDefinition::new("edge", "Edge Cases").with_column(ColumnDefinition::new(
+        "text",
+        "Text",
+        ColumnType::Text,
+    ));
     ws.create_table(def).unwrap();
 
     // Empty string
@@ -310,33 +364,60 @@ async fn test_edge_case_unicode_and_special_chars() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("unicode", "Unicode Table")
-        .with_column(ColumnDefinition::new("text", "Text", ColumnType::Text));
+    let def = TableDefinition::new("unicode", "Unicode Table").with_column(ColumnDefinition::new(
+        "text",
+        "Text",
+        ColumnType::Text,
+    ));
     ws.create_table(def).unwrap();
 
     // Unicode characters
     let unicode_val = json!("Hello \u{4e16}\u{754c} \u{1f30d}"); // Hello 世界 🌍
-    ws.update_cell("unicode", "r1", "text", unicode_val.clone()).unwrap();
+    ws.update_cell("unicode", "r1", "text", unicode_val.clone())
+        .unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("unicode", "r1", "text", unicode_val.clone(), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("unicode", "r1", "text", unicode_val.clone(), ts),
+    )
+    .await;
 
-    assert_eq!(ws.get_table("unicode").unwrap().get_value("r1", "text"), Some(&unicode_val));
+    assert_eq!(
+        ws.get_table("unicode").unwrap().get_value("r1", "text"),
+        Some(&unicode_val)
+    );
 
     // Newlines and tabs
     let special = json!("line1\nline2\ttab");
-    ws.update_cell("unicode", "r2", "text", special.clone()).unwrap();
+    ws.update_cell("unicode", "r2", "text", special.clone())
+        .unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("unicode", "r2", "text", special.clone(), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("unicode", "r2", "text", special.clone(), ts),
+    )
+    .await;
 
-    assert_eq!(ws.get_table("unicode").unwrap().get_value("r2", "text"), Some(&special));
+    assert_eq!(
+        ws.get_table("unicode").unwrap().get_value("r2", "text"),
+        Some(&special)
+    );
 
     // Quotes and backslashes
     let escaped = json!(r#"He said "hello" \ world"#);
-    ws.update_cell("unicode", "r3", "text", escaped.clone()).unwrap();
+    ws.update_cell("unicode", "r3", "text", escaped.clone())
+        .unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("unicode", "r3", "text", escaped.clone(), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("unicode", "r3", "text", escaped.clone(), ts),
+    )
+    .await;
 
-    assert_eq!(ws.get_table("unicode").unwrap().get_value("r3", "text"), Some(&escaped));
+    assert_eq!(
+        ws.get_table("unicode").unwrap().get_value("r3", "text"),
+        Some(&escaped)
+    );
 
     eprintln!("[PASS] edge_case_unicode_and_special_chars");
 }
@@ -349,13 +430,17 @@ async fn test_edge_case_large_payload() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("large", "Large Data")
-        .with_column(ColumnDefinition::new("data", "Data", ColumnType::Text));
+    let def = TableDefinition::new("large", "Large Data").with_column(ColumnDefinition::new(
+        "data",
+        "Data",
+        ColumnType::Text,
+    ));
     ws.create_table(def).unwrap();
 
     // 10KB string
     let large_string = "x".repeat(10_000);
-    ws.update_cell("large", "r1", "data", json!(large_string.clone())).unwrap();
+    ws.update_cell("large", "r1", "data", json!(large_string.clone()))
+        .unwrap();
 
     let ts = ws.next_timestamp_pub();
     let update = CellUpdate::new("large", "r1", "data", json!(large_string.clone()), ts);
@@ -376,8 +461,11 @@ async fn test_edge_case_numeric_extremes() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("nums", "Numbers")
-        .with_column(ColumnDefinition::new("value", "Value", ColumnType::Number));
+    let def = TableDefinition::new("nums", "Numbers").with_column(ColumnDefinition::new(
+        "value",
+        "Value",
+        ColumnType::Number,
+    ));
     ws.create_table(def).unwrap();
 
     // Zero
@@ -386,25 +474,46 @@ async fn test_edge_case_numeric_extremes() {
     send_update(&ws, &CellUpdate::new("nums", "r1", "value", json!(0), ts)).await;
 
     // Negative
-    ws.update_cell("nums", "r2", "value", json!(-999999)).unwrap();
+    ws.update_cell("nums", "r2", "value", json!(-999999))
+        .unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("nums", "r2", "value", json!(-999999), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("nums", "r2", "value", json!(-999999), ts),
+    )
+    .await;
 
     // Float (now safe to send — value is string-encoded on the wire)
-    ws.update_cell("nums", "r3", "value", json!(3.14159265358979)).unwrap();
+    ws.update_cell("nums", "r3", "value", json!(3.14159265358979))
+        .unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("nums", "r3", "value", json!(3.14159265358979), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("nums", "r3", "value", json!(3.14159265358979), ts),
+    )
+    .await;
 
     // Large integer (JS MAX_SAFE_INTEGER)
-    ws.update_cell("nums", "r4", "value", json!(9007199254740991_i64)).unwrap();
+    ws.update_cell("nums", "r4", "value", json!(9007199254740991_i64))
+        .unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("nums", "r4", "value", json!(9007199254740991_i64), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("nums", "r4", "value", json!(9007199254740991_i64), ts),
+    )
+    .await;
 
     let table = ws.get_table("nums").unwrap();
     assert_eq!(table.get_value("r1", "value"), Some(&json!(0)));
     assert_eq!(table.get_value("r2", "value"), Some(&json!(-999999)));
-    assert_eq!(table.get_value("r3", "value"), Some(&json!(3.14159265358979)));
-    assert_eq!(table.get_value("r4", "value"), Some(&json!(9007199254740991_i64)));
+    assert_eq!(
+        table.get_value("r3", "value"),
+        Some(&json!(3.14159265358979))
+    );
+    assert_eq!(
+        table.get_value("r4", "value"),
+        Some(&json!(9007199254740991_i64))
+    );
 
     eprintln!("[PASS] edge_case_numeric_extremes");
 }
@@ -425,17 +534,29 @@ async fn test_edge_case_null_and_boolean_values() {
     // Boolean true
     ws.update_cell("mixed", "r1", "flag", json!(true)).unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("mixed", "r1", "flag", json!(true), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("mixed", "r1", "flag", json!(true), ts),
+    )
+    .await;
 
     // Boolean false
     ws.update_cell("mixed", "r2", "flag", json!(false)).unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("mixed", "r2", "flag", json!(false), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("mixed", "r2", "flag", json!(false), ts),
+    )
+    .await;
 
     // Null value
     ws.update_cell("mixed", "r3", "data", json!(null)).unwrap();
     let ts = ws.next_timestamp_pub();
-    send_update(&ws, &CellUpdate::new("mixed", "r3", "data", json!(null), ts)).await;
+    send_update(
+        &ws,
+        &CellUpdate::new("mixed", "r3", "data", json!(null), ts),
+    )
+    .await;
 
     let table = ws.get_table("mixed").unwrap();
     assert_eq!(table.get_value("r1", "flag"), Some(&json!(true)));
@@ -478,8 +599,11 @@ async fn test_edge_case_rapid_updates_same_cell() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("counter", "Counter")
-        .with_column(ColumnDefinition::new("value", "Value", ColumnType::Number));
+    let def = TableDefinition::new("counter", "Counter").with_column(ColumnDefinition::new(
+        "value",
+        "Value",
+        ColumnType::Number,
+    ));
     ws.create_table(def).unwrap();
 
     // Send 20 rapid updates to the same cell
@@ -508,8 +632,11 @@ async fn test_edge_case_many_rows() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("bulk", "Bulk Data")
-        .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text));
+    let def = TableDefinition::new("bulk", "Bulk Data").with_column(ColumnDefinition::new(
+        "name",
+        "Name",
+        ColumnType::Text,
+    ));
     ws.create_table(def).unwrap();
 
     // Add 100 rows
@@ -553,20 +680,27 @@ async fn test_edge_case_concurrent_table_operations() {
     let mut bob_ws = connected_workspace(&room_id, bob_client);
 
     // Both create the same table locally
-    let def = TableDefinition::new("shared", "Shared Table")
-        .with_column(ColumnDefinition::new("text", "Text", ColumnType::Text));
+    let def = TableDefinition::new("shared", "Shared Table").with_column(ColumnDefinition::new(
+        "text",
+        "Text",
+        ColumnType::Text,
+    ));
 
     alice_ws.create_table(def.clone()).unwrap();
     bob_ws.create_table(def).unwrap();
 
     // Alice writes to cell A
-    alice_ws.update_cell("shared", "r1", "text", json!("Alice's data")).unwrap();
+    alice_ws
+        .update_cell("shared", "r1", "text", json!("Alice's data"))
+        .unwrap();
     let ts = alice_ws.next_timestamp_pub();
     let alice_update = CellUpdate::new("shared", "r1", "text", json!("Alice's data"), ts);
     send_update(&alice_ws, &alice_update).await;
 
     // Bob writes to cell B
-    bob_ws.update_cell("shared", "r2", "text", json!("Bob's data")).unwrap();
+    bob_ws
+        .update_cell("shared", "r2", "text", json!("Bob's data"))
+        .unwrap();
     let ts = bob_ws.next_timestamp_pub();
     let bob_update = CellUpdate::new("shared", "r2", "text", json!("Bob's data"), ts);
     send_update(&bob_ws, &bob_update).await;
@@ -582,10 +716,22 @@ async fn test_edge_case_concurrent_table_operations() {
     assert_eq!(alice_table.rows().len(), 2);
     assert_eq!(bob_table.rows().len(), 2);
 
-    assert_eq!(alice_table.get_value("r1", "text"), Some(&json!("Alice's data")));
-    assert_eq!(alice_table.get_value("r2", "text"), Some(&json!("Bob's data")));
-    assert_eq!(bob_table.get_value("r1", "text"), Some(&json!("Alice's data")));
-    assert_eq!(bob_table.get_value("r2", "text"), Some(&json!("Bob's data")));
+    assert_eq!(
+        alice_table.get_value("r1", "text"),
+        Some(&json!("Alice's data"))
+    );
+    assert_eq!(
+        alice_table.get_value("r2", "text"),
+        Some(&json!("Bob's data"))
+    );
+    assert_eq!(
+        bob_table.get_value("r1", "text"),
+        Some(&json!("Alice's data"))
+    );
+    assert_eq!(
+        bob_table.get_value("r2", "text"),
+        Some(&json!("Bob's data"))
+    );
 
     eprintln!("[PASS] edge_case_concurrent_table_operations");
 }
@@ -626,11 +772,17 @@ async fn test_edge_case_lww_conflict_resolution() {
 
     // Both should resolve to Bob's value (higher timestamp wins)
     assert_eq!(
-        alice_ws.get_table("conflict").unwrap().get_value("r1", "value"),
+        alice_ws
+            .get_table("conflict")
+            .unwrap()
+            .get_value("r1", "value"),
         Some(&json!("Bob wins!"))
     );
     assert_eq!(
-        bob_ws.get_table("conflict").unwrap().get_value("r1", "value"),
+        bob_ws
+            .get_table("conflict")
+            .unwrap()
+            .get_value("r1", "value"),
         Some(&json!("Bob wins!"))
     );
 
@@ -645,8 +797,11 @@ async fn test_edge_case_json_object_as_cell_value() {
 
     let mut ws = connected_workspace(&room_id, clients.into_iter().next().unwrap());
 
-    let def = TableDefinition::new("rich", "Rich Data")
-        .with_column(ColumnDefinition::new("metadata", "Metadata", ColumnType::Text));
+    let def = TableDefinition::new("rich", "Rich Data").with_column(ColumnDefinition::new(
+        "metadata",
+        "Metadata",
+        ColumnType::Text,
+    ));
     ws.create_table(def).unwrap();
 
     // Store a JSON object as a cell value
@@ -655,7 +810,8 @@ async fn test_edge_case_json_object_as_cell_value() {
         "priority": 1,
         "nested": {"key": "value"},
     });
-    ws.update_cell("rich", "r1", "metadata", complex.clone()).unwrap();
+    ws.update_cell("rich", "r1", "metadata", complex.clone())
+        .unwrap();
 
     let ts = ws.next_timestamp_pub();
     let update = CellUpdate::new("rich", "r1", "metadata", complex.clone(), ts);

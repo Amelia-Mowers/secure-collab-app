@@ -18,8 +18,7 @@ use wasm_bindgen_futures::spawn_local;
 use matrix_sdk::{
     config::SyncSettings,
     ruma::{
-        api::client::room::create_room::v3::Request as CreateRoomRequest,
-        OwnedRoomId, OwnedUserId,
+        api::client::room::create_room::v3::Request as CreateRoomRequest, OwnedRoomId, OwnedUserId,
     },
     Client, LoopCtrl, RoomMemberships,
 };
@@ -73,9 +72,8 @@ impl MatrixSession {
     pub async fn create_room(&self, name: String) -> Result<String, JsValue> {
         let mut request = CreateRoomRequest::new();
         request.name = Some(name);
-        request.preset = Some(
-            matrix_sdk::ruma::api::client::room::create_room::v3::RoomPreset::PrivateChat,
-        );
+        request.preset =
+            Some(matrix_sdk::ruma::api::client::room::create_room::v3::RoomPreset::PrivateChat);
 
         let room = self
             .client
@@ -204,7 +202,8 @@ impl ConnectedWorkspace {
 
                             for raw_event in &joined.timeline.events {
                                 // Try to extract our custom event
-                                if let Ok(json_str) = serde_json::to_string(raw_event.raw().json()) {
+                                if let Ok(json_str) = serde_json::to_string(raw_event.raw().json())
+                                {
                                     if let Some(received) =
                                         MatrixClient::extract_cell_update(&json_str)
                                     {
@@ -270,8 +269,7 @@ impl ConnectedWorkspace {
             })
             .collect();
 
-        serde_json::to_string(&user_ids)
-            .map_err(|_| JsValue::from_str("Serialization failed"))
+        serde_json::to_string(&user_ids).map_err(|_| JsValue::from_str("Serialization failed"))
     }
 
     // ── Table operations (delegated to inner workspace + Matrix send) ──
@@ -279,9 +277,8 @@ impl ConnectedWorkspace {
     /// Create a table. Returns the cell updates as JSON.
     #[wasm_bindgen(js_name = createTable)]
     pub async fn create_table(&self, definition_json: &str) -> Result<String, JsValue> {
-        let definition: crate::schema::TableDefinition =
-            serde_json::from_str(definition_json)
-                .map_err(|_| JsValue::from_str("Invalid table definition"))?;
+        let definition: crate::schema::TableDefinition = serde_json::from_str(definition_json)
+            .map_err(|_| JsValue::from_str("Invalid table definition"))?;
 
         let updates = {
             let mut ws = self.inner.borrow_mut();
@@ -292,8 +289,7 @@ impl ConnectedWorkspace {
         // Send updates to Matrix
         self.send_updates(&updates).await?;
 
-        serde_json::to_string(&updates)
-            .map_err(|_| JsValue::from_str("Serialization failed"))
+        serde_json::to_string(&updates).map_err(|_| JsValue::from_str("Serialization failed"))
     }
 
     /// Update a cell. Applies locally and sends to Matrix.
@@ -339,8 +335,7 @@ impl ConnectedWorkspace {
         let rows = ws
             .get_table_rows(&table_id)
             .map_err(|_| JsValue::from_str("Table not found"))?;
-        serde_json::to_string(&rows)
-            .map_err(|_| JsValue::from_str("Serialization failed"))
+        serde_json::to_string(&rows).map_err(|_| JsValue::from_str("Serialization failed"))
     }
 
     /// Get table schema as JSON.
@@ -350,8 +345,7 @@ impl ConnectedWorkspace {
         let schema = ws
             .get_table_schema(&table_id)
             .ok_or_else(|| JsValue::from_str("Table not found"))?;
-        serde_json::to_string(&schema)
-            .map_err(|_| JsValue::from_str("Serialization failed"))
+        serde_json::to_string(&schema).map_err(|_| JsValue::from_str("Serialization failed"))
     }
 
     /// List all tables.
@@ -376,8 +370,7 @@ impl ConnectedWorkspace {
 
         self.send_updates(&updates).await?;
 
-        serde_json::to_string(&updates)
-            .map_err(|_| JsValue::from_str("Serialization failed"))
+        serde_json::to_string(&updates).map_err(|_| JsValue::from_str("Serialization failed"))
     }
 
     /// Get view configuration as JSON.
@@ -387,8 +380,7 @@ impl ConnectedWorkspace {
         let view = ws
             .get_view(&view_id)
             .ok_or_else(|| JsValue::from_str("View not found"))?;
-        serde_json::to_string(&view)
-            .map_err(|_| JsValue::from_str("Serialization failed"))
+        serde_json::to_string(&view).map_err(|_| JsValue::from_str("Serialization failed"))
     }
 
     /// List views for a table.
@@ -401,11 +393,7 @@ impl ConnectedWorkspace {
 
     /// Add a column to an existing table's schema.
     #[wasm_bindgen(js_name = addColumn)]
-    pub async fn add_column(
-        &self,
-        table_id: String,
-        column_json: &str,
-    ) -> Result<(), JsValue> {
+    pub async fn add_column(&self, table_id: String, column_json: &str) -> Result<(), JsValue> {
         let column: crate::schema::ColumnDefinition = serde_json::from_str(column_json)
             .map_err(|_| JsValue::from_str("Invalid column definition"))?;
 

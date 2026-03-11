@@ -15,9 +15,7 @@ use tables_over_matrix::{CellUpdate, Table};
 #[ignore]
 async fn test_two_client_cell_sync() {
     let harness = TestHarness::new().await.unwrap();
-    let (clients, _room_id) = setup_workspace(&harness, &["alice", "bob"])
-        .await
-        .unwrap();
+    let (clients, _room_id) = setup_workspace(&harness, &["alice", "bob"]).await.unwrap();
 
     // Client A sends a cell update to the room
     let update = CellUpdate::new("tasks", "task1", "title", json!("Buy groceries"), 100);
@@ -50,9 +48,7 @@ async fn test_two_client_cell_sync() {
 #[ignore]
 async fn test_concurrent_updates_converge() {
     let harness = TestHarness::new().await.unwrap();
-    let (clients, _room_id) = setup_workspace(&harness, &["alice", "bob"])
-        .await
-        .unwrap();
+    let (clients, _room_id) = setup_workspace(&harness, &["alice", "bob"]).await.unwrap();
 
     // Both clients send conflicting updates
     let update_a = CellUpdate::new("tasks", "task1", "title", json!("Alice's version"), 100);
@@ -92,9 +88,7 @@ async fn test_concurrent_updates_converge() {
 #[ignore]
 async fn test_send_multiple_updates() {
     let harness = TestHarness::new().await.unwrap();
-    let (clients, _room_id) = setup_workspace(&harness, &["alice"])
-        .await
-        .unwrap();
+    let (clients, _room_id) = setup_workspace(&harness, &["alice"]).await.unwrap();
 
     // Send several updates via Matrix
     let updates = vec![

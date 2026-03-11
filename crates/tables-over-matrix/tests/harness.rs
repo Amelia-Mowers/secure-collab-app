@@ -41,8 +41,7 @@ impl TestHarness {
 
         // Create a temporary data directory
         let data_dir = std::env::temp_dir().join(format!("conduit-test-{port}"));
-        std::fs::create_dir_all(&data_dir)
-            .context("Failed to create temp data directory")?;
+        std::fs::create_dir_all(&data_dir).context("Failed to create temp data directory")?;
 
         // Write a minimal Conduit config
         let config_path = data_dir.join("conduit.toml");
@@ -62,8 +61,8 @@ log = "warn"
             db_path = data_dir.join("db").display(),
             port = port,
         );
-        let mut f = std::fs::File::create(&config_path)
-            .context("Failed to write conduit config")?;
+        let mut f =
+            std::fs::File::create(&config_path).context("Failed to write conduit config")?;
         f.write_all(config.as_bytes())?;
 
         // Start Conduit
@@ -95,7 +94,11 @@ log = "warn"
         for i in 0..50 {
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    eprintln!("[harness] Conduit ready on port {} (attempt {})", self.port, i + 1);
+                    eprintln!(
+                        "[harness] Conduit ready on port {} (attempt {})",
+                        self.port,
+                        i + 1
+                    );
                     return Ok(());
                 }
                 _ => sleep(Duration::from_millis(100)).await,
@@ -121,10 +124,7 @@ log = "warn"
         // POST to /register — Conduit with allow_registration=true
         // accepts m.login.dummy auth directly.
         let http = reqwest::Client::new();
-        let register_url = format!(
-            "{}/_matrix/client/r0/register",
-            self.homeserver_url
-        );
+        let register_url = format!("{}/_matrix/client/r0/register", self.homeserver_url);
 
         let body = serde_json::json!({
             "username": username,
@@ -163,10 +163,7 @@ log = "warn"
             .access_token()
             .context("Client not logged in — no access token")?;
 
-        let url = format!(
-            "{}/_matrix/client/r0/createRoom",
-            self.homeserver_url
-        );
+        let url = format!("{}/_matrix/client/r0/createRoom", self.homeserver_url);
 
         let body = serde_json::json!({
             "name": room_name,
@@ -299,9 +296,7 @@ pub async fn setup_workspace(
     }
 
     // First user creates the room
-    let room_id = harness
-        .create_room(&clients[0], "test-workspace")
-        .await?;
+    let room_id = harness.create_room(&clients[0], "test-workspace").await?;
 
     // First user syncs so the SDK knows about the room
     clients[0].sync_once().await?;

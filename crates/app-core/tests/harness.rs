@@ -39,8 +39,7 @@ impl TestHarness {
         let homeserver_url = format!("http://localhost:{port}");
 
         let data_dir = std::env::temp_dir().join(format!("conduit-appcore-test-{port}"));
-        std::fs::create_dir_all(&data_dir)
-            .context("Failed to create temp data directory")?;
+        std::fs::create_dir_all(&data_dir).context("Failed to create temp data directory")?;
 
         let config_path = data_dir.join("conduit.toml");
         let config = format!(
@@ -59,8 +58,8 @@ log = "warn"
             db_path = data_dir.join("db").display(),
             port = port,
         );
-        let mut f = std::fs::File::create(&config_path)
-            .context("Failed to write conduit config")?;
+        let mut f =
+            std::fs::File::create(&config_path).context("Failed to write conduit config")?;
         f.write_all(config.as_bytes())?;
 
         let conduit_process = Command::new("conduit")
@@ -88,14 +87,21 @@ log = "warn"
         for i in 0..50 {
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
-                    eprintln!("[harness] Conduit ready on port {} (attempt {})", self.port, i + 1);
+                    eprintln!(
+                        "[harness] Conduit ready on port {} (attempt {})",
+                        self.port,
+                        i + 1
+                    );
                     return Ok(());
                 }
                 _ => sleep(Duration::from_millis(100)).await,
             }
         }
 
-        bail!("Conduit failed to start within 5 seconds on port {}", self.port);
+        bail!(
+            "Conduit failed to start within 5 seconds on port {}",
+            self.port
+        );
     }
 
     pub fn homeserver_url(&self) -> &str {
@@ -107,10 +113,7 @@ log = "warn"
         let password = format!("{username}_test_password");
 
         let http = reqwest::Client::new();
-        let register_url = format!(
-            "{}/_matrix/client/r0/register",
-            self.homeserver_url
-        );
+        let register_url = format!("{}/_matrix/client/r0/register", self.homeserver_url);
 
         let body = serde_json::json!({
             "username": username,
@@ -148,10 +151,7 @@ log = "warn"
             .access_token()
             .context("Client not logged in — no access token")?;
 
-        let url = format!(
-            "{}/_matrix/client/r0/createRoom",
-            self.homeserver_url
-        );
+        let url = format!("{}/_matrix/client/r0/createRoom", self.homeserver_url);
 
         let body = serde_json::json!({
             "name": room_name,
@@ -279,9 +279,7 @@ pub async fn setup_workspace(
         clients.push(client);
     }
 
-    let room_id = harness
-        .create_room(&clients[0], "test-workspace")
-        .await?;
+    let room_id = harness.create_room(&clients[0], "test-workspace").await?;
 
     clients[0].sync_once().await?;
     clients[0].set_room_from_str(&room_id)?;

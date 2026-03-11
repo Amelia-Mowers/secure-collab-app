@@ -15,9 +15,7 @@ use tables_over_matrix::{materialize_from_timeline, CellUpdate};
 #[ignore]
 async fn test_cold_start_from_sent_events() {
     let harness = TestHarness::new().await.unwrap();
-    let (clients, _room_id) = setup_workspace(&harness, &["alice"])
-        .await
-        .unwrap();
+    let (clients, _room_id) = setup_workspace(&harness, &["alice"]).await.unwrap();
 
     // Alice sends several cell updates to the room
     let updates = vec![
@@ -65,9 +63,7 @@ async fn test_cold_start_from_sent_events() {
 #[ignore]
 async fn test_cold_start_with_bumping() {
     let harness = TestHarness::new().await.unwrap();
-    let (clients, _room_id) = setup_workspace(&harness, &["alice"])
-        .await
-        .unwrap();
+    let (clients, _room_id) = setup_workspace(&harness, &["alice"]).await.unwrap();
 
     // Simulate a history with user updates and compaction bumps
     let events = vec![
