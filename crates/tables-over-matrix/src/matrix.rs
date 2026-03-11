@@ -10,12 +10,7 @@ pub use matrix_impl::*;
 mod matrix_impl {
     use crate::cell::CellUpdate;
     use anyhow::{Context, Result};
-    use matrix_sdk::{
-        config::SyncSettings,
-        room::Room,
-        ruma::OwnedRoomId,
-        Client,
-    };
+    use matrix_sdk::{config::SyncSettings, room::Room, ruma::OwnedRoomId, Client};
     use tracing::{debug, info};
 
     /// Event type for cell updates in Matrix rooms.
@@ -64,14 +59,9 @@ mod matrix_impl {
 
         /// Get the workspace room.
         pub fn get_room(&self) -> Result<Room> {
-            let room_id = self
-                .room_id
-                .as_ref()
-                .context("No room ID set")?;
+            let room_id = self.room_id.as_ref().context("No room ID set")?;
 
-            self.client
-                .get_room(room_id)
-                .context("Room not found")
+            self.client.get_room(room_id).context("Room not found")
         }
 
         /// Send a cell update to the workspace room.

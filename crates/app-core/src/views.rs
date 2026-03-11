@@ -265,9 +265,8 @@ impl ViewManager {
     pub fn get_view(&self, view_id: &str) -> Option<ViewConfig> {
         let name = self.views_table.get_value(view_id, "name")?.as_str()?;
         let table_id = self.views_table.get_value(view_id, "table_id")?.as_str()?;
-        let view_type: ViewType = serde_json::from_value(
-            self.views_table.get_value(view_id, "type")?.clone()
-        ).ok()?;
+        let view_type: ViewType =
+            serde_json::from_value(self.views_table.get_value(view_id, "type")?.clone()).ok()?;
 
         let mut config = ViewConfig::new(view_id, name, table_id, view_type);
 
@@ -335,7 +334,11 @@ mod tests {
             group_by_column: "status".to_string(),
             title_column: "title".to_string(),
             display_columns: vec![],
-            column_options: vec!["Todo".to_string(), "In Progress".to_string(), "Done".to_string()],
+            column_options: vec![
+                "Todo".to_string(),
+                "In Progress".to_string(),
+                "Done".to_string(),
+            ],
         }
     }
 
@@ -345,7 +348,11 @@ mod tests {
     fn test_view_config_creation() {
         let config = ViewConfig::new("view1", "My Kanban", "tasks", ViewType::Kanban)
             .with_sort("priority", SortDirection::Descending)
-            .with_filter("status", FilterOperator::NotEquals, Some(serde_json::json!("done")))
+            .with_filter(
+                "status",
+                FilterOperator::NotEquals,
+                Some(serde_json::json!("done")),
+            )
             .with_kanban_config(KanbanConfig {
                 group_by_column: "status".to_string(),
                 title_column: "title".to_string(),
@@ -373,8 +380,16 @@ mod tests {
     #[test]
     fn test_view_config_filters_accumulate() {
         let config = ViewConfig::new("v", "V", "t", ViewType::Table)
-            .with_filter("status", FilterOperator::Equals, Some(serde_json::json!("active")))
-            .with_filter("score", FilterOperator::GreaterThan, Some(serde_json::json!(5)));
+            .with_filter(
+                "status",
+                FilterOperator::Equals,
+                Some(serde_json::json!("active")),
+            )
+            .with_filter(
+                "score",
+                FilterOperator::GreaterThan,
+                Some(serde_json::json!(5)),
+            );
 
         assert_eq!(config.filters.len(), 2);
         assert_eq!(config.filters[0].operator, FilterOperator::Equals);
@@ -447,7 +462,7 @@ mod tests {
             manager.apply_updates(updates);
         }
 
-        let task_views    = manager.list_views_for_table("tasks");
+        let task_views = manager.list_views_for_table("tasks");
         let project_views = manager.list_views_for_table("projects");
 
         assert_eq!(task_views.len(), 2);
@@ -468,7 +483,11 @@ mod tests {
 
         let config = ViewConfig::new("filtered", "Filtered Board", "tasks", ViewType::Table)
             .with_sort("priority", SortDirection::Descending)
-            .with_filter("status", FilterOperator::NotEquals, Some(serde_json::json!("archived")));
+            .with_filter(
+                "status",
+                FilterOperator::NotEquals,
+                Some(serde_json::json!("archived")),
+            );
 
         let updates = manager.create_view(config, 500);
         manager.apply_updates(updates);
@@ -523,11 +542,12 @@ mod tests {
     fn test_view_manager_tasklist_config_round_trip() {
         let mut manager = ViewManager::new();
 
-        let cfg = ViewConfig::new("tl", "Todos", "todos", ViewType::TaskList)
-            .with_tasklist_config(TaskListConfig {
+        let cfg = ViewConfig::new("tl", "Todos", "todos", ViewType::TaskList).with_tasklist_config(
+            TaskListConfig {
                 status_column: "is_done".to_string(),
                 completed_value: serde_json::json!(true),
-            });
+            },
+        );
 
         let updates = manager.create_view(cfg, 400);
         manager.apply_updates(updates);
@@ -543,7 +563,11 @@ mod tests {
         let mut manager = ViewManager::new();
         // Push an update for a different system table — it should be silently ignored
         let rogue = tables_over_matrix::CellUpdate::new(
-            "_schema", "row1", "col", serde_json::json!("val"), 1,
+            "_schema",
+            "row1",
+            "col",
+            serde_json::json!("val"),
+            1,
         );
         manager.apply_updates(vec![rogue]); // must not panic
         assert!(manager.list_views_for_table("tasks").is_empty());

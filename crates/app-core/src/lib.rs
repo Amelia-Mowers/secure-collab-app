@@ -55,7 +55,7 @@ pub use workspace::WorkspaceHandle;
 
 // Re-export bridge for WASM
 #[cfg(target_arch = "wasm32")]
-pub use bridge::{WasmWorkspace, init_panic_hook, init_tracing};
+pub use bridge::{init_panic_hook, init_tracing, WasmWorkspace};
 
 /// Error types for the app-core library.
 /// Uses static strings to avoid allocations in WASM.

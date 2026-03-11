@@ -210,13 +210,8 @@ impl SchemaManager {
             updates.push(required_update);
 
             if let Some(default) = column.default_value {
-                let default_update = CellUpdate::new(
-                    SCHEMA_TABLE_ID,
-                    &row_id,
-                    "default",
-                    default,
-                    ts + 5,
-                );
+                let default_update =
+                    CellUpdate::new(SCHEMA_TABLE_ID, &row_id, "default", default, ts + 5);
                 self.schema_table.apply_update(default_update.clone());
                 updates.push(default_update);
             }
@@ -257,10 +252,7 @@ impl SchemaManager {
         let name = self.tables_table.get_value(table_id, "name")?;
         let description = self.tables_table.get_value(table_id, "description");
 
-        let mut definition = TableDefinition::new(
-            table_id,
-            name.as_str().unwrap_or("Untitled"),
-        );
+        let mut definition = TableDefinition::new(table_id, name.as_str().unwrap_or("Untitled"));
 
         if let Some(desc) = description {
             if let Some(desc_str) = desc.as_str() {
@@ -285,9 +277,8 @@ impl SchemaManager {
     fn parse_column_definition(&self, row_id: &str) -> Option<ColumnDefinition> {
         let col_id = self.schema_table.get_value(row_id, "column_id")?.as_str()?;
         let name = self.schema_table.get_value(row_id, "name")?.as_str()?;
-        let col_type: ColumnType = serde_json::from_value(
-            self.schema_table.get_value(row_id, "type")?.clone()
-        ).ok()?;
+        let col_type: ColumnType =
+            serde_json::from_value(self.schema_table.get_value(row_id, "type")?.clone()).ok()?;
 
         let mut column = ColumnDefinition::new(col_id, name, col_type);
 
@@ -324,36 +315,51 @@ impl SchemaManager {
         let mut ts = timestamp;
 
         let table_id_update = CellUpdate::new(
-            SCHEMA_TABLE_ID, &row_id, "table_id",
-            serde_json::json!(table_id), ts,
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "table_id",
+            serde_json::json!(table_id),
+            ts,
         );
         self.schema_table.apply_update(table_id_update.clone());
         updates.push(table_id_update);
 
         let col_id_update = CellUpdate::new(
-            SCHEMA_TABLE_ID, &row_id, "column_id",
-            serde_json::json!(col_id), ts + 1,
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "column_id",
+            serde_json::json!(col_id),
+            ts + 1,
         );
         self.schema_table.apply_update(col_id_update.clone());
         updates.push(col_id_update);
 
         let name_update = CellUpdate::new(
-            SCHEMA_TABLE_ID, &row_id, "name",
-            serde_json::json!(column.name), ts + 2,
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "name",
+            serde_json::json!(column.name),
+            ts + 2,
         );
         self.schema_table.apply_update(name_update.clone());
         updates.push(name_update);
 
         let type_update = CellUpdate::new(
-            SCHEMA_TABLE_ID, &row_id, "type",
-            serde_json::json!(column.column_type), ts + 3,
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "type",
+            serde_json::json!(column.column_type),
+            ts + 3,
         );
         self.schema_table.apply_update(type_update.clone());
         updates.push(type_update);
 
         let required_update = CellUpdate::new(
-            SCHEMA_TABLE_ID, &row_id, "required",
-            serde_json::json!(column.required), ts + 4,
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "required",
+            serde_json::json!(column.required),
+            ts + 4,
         );
         self.schema_table.apply_update(required_update.clone());
         updates.push(required_update);
@@ -362,8 +368,11 @@ impl SchemaManager {
 
         if let Some(options) = column.options {
             let options_update = CellUpdate::new(
-                SCHEMA_TABLE_ID, &row_id, "options",
-                serde_json::json!(options), ts,
+                SCHEMA_TABLE_ID,
+                &row_id,
+                "options",
+                serde_json::json!(options),
+                ts,
             );
             self.schema_table.apply_update(options_update.clone());
             updates.push(options_update);
@@ -371,10 +380,7 @@ impl SchemaManager {
         }
 
         if let Some(default) = column.default_value {
-            let default_update = CellUpdate::new(
-                SCHEMA_TABLE_ID, &row_id, "default",
-                default, ts,
-            );
+            let default_update = CellUpdate::new(SCHEMA_TABLE_ID, &row_id, "default", default, ts);
             self.schema_table.apply_update(default_update.clone());
             updates.push(default_update);
         }
@@ -411,17 +417,19 @@ mod tests {
         let definition = TableDefinition::new("tasks", "Tasks")
             .with_description("Task tracking table")
             .with_column(
-                ColumnDefinition::new("title", "Title", ColumnType::Text)
-                    .with_required(true)
+                ColumnDefinition::new("title", "Title", ColumnType::Text).with_required(true),
             )
             .with_column(
                 ColumnDefinition::new("status", "Status", ColumnType::Select)
-                    .with_options(vec!["todo".to_string(), "done".to_string()])
+                    .with_options(vec!["todo".to_string(), "done".to_string()]),
             );
 
         assert_eq!(definition.id, "tasks");
         assert_eq!(definition.name, "Tasks");
-        assert_eq!(definition.description, Some("Task tracking table".to_string()));
+        assert_eq!(
+            definition.description,
+            Some("Task tracking table".to_string())
+        );
         assert_eq!(definition.columns.len(), 2);
     }
 
@@ -495,8 +503,11 @@ mod tests {
     fn test_schema_manager_create_table() {
         let mut manager = SchemaManager::new();
 
-        let definition = TableDefinition::new("tasks", "Tasks")
-            .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text));
+        let definition = TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+            "title",
+            "Title",
+            ColumnType::Text,
+        ));
 
         let updates = manager.create_table(definition, 1000);
         assert!(!updates.is_empty());
@@ -518,8 +529,7 @@ mod tests {
     fn test_schema_manager_persists_description() {
         let mut manager = SchemaManager::new();
 
-        let def = TableDefinition::new("notes", "Notes")
-            .with_description("All my notes");
+        let def = TableDefinition::new("notes", "Notes").with_description("All my notes");
 
         let updates = manager.create_table(def, 10);
         manager.apply_updates(updates);
@@ -532,29 +542,30 @@ mod tests {
     fn test_schema_manager_persists_column_options() {
         let mut manager = SchemaManager::new();
 
-        let def = TableDefinition::new("items", "Items")
-            .with_column(
-                ColumnDefinition::new("status", "Status", ColumnType::Select)
-                    .with_options(vec!["Open".to_string(), "Closed".to_string()])
-            );
+        let def = TableDefinition::new("items", "Items").with_column(
+            ColumnDefinition::new("status", "Status", ColumnType::Select)
+                .with_options(vec!["Open".to_string(), "Closed".to_string()]),
+        );
 
         let updates = manager.create_table(def, 50);
         manager.apply_updates(updates);
 
         let schema = manager.get_table_schema("items").unwrap();
         let col = schema.columns.get("status").unwrap();
-        assert_eq!(col.options, Some(vec!["Open".to_string(), "Closed".to_string()]));
+        assert_eq!(
+            col.options,
+            Some(vec!["Open".to_string(), "Closed".to_string()])
+        );
     }
 
     #[test]
     fn test_schema_manager_persists_reference_column() {
         let mut manager = SchemaManager::new();
 
-        let def = TableDefinition::new("tasks", "Tasks")
-            .with_column(
-                ColumnDefinition::new("project", "Project", ColumnType::Reference)
-                    .with_reference("projects".to_string())
-            );
+        let def = TableDefinition::new("tasks", "Tasks").with_column(
+            ColumnDefinition::new("project", "Project", ColumnType::Reference)
+                .with_reference("projects".to_string()),
+        );
 
         let updates = manager.create_table(def, 80);
         manager.apply_updates(updates);
@@ -568,12 +579,11 @@ mod tests {
     fn test_schema_manager_persists_required_and_default() {
         let mut manager = SchemaManager::new();
 
-        let def = TableDefinition::new("contracts", "Contracts")
-            .with_column(
-                ColumnDefinition::new("value", "Value", ColumnType::Number)
-                    .with_required(true)
-                    .with_default(serde_json::json!(0))
-            );
+        let def = TableDefinition::new("contracts", "Contracts").with_column(
+            ColumnDefinition::new("value", "Value", ColumnType::Number)
+                .with_required(true)
+                .with_default(serde_json::json!(0)),
+        );
 
         let updates = manager.create_table(def, 90);
         manager.apply_updates(updates);
@@ -588,8 +598,11 @@ mod tests {
     fn test_schema_manager_multiple_tables() {
         let mut manager = SchemaManager::new();
 
-        let def_a = TableDefinition::new("a", "Table A")
-            .with_column(ColumnDefinition::new("x", "X", ColumnType::Text));
+        let def_a = TableDefinition::new("a", "Table A").with_column(ColumnDefinition::new(
+            "x",
+            "X",
+            ColumnType::Text,
+        ));
         let def_b = TableDefinition::new("b", "Table B")
             .with_column(ColumnDefinition::new("y", "Y", ColumnType::Number))
             .with_column(ColumnDefinition::new("z", "Z", ColumnType::Boolean));
@@ -623,15 +636,27 @@ mod tests {
         let mut manager = SchemaManager::new();
 
         let def = TableDefinition::new("full", "Full Table")
-            .with_column(ColumnDefinition::new("t", "Text",        ColumnType::Text))
-            .with_column(ColumnDefinition::new("n", "Number",      ColumnType::Number))
-            .with_column(ColumnDefinition::new("b", "Boolean",     ColumnType::Boolean))
-            .with_column(ColumnDefinition::new("d", "Date",        ColumnType::Date))
-            .with_column(ColumnDefinition::new("s", "Select",      ColumnType::Select))
-            .with_column(ColumnDefinition::new("m", "MultiSelect", ColumnType::MultiSelect))
-            .with_column(ColumnDefinition::new("r", "Reference",   ColumnType::Reference))
-            .with_column(ColumnDefinition::new("doc", "Document",  ColumnType::Document))
-            .with_column(ColumnDefinition::new("j", "Json",        ColumnType::Json));
+            .with_column(ColumnDefinition::new("t", "Text", ColumnType::Text))
+            .with_column(ColumnDefinition::new("n", "Number", ColumnType::Number))
+            .with_column(ColumnDefinition::new("b", "Boolean", ColumnType::Boolean))
+            .with_column(ColumnDefinition::new("d", "Date", ColumnType::Date))
+            .with_column(ColumnDefinition::new("s", "Select", ColumnType::Select))
+            .with_column(ColumnDefinition::new(
+                "m",
+                "MultiSelect",
+                ColumnType::MultiSelect,
+            ))
+            .with_column(ColumnDefinition::new(
+                "r",
+                "Reference",
+                ColumnType::Reference,
+            ))
+            .with_column(ColumnDefinition::new(
+                "doc",
+                "Document",
+                ColumnType::Document,
+            ))
+            .with_column(ColumnDefinition::new("j", "Json", ColumnType::Json));
 
         let updates = manager.create_table(def, 1);
         manager.apply_updates(updates);

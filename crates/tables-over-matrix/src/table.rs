@@ -136,9 +136,7 @@ impl Table {
         self.cell_ages
             .iter()
             .min_by_key(|(_, &timestamp)| timestamp)
-            .map(|((row_id, column_id), _)| {
-                CellId::new(&self.id, row_id, column_id)
-            })
+            .map(|((row_id, column_id), _)| CellId::new(&self.id, row_id, column_id))
     }
 
     /// Get the number of cells in the table.
@@ -200,9 +198,27 @@ mod tests {
     fn test_get_row() {
         let mut table = Table::new("test_table");
 
-        table.apply_update(CellUpdate::new("test_table", "row1", "col1", json!("a"), 100));
-        table.apply_update(CellUpdate::new("test_table", "row1", "col2", json!("b"), 100));
-        table.apply_update(CellUpdate::new("test_table", "row2", "col1", json!("c"), 100));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col1",
+            json!("a"),
+            100,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col2",
+            json!("b"),
+            100,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row2",
+            "col1",
+            json!("c"),
+            100,
+        ));
 
         let row = table.get_row("row1");
         assert_eq!(row.len(), 2);
@@ -214,8 +230,20 @@ mod tests {
     fn test_remove_row() {
         let mut table = Table::new("test_table");
 
-        table.apply_update(CellUpdate::new("test_table", "row1", "col1", json!("a"), 100));
-        table.apply_update(CellUpdate::new("test_table", "row2", "col1", json!("b"), 100));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col1",
+            json!("a"),
+            100,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row2",
+            "col1",
+            json!("b"),
+            100,
+        ));
 
         table.remove_row("row1");
 

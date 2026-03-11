@@ -60,7 +60,8 @@ impl CompactionManager {
             // Don't bump the cell we're already updating
             let user_cell_id = updates[0].cell_id();
             if cell_id != user_cell_id {
-                if let Some(bump) = self.create_bump_update(table, &cell_id, timestamp_generator()) {
+                if let Some(bump) = self.create_bump_update(table, &cell_id, timestamp_generator())
+                {
                     updates.push(bump);
                 }
             }
@@ -98,9 +99,27 @@ mod tests {
         assert!(manager.select_bump_candidate(&table).is_none());
 
         // Add some cells
-        table.apply_update(CellUpdate::new("test_table", "row1", "col1", json!("a"), 100));
-        table.apply_update(CellUpdate::new("test_table", "row1", "col2", json!("b"), 200));
-        table.apply_update(CellUpdate::new("test_table", "row2", "col1", json!("c"), 50));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col1",
+            json!("a"),
+            100,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col2",
+            json!("b"),
+            200,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row2",
+            "col1",
+            json!("c"),
+            50,
+        ));
 
         // Should select the stalest cell (row2, col1 with timestamp 50)
         let candidate = manager.select_bump_candidate(&table).unwrap();
@@ -113,7 +132,13 @@ mod tests {
         let mut table = Table::new("test_table");
         let mut manager = CompactionManager::new();
 
-        table.apply_update(CellUpdate::new("test_table", "row1", "col1", json!("value"), 100));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col1",
+            json!("value"),
+            100,
+        ));
 
         let cell_id = CellId::new("test_table", "row1", "col1");
         let bump = manager.create_bump_update(&table, &cell_id, 500).unwrap();
@@ -131,8 +156,20 @@ mod tests {
         let mut manager = CompactionManager::new();
 
         // Add initial cells
-        table.apply_update(CellUpdate::new("test_table", "row1", "col1", json!("a"), 100));
-        table.apply_update(CellUpdate::new("test_table", "row1", "col2", json!("b"), 200));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col1",
+            json!("a"),
+            100,
+        ));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col2",
+            json!("b"),
+            200,
+        ));
 
         let user_update = CellUpdate::new("test_table", "row2", "col1", json!("new"), 300);
 
@@ -159,7 +196,13 @@ mod tests {
         let mut manager = CompactionManager::new();
 
         // Single cell table
-        table.apply_update(CellUpdate::new("test_table", "row1", "col1", json!("a"), 100));
+        table.apply_update(CellUpdate::new(
+            "test_table",
+            "row1",
+            "col1",
+            json!("a"),
+            100,
+        ));
 
         // Try to update the only cell
         let user_update = CellUpdate::new("test_table", "row1", "col1", json!("b"), 200);

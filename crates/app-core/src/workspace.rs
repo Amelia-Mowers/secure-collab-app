@@ -24,6 +24,7 @@ pub struct Workspace {
     /// View manager
     view_manager: ViewManager,
     /// Compaction manager for bumping
+    #[allow(dead_code)]
     compaction_manager: CompactionManager,
     /// Logical timestamp counter
     timestamp_counter: u64,
@@ -120,9 +121,7 @@ impl Workspace {
                 table.apply_update(user_update);
                 Ok(())
             }
-            None => {
-                Err(crate::Error::TableNotFound)
-            }
+            None => Err(crate::Error::TableNotFound),
         }
     }
 
@@ -186,7 +185,10 @@ impl Workspace {
     }
 
     /// Get all rows from a table as JSON
-    pub fn get_table_rows(&self, table_id: &str) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>> {
+    pub fn get_table_rows(
+        &self,
+        table_id: &str,
+    ) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>> {
         let table = self
             .tables
             .get(table_id)
@@ -220,7 +222,11 @@ mod tests {
 
         let definition = TableDefinition::new("tasks", "Tasks")
             .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text))
-            .with_column(ColumnDefinition::new("status", "Status", ColumnType::Select));
+            .with_column(ColumnDefinition::new(
+                "status",
+                "Status",
+                ColumnType::Select,
+            ));
 
         let updates = workspace.create_table(definition).unwrap();
         assert!(!updates.is_empty());
@@ -234,8 +240,11 @@ mod tests {
         let mut workspace = Workspace::new("test-workspace");
 
         // Create a table first
-        let definition = TableDefinition::new("tasks", "Tasks")
-            .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text));
+        let definition = TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+            "title",
+            "Title",
+            ColumnType::Text,
+        ));
 
         workspace.create_table(definition).unwrap();
 
@@ -253,8 +262,11 @@ mod tests {
     fn test_delete_row() {
         let mut workspace = Workspace::new("test-workspace");
 
-        let definition = TableDefinition::new("tasks", "Tasks")
-            .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text));
+        let definition = TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+            "title",
+            "Title",
+            ColumnType::Text,
+        ));
 
         workspace.create_table(definition).unwrap();
 
@@ -281,19 +293,47 @@ mod tests {
 
         // Create a projects table with multiple columns
         let projects_def = TableDefinition::new("projects", "Projects")
-            .with_column(ColumnDefinition::new("name", "Project Name", ColumnType::Text))
-            .with_column(ColumnDefinition::new("status", "Status", ColumnType::Select))
-            .with_column(ColumnDefinition::new("budget", "Budget", ColumnType::Number))
-            .with_column(ColumnDefinition::new("active", "Active", ColumnType::Boolean));
+            .with_column(ColumnDefinition::new(
+                "name",
+                "Project Name",
+                ColumnType::Text,
+            ))
+            .with_column(ColumnDefinition::new(
+                "status",
+                "Status",
+                ColumnType::Select,
+            ))
+            .with_column(ColumnDefinition::new(
+                "budget",
+                "Budget",
+                ColumnType::Number,
+            ))
+            .with_column(ColumnDefinition::new(
+                "active",
+                "Active",
+                ColumnType::Boolean,
+            ));
 
         workspace.create_table(projects_def).unwrap();
 
         // Create a tasks table
         let tasks_def = TableDefinition::new("tasks", "Tasks")
             .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text))
-            .with_column(ColumnDefinition::new("assignee", "Assignee", ColumnType::Text))
-            .with_column(ColumnDefinition::new("priority", "Priority", ColumnType::Number))
-            .with_column(ColumnDefinition::new("completed", "Completed", ColumnType::Boolean));
+            .with_column(ColumnDefinition::new(
+                "assignee",
+                "Assignee",
+                ColumnType::Text,
+            ))
+            .with_column(ColumnDefinition::new(
+                "priority",
+                "Priority",
+                ColumnType::Number,
+            ))
+            .with_column(ColumnDefinition::new(
+                "completed",
+                "Completed",
+                ColumnType::Boolean,
+            ));
 
         workspace.create_table(tasks_def).unwrap();
 
@@ -304,31 +344,66 @@ mod tests {
         assert!(tables.contains(&"tasks".to_string()));
 
         // Add data to projects
-        workspace.update_cell("projects", "p1", "name", json!("Website Redesign")).unwrap();
-        workspace.update_cell("projects", "p1", "status", json!("in_progress")).unwrap();
-        workspace.update_cell("projects", "p1", "budget", json!(50000)).unwrap();
-        workspace.update_cell("projects", "p1", "active", json!(true)).unwrap();
+        workspace
+            .update_cell("projects", "p1", "name", json!("Website Redesign"))
+            .unwrap();
+        workspace
+            .update_cell("projects", "p1", "status", json!("in_progress"))
+            .unwrap();
+        workspace
+            .update_cell("projects", "p1", "budget", json!(50000))
+            .unwrap();
+        workspace
+            .update_cell("projects", "p1", "active", json!(true))
+            .unwrap();
 
-        workspace.update_cell("projects", "p2", "name", json!("Mobile App")).unwrap();
-        workspace.update_cell("projects", "p2", "status", json!("planning")).unwrap();
-        workspace.update_cell("projects", "p2", "budget", json!(100000)).unwrap();
-        workspace.update_cell("projects", "p2", "active", json!(false)).unwrap();
+        workspace
+            .update_cell("projects", "p2", "name", json!("Mobile App"))
+            .unwrap();
+        workspace
+            .update_cell("projects", "p2", "status", json!("planning"))
+            .unwrap();
+        workspace
+            .update_cell("projects", "p2", "budget", json!(100000))
+            .unwrap();
+        workspace
+            .update_cell("projects", "p2", "active", json!(false))
+            .unwrap();
 
         // Add tasks
-        workspace.update_cell("tasks", "t1", "title", json!("Design homepage")).unwrap();
-        workspace.update_cell("tasks", "t1", "assignee", json!("Alice")).unwrap();
-        workspace.update_cell("tasks", "t1", "priority", json!(1)).unwrap();
-        workspace.update_cell("tasks", "t1", "completed", json!(false)).unwrap();
+        workspace
+            .update_cell("tasks", "t1", "title", json!("Design homepage"))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "t1", "assignee", json!("Alice"))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "t1", "priority", json!(1))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "t1", "completed", json!(false))
+            .unwrap();
 
-        workspace.update_cell("tasks", "t2", "title", json!("Setup API")).unwrap();
-        workspace.update_cell("tasks", "t2", "assignee", json!("Bob")).unwrap();
-        workspace.update_cell("tasks", "t2", "priority", json!(2)).unwrap();
-        workspace.update_cell("tasks", "t2", "completed", json!(true)).unwrap();
+        workspace
+            .update_cell("tasks", "t2", "title", json!("Setup API"))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "t2", "assignee", json!("Bob"))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "t2", "priority", json!(2))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "t2", "completed", json!(true))
+            .unwrap();
 
         // Verify project data
         let projects = workspace.get_table("projects").unwrap();
         assert_eq!(projects.rows().len(), 2);
-        assert_eq!(projects.get_value("p1", "name"), Some(&json!("Website Redesign")));
+        assert_eq!(
+            projects.get_value("p1", "name"),
+            Some(&json!("Website Redesign"))
+        );
         assert_eq!(projects.get_value("p1", "budget"), Some(&json!(50000)));
         assert_eq!(projects.get_value("p2", "active"), Some(&json!(false)));
 
@@ -339,7 +414,9 @@ mod tests {
         assert_eq!(tasks.get_value("t2", "completed"), Some(&json!(true)));
 
         // Update a task's status
-        workspace.update_cell("tasks", "t1", "completed", json!(true)).unwrap();
+        workspace
+            .update_cell("tasks", "t1", "completed", json!(true))
+            .unwrap();
         let tasks = workspace.get_table("tasks").unwrap();
         assert_eq!(tasks.get_value("t1", "completed"), Some(&json!(true)));
 
@@ -356,33 +433,73 @@ mod tests {
 
         let definition = TableDefinition::new("test", "Test Table")
             .with_column(ColumnDefinition::new("text", "Text", ColumnType::Text))
-            .with_column(ColumnDefinition::new("number", "Number", ColumnType::Number));
+            .with_column(ColumnDefinition::new(
+                "number",
+                "Number",
+                ColumnType::Number,
+            ));
 
         workspace.create_table(definition).unwrap();
 
         // Empty string
-        workspace.update_cell("test", "r1", "text", json!("")).unwrap();
-        assert_eq!(workspace.get_table("test").unwrap().get_value("r1", "text"), Some(&json!("")));
+        workspace
+            .update_cell("test", "r1", "text", json!(""))
+            .unwrap();
+        assert_eq!(
+            workspace.get_table("test").unwrap().get_value("r1", "text"),
+            Some(&json!(""))
+        );
 
         // Special characters
-        workspace.update_cell("test", "r2", "text", json!("Hello\nWorld\t\"quotes\"")).unwrap();
-        assert_eq!(workspace.get_table("test").unwrap().get_value("r2", "text"), Some(&json!("Hello\nWorld\t\"quotes\"")));
+        workspace
+            .update_cell("test", "r2", "text", json!("Hello\nWorld\t\"quotes\""))
+            .unwrap();
+        assert_eq!(
+            workspace.get_table("test").unwrap().get_value("r2", "text"),
+            Some(&json!("Hello\nWorld\t\"quotes\""))
+        );
 
         // Unicode
-        workspace.update_cell("test", "r3", "text", json!("Hello 世界 🌍")).unwrap();
-        assert_eq!(workspace.get_table("test").unwrap().get_value("r3", "text"), Some(&json!("Hello 世界 🌍")));
+        workspace
+            .update_cell("test", "r3", "text", json!("Hello 世界 🌍"))
+            .unwrap();
+        assert_eq!(
+            workspace.get_table("test").unwrap().get_value("r3", "text"),
+            Some(&json!("Hello 世界 🌍"))
+        );
 
         // Zero and negative numbers
-        workspace.update_cell("test", "r4", "number", json!(0)).unwrap();
-        assert_eq!(workspace.get_table("test").unwrap().get_value("r4", "number"), Some(&json!(0)));
+        workspace
+            .update_cell("test", "r4", "number", json!(0))
+            .unwrap();
+        assert_eq!(
+            workspace
+                .get_table("test")
+                .unwrap()
+                .get_value("r4", "number"),
+            Some(&json!(0))
+        );
 
-        workspace.update_cell("test", "r5", "number", json!(-999)).unwrap();
-        assert_eq!(workspace.get_table("test").unwrap().get_value("r5", "number"), Some(&json!(-999)));
+        workspace
+            .update_cell("test", "r5", "number", json!(-999))
+            .unwrap();
+        assert_eq!(
+            workspace
+                .get_table("test")
+                .unwrap()
+                .get_value("r5", "number"),
+            Some(&json!(-999))
+        );
 
         // Very long string (1000 chars)
         let long_string = "a".repeat(1000);
-        workspace.update_cell("test", "r6", "text", json!(long_string.clone())).unwrap();
-        assert_eq!(workspace.get_table("test").unwrap().get_value("r6", "text"), Some(&json!(long_string)));
+        workspace
+            .update_cell("test", "r6", "text", json!(long_string.clone()))
+            .unwrap();
+        assert_eq!(
+            workspace.get_table("test").unwrap().get_value("r6", "text"),
+            Some(&json!(long_string))
+        );
     }
 
     #[test]
@@ -407,9 +524,17 @@ mod tests {
 
         let definition = TableDefinition::new("products", "Products")
             .with_description("Product inventory")
-            .with_column(ColumnDefinition::new("name", "Product Name", ColumnType::Text))
+            .with_column(ColumnDefinition::new(
+                "name",
+                "Product Name",
+                ColumnType::Text,
+            ))
             .with_column(ColumnDefinition::new("price", "Price", ColumnType::Number))
-            .with_column(ColumnDefinition::new("in_stock", "In Stock", ColumnType::Boolean));
+            .with_column(ColumnDefinition::new(
+                "in_stock",
+                "In Stock",
+                ColumnType::Boolean,
+            ));
 
         workspace.create_table(definition).unwrap();
 
@@ -442,9 +567,15 @@ mod tests {
         workspace.create_table(definition).unwrap();
 
         // Multiple updates to the same cell - last write wins
-        workspace.update_cell("counters", "c1", "value", json!(1)).unwrap();
-        workspace.update_cell("counters", "c1", "value", json!(2)).unwrap();
-        workspace.update_cell("counters", "c1", "value", json!(3)).unwrap();
+        workspace
+            .update_cell("counters", "c1", "value", json!(1))
+            .unwrap();
+        workspace
+            .update_cell("counters", "c1", "value", json!(2))
+            .unwrap();
+        workspace
+            .update_cell("counters", "c1", "value", json!(3))
+            .unwrap();
 
         let table = workspace.get_table("counters").unwrap();
         assert_eq!(table.get_value("c1", "value"), Some(&json!(3)));
@@ -461,28 +592,49 @@ mod tests {
         workspace.create_table(definition).unwrap();
 
         // Add multiple users
-        workspace.update_cell("users", "u1", "name", json!("Alice")).unwrap();
-        workspace.update_cell("users", "u1", "email", json!("alice@example.com")).unwrap();
+        workspace
+            .update_cell("users", "u1", "name", json!("Alice"))
+            .unwrap();
+        workspace
+            .update_cell("users", "u1", "email", json!("alice@example.com"))
+            .unwrap();
 
-        workspace.update_cell("users", "u2", "name", json!("Bob")).unwrap();
-        workspace.update_cell("users", "u2", "email", json!("bob@example.com")).unwrap();
+        workspace
+            .update_cell("users", "u2", "name", json!("Bob"))
+            .unwrap();
+        workspace
+            .update_cell("users", "u2", "email", json!("bob@example.com"))
+            .unwrap();
 
-        workspace.update_cell("users", "u3", "name", json!("Charlie")).unwrap();
-        workspace.update_cell("users", "u3", "email", json!("charlie@example.com")).unwrap();
+        workspace
+            .update_cell("users", "u3", "name", json!("Charlie"))
+            .unwrap();
+        workspace
+            .update_cell("users", "u3", "email", json!("charlie@example.com"))
+            .unwrap();
 
         // Get all rows
         let rows = workspace.get_table_rows("users").unwrap();
         assert_eq!(rows.len(), 3);
 
         // Verify row contents
-        let alice = rows.iter().find(|r| r.get("_row_id") == Some(&json!("u1"))).unwrap();
+        let alice = rows
+            .iter()
+            .find(|r| r.get("_row_id") == Some(&json!("u1")))
+            .unwrap();
         assert_eq!(alice.get("name"), Some(&json!("Alice")));
         assert_eq!(alice.get("email"), Some(&json!("alice@example.com")));
 
-        let bob = rows.iter().find(|r| r.get("_row_id") == Some(&json!("u2"))).unwrap();
+        let bob = rows
+            .iter()
+            .find(|r| r.get("_row_id") == Some(&json!("u2")))
+            .unwrap();
         assert_eq!(bob.get("name"), Some(&json!("Bob")));
 
-        let charlie = rows.iter().find(|r| r.get("_row_id") == Some(&json!("u3"))).unwrap();
+        let charlie = rows
+            .iter()
+            .find(|r| r.get("_row_id") == Some(&json!("u3")))
+            .unwrap();
         assert_eq!(charlie.get("email"), Some(&json!("charlie@example.com")));
     }
 
@@ -490,9 +642,17 @@ mod tests {
 
     fn make_tasks_def() -> TableDefinition {
         TableDefinition::new("tasks", "Tasks")
-            .with_column(ColumnDefinition::new("title",    "Title",    ColumnType::Text))
-            .with_column(ColumnDefinition::new("status",   "Status",   ColumnType::Select))
-            .with_column(ColumnDefinition::new("assignee", "Assignee", ColumnType::Text))
+            .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text))
+            .with_column(ColumnDefinition::new(
+                "status",
+                "Status",
+                ColumnType::Select,
+            ))
+            .with_column(ColumnDefinition::new(
+                "assignee",
+                "Assignee",
+                ColumnType::Text,
+            ))
     }
 
     fn make_kanban_config() -> crate::views::KanbanConfig {
@@ -501,7 +661,11 @@ mod tests {
             group_by_column: "status".to_string(),
             title_column: "title".to_string(),
             display_columns: vec![],
-            column_options: vec!["Todo".to_string(), "In Progress".to_string(), "Done".to_string()],
+            column_options: vec![
+                "Todo".to_string(),
+                "In Progress".to_string(),
+                "Done".to_string(),
+            ],
         }
     }
 
@@ -510,8 +674,13 @@ mod tests {
         let mut workspace = Workspace::new("view-workspace");
         workspace.create_table(make_tasks_def()).unwrap();
 
-        let config = ViewConfig::new("board-1", "Sprint Board", "tasks", crate::views::ViewType::Kanban)
-            .with_kanban_config(make_kanban_config());
+        let config = ViewConfig::new(
+            "board-1",
+            "Sprint Board",
+            "tasks",
+            crate::views::ViewType::Kanban,
+        )
+        .with_kanban_config(make_kanban_config());
 
         workspace.create_view(config).unwrap();
 
@@ -525,7 +694,12 @@ mod tests {
     fn test_create_view_requires_existing_table() {
         let mut workspace = Workspace::new("view-workspace");
         // Do NOT create the table first
-        let config = ViewConfig::new("v1", "Orphan View", "ghost-table", crate::views::ViewType::Kanban);
+        let config = ViewConfig::new(
+            "v1",
+            "Orphan View",
+            "ghost-table",
+            crate::views::ViewType::Kanban,
+        );
         let result = workspace.create_view(config);
         assert!(result.is_err(), "should fail when table does not exist");
     }
@@ -551,17 +725,29 @@ mod tests {
     fn test_list_views_for_table_returns_correct_subset() {
         let mut workspace = Workspace::new("view-workspace");
         workspace.create_table(make_tasks_def()).unwrap();
-        workspace.create_table(TableDefinition::new("projects", "Projects")).unwrap();
+        workspace
+            .create_table(TableDefinition::new("projects", "Projects"))
+            .unwrap();
 
-        let tasks_view = ViewConfig::new("tasks-board", "Task Board", "tasks", crate::views::ViewType::Kanban)
-            .with_kanban_config(make_kanban_config());
-        let projects_view = ViewConfig::new("proj-board", "Project Board", "projects", crate::views::ViewType::Kanban)
-            .with_kanban_config(make_kanban_config());
+        let tasks_view = ViewConfig::new(
+            "tasks-board",
+            "Task Board",
+            "tasks",
+            crate::views::ViewType::Kanban,
+        )
+        .with_kanban_config(make_kanban_config());
+        let projects_view = ViewConfig::new(
+            "proj-board",
+            "Project Board",
+            "projects",
+            crate::views::ViewType::Kanban,
+        )
+        .with_kanban_config(make_kanban_config());
 
         workspace.create_view(tasks_view).unwrap();
         workspace.create_view(projects_view).unwrap();
 
-        let task_views    = workspace.list_views_for_table("tasks");
+        let task_views = workspace.list_views_for_table("tasks");
         let project_views = workspace.list_views_for_table("projects");
 
         assert_eq!(task_views, vec!["tasks-board"]);
@@ -574,7 +760,7 @@ mod tests {
         workspace.create_table(make_tasks_def()).unwrap();
 
         for i in 1..=5 {
-            let id   = format!("view-{}", i);
+            let id = format!("view-{}", i);
             let name = format!("Board {}", i);
             let config = ViewConfig::new(&id, &name, "tasks", crate::views::ViewType::Kanban)
                 .with_kanban_config(make_kanban_config());
@@ -596,8 +782,12 @@ mod tests {
     fn test_view_does_not_affect_table_data() {
         let mut workspace = Workspace::new("view-workspace");
         workspace.create_table(make_tasks_def()).unwrap();
-        workspace.update_cell("tasks", "row-1", "title",  json!("Build the API")).unwrap();
-        workspace.update_cell("tasks", "row-1", "status", json!("In Progress")).unwrap();
+        workspace
+            .update_cell("tasks", "row-1", "title", json!("Build the API"))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "row-1", "status", json!("In Progress"))
+            .unwrap();
 
         let config = ViewConfig::new("board", "Board", "tasks", crate::views::ViewType::Kanban)
             .with_kanban_config(make_kanban_config());
@@ -615,11 +805,17 @@ mod tests {
         // Simulates the kanban move: drag card from Todo → Done
         let mut workspace = Workspace::new("view-workspace");
         workspace.create_table(make_tasks_def()).unwrap();
-        workspace.update_cell("tasks", "t1", "title",  json!("Fix bug")).unwrap();
-        workspace.update_cell("tasks", "t1", "status", json!("Todo")).unwrap();
+        workspace
+            .update_cell("tasks", "t1", "title", json!("Fix bug"))
+            .unwrap();
+        workspace
+            .update_cell("tasks", "t1", "status", json!("Todo"))
+            .unwrap();
 
         // The drag-end handler resolves the column and calls updateCell
-        workspace.update_cell("tasks", "t1", "status", json!("Done")).unwrap();
+        workspace
+            .update_cell("tasks", "t1", "status", json!("Done"))
+            .unwrap();
 
         let table = workspace.get_table("tasks").unwrap();
         assert_eq!(table.get_value("t1", "status"), Some(&json!("Done")));

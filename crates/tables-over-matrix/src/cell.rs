@@ -12,7 +12,11 @@ pub struct CellId {
 }
 
 impl CellId {
-    pub fn new(table_id: impl Into<String>, row_id: impl Into<String>, column_id: impl Into<String>) -> Self {
+    pub fn new(
+        table_id: impl Into<String>,
+        row_id: impl Into<String>,
+        column_id: impl Into<String>,
+    ) -> Self {
         Self {
             table_id: table_id.into(),
             row_id: row_id.into(),
@@ -150,19 +154,11 @@ mod tests {
 
     #[test]
     fn test_lww_resolution_server_timestamp_tiebreaker() {
-        let cell1 = Cell::new(
-            CellId::new("table1", "row1", "col1"),
-            json!("value1"),
-            100,
-        )
-        .with_server_timestamp(1000);
+        let cell1 = Cell::new(CellId::new("table1", "row1", "col1"), json!("value1"), 100)
+            .with_server_timestamp(1000);
 
-        let cell2 = Cell::new(
-            CellId::new("table1", "row1", "col1"),
-            json!("value2"),
-            100,
-        )
-        .with_server_timestamp(2000);
+        let cell2 = Cell::new(CellId::new("table1", "row1", "col1"), json!("value2"), 100)
+            .with_server_timestamp(2000);
 
         assert!(cell2.wins_over(&cell1));
         assert!(!cell1.wins_over(&cell2));

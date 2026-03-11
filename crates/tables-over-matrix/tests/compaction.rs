@@ -77,7 +77,7 @@ fn test_lookback_window_bounded_by_cell_count() {
     for i in 0..10 {
         table.apply_update(CellUpdate::new(
             "test",
-            &format!("row{}", i),
+            format!("row{}", i),
             "col1",
             json!(i),
             i as u64 * 100,
@@ -106,7 +106,7 @@ fn test_sequential_bumps_cycle_through_cells() {
     for i in 0..5 {
         let user_update = CellUpdate::new(
             "test",
-            &format!("row{}", i % 3 + 1),
+            format!("row{}", i % 3 + 1),
             "col2",
             json!(i),
             timestamp,

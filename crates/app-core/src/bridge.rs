@@ -56,13 +56,10 @@ impl WasmWorkspace {
         let config: ViewConfig = serde_json::from_str(config_json)
             .map_err(|_| JsValue::from_str("Invalid view config"))?;
 
-        let updates = self
-            .workspace
-            .create_view(config)
-            .map_err(|e| match e {
-                crate::Error::TableNotFound => JsValue::from_str("Table not found"),
-                _ => JsValue::from_str("Failed to create view"),
-            })?;
+        let updates = self.workspace.create_view(config).map_err(|e| match e {
+            crate::Error::TableNotFound => JsValue::from_str("Table not found"),
+            _ => JsValue::from_str("Failed to create view"),
+        })?;
 
         let updates_json = serde_json::to_string(&updates)
             .map_err(|_| JsValue::from_str("Serialization failed"))?;
@@ -80,8 +77,8 @@ impl WasmWorkspace {
         value_json: &str,
     ) -> Result<(), JsValue> {
         // Parse the JSON value
-        let value: serde_json::Value = serde_json::from_str(value_json)
-            .map_err(|_| JsValue::from_str("Invalid JSON"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(value_json).map_err(|_| JsValue::from_str("Invalid JSON"))?;
 
         // Update the cell - use static error string
         self.workspace
@@ -96,11 +93,7 @@ impl WasmWorkspace {
 
     /// Add a column to an existing table's schema
     #[wasm_bindgen(js_name = addColumn)]
-    pub fn add_column(
-        &mut self,
-        table_id: String,
-        column_json: &str,
-    ) -> Result<(), JsValue> {
+    pub fn add_column(&mut self, table_id: String, column_json: &str) -> Result<(), JsValue> {
         let column: crate::schema::ColumnDefinition = serde_json::from_str(column_json)
             .map_err(|_| JsValue::from_str("Invalid column definition"))?;
 
@@ -117,8 +110,8 @@ impl WasmWorkspace {
     /// Apply a cell update from the network
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&mut self, update_json: &str) -> Result<(), JsValue> {
-        let update = serde_json::from_str(update_json)
-            .map_err(|_| JsValue::from_str("Invalid update"))?;
+        let update =
+            serde_json::from_str(update_json).map_err(|_| JsValue::from_str("Invalid update"))?;
 
         self.workspace
             .apply_update(update)
@@ -138,8 +131,8 @@ impl WasmWorkspace {
                 _ => JsValue::from_str("Failed to get rows"),
             })?;
 
-        let rows_json = serde_json::to_string(&rows)
-            .map_err(|_| JsValue::from_str("Serialization failed"))?;
+        let rows_json =
+            serde_json::to_string(&rows).map_err(|_| JsValue::from_str("Serialization failed"))?;
 
         Ok(rows_json)
     }
@@ -166,8 +159,8 @@ impl WasmWorkspace {
             .get_view(&view_id)
             .ok_or_else(|| JsValue::from_str("View not found"))?;
 
-        let view_json = serde_json::to_string(&view)
-            .map_err(|_| JsValue::from_str("Serialization failed"))?;
+        let view_json =
+            serde_json::to_string(&view).map_err(|_| JsValue::from_str("Serialization failed"))?;
 
         Ok(view_json)
     }
@@ -212,10 +205,4 @@ pub fn console_log(msg: &str) {
     log(msg);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // WASM tests would typically be run with wasm-pack test
-    // For now, we'll just verify compilation
-}
+// WASM tests are run with wasm-pack test
