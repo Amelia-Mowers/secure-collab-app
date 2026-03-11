@@ -17,7 +17,7 @@ interface ColumnMeta {
 }
 
 export function TableView({ workspace }: TableViewProps) {
-  const { tableId } = useParams<{ tableId: string }>()
+  const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
   const { rows, loading, error, updateCell, deleteRow, refresh } = useTable(workspace, tableId!)
   const [schema, setSchema] = useState<any>(null)
@@ -103,7 +103,7 @@ export function TableView({ workspace }: TableViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
-            <ToolbarPrimaryButton onClick={() => navigate(`/table/${tableId}/entry/new`)}>New entry</ToolbarPrimaryButton>
+            <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}>New entry</ToolbarPrimaryButton>
           </>
         }
       />
@@ -137,7 +137,7 @@ export function TableView({ workspace }: TableViewProps) {
                   <td colSpan={columns.length + 2}>
                     <button
                       className="empty-cta-btn"
-                      onClick={() => navigate(`/table/${tableId}/entry/new`)}
+                      onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}
                     >
                       + Add your first entry
                     </button>
@@ -147,7 +147,7 @@ export function TableView({ workspace }: TableViewProps) {
               {rows.map(row => (
                   <tr
                     key={row._row_id}
-                    onClick={() => navigate(`/table/${tableId}/entry/${row._row_id}`)}
+                    onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${row._row_id}`)}
                   >
                     {columns.map((col, i) => {
                       const cellKey = `${row._row_id}:${col.id}`

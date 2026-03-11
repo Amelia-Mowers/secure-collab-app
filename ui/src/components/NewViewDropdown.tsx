@@ -381,10 +381,11 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
 // Standalone button + modal for the Sidebar (no pre-selected table)
 interface NewViewButtonProps {
   workspace: any
+  workspaceId: string
   onCreated?: (viewId: string, viewType: ViewType, tableId: string) => void
 }
 
-export function NewViewButton({ workspace, onCreated }: NewViewButtonProps) {
+export function NewViewButton({ workspace, workspaceId, onCreated }: NewViewButtonProps) {
   const [isOpen, setIsOpen] = useState(false)
   const navigate = useNavigate()
 
@@ -392,9 +393,9 @@ export function NewViewButton({ workspace, onCreated }: NewViewButtonProps) {
     setIsOpen(false)
     onCreated?.(viewId, viewType, tableId)
     if (viewType === 'table') {
-      navigate(`/table/${tableId}`)
+      navigate(`/workspace/${workspaceId}/table/${tableId}`)
     } else {
-      navigate(`/table/${tableId}/view/${viewId}`)
+      navigate(`/workspace/${workspaceId}/table/${tableId}/view/${viewId}`)
     }
   }
 

@@ -64,7 +64,7 @@ function CommentBubble({ comment }: { comment: Comment }) {
 }
 
 export function EntryView({ workspace }: EntryViewProps) {
-  const { tableId, rowId } = useParams<{ tableId: string; rowId: string }>()
+  const { workspaceId, tableId, rowId } = useParams<{ workspaceId: string; tableId: string; rowId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -116,7 +116,7 @@ export function EntryView({ workspace }: EntryViewProps) {
     // If we're still on /entry/new and nothing was written, no row exists — just go back.
     // If a real rowId exists and we're in new-entry mode, the first field write already
     // navigated us away from /new, so isNewEntry is false by then. Either way, navigate back.
-    if (tableId) navigate(`/table/${tableId}`)
+    if (tableId) navigate(`/workspace/${workspaceId}/table/${tableId}`)
     else navigate('/')
   }
 
@@ -129,7 +129,7 @@ export function EntryView({ workspace }: EntryViewProps) {
   const handleCreateNext = () => {
     const nextCount = entryCount + 1
     showToast(`Entry ${nextCount} saved`)
-    navigate(`/table/${tableId}/entry/new`, { state: { entryCount: nextCount } })
+    navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, { state: { entryCount: nextCount } })
   }
 
   if (loading) {

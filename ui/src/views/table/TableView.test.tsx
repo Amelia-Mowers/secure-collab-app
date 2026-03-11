@@ -6,12 +6,12 @@ import { MockWorkspace, makeTasksWorkspace, seedTasks } from '@/test/mockWorkspa
 
 function renderTable(workspace: any, tableId = 'tasks') {
   return render(
-    <MemoryRouter initialEntries={[`/table/${tableId}`]}>
+    <MemoryRouter initialEntries={[`/workspace/ws_test/table/${tableId}`]}>
       <Routes>
-        <Route path="/table/:tableId" element={<TableView workspace={workspace} />} />
-        <Route path="/table/:tableId/view/:viewId" element={<div data-testid="kanban-view" />} />
-        <Route path="/table/:tableId/entry/new" element={<div data-testid="entry-new" />} />
-        <Route path="/table/:tableId/entry/:rowId" element={<div data-testid="entry-view" />} />
+        <Route path="/workspace/:workspaceId/table/:tableId" element={<TableView workspace={workspace} />} />
+        <Route path="/workspace/:workspaceId/table/:tableId/view/:viewId" element={<div data-testid="kanban-view" />} />
+        <Route path="/workspace/:workspaceId/table/:tableId/entry/new" element={<div data-testid="entry-new" />} />
+        <Route path="/workspace/:workspaceId/table/:tableId/entry/:rowId" element={<div data-testid="entry-view" />} />
       </Routes>
     </MemoryRouter>,
   )

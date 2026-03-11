@@ -4,18 +4,23 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { EntryView } from './EntryView'
 import { MockWorkspace, makeTasksWorkspace, seedTasks } from '@/test/mockWorkspace'
 
+const WS_ID = 'ws_test'
+const WS_PREFIX = `/workspace/${WS_ID}`
+
 // Wrap EntryView under the router context it expects
 function renderEntry(
   workspace: any,
   path: string,
-  routePattern = '/table/:tableId/entry/:rowId',
+  routePattern = '/workspace/:workspaceId/table/:tableId/entry/:rowId',
 ) {
+  // Accept bare /table/... paths for convenience and prepend the workspace prefix
+  const fullPath = path.startsWith('/workspace') ? path : `${WS_PREFIX}${path}`
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter initialEntries={[fullPath]}>
       <Routes>
         <Route path={routePattern} element={<EntryView workspace={workspace} />} />
-        <Route path="/table/:tableId/entry/new" element={<EntryView workspace={workspace} />} />
-        <Route path="/table/:tableId" element={<div>Table view</div>} />
+        <Route path="/workspace/:workspaceId/table/:tableId/entry/new" element={<EntryView workspace={workspace} />} />
+        <Route path="/workspace/:workspaceId/table/:tableId" element={<div>Table view</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -24,14 +29,14 @@ function renderEntry(
 describe('EntryView', () => {
   describe('loading and error states', () => {
     it('shows a loading indicator while workspace is null', () => {
-      renderEntry(null, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(null, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       // with null workspace and no tableId fallback, loading=false but schema=null
       expect(screen.getByText(/table not found/i)).toBeInTheDocument()
     })
 
     it('shows an error message when the workspace throws', () => {
       const broken = { getTableSchema: () => { throw new Error('DB offline') } }
-      renderEntry(broken, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(broken, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       expect(screen.getByText(/DB offline/i)).toBeInTheDocument()
     })
 
@@ -39,7 +44,7 @@ describe('EntryView', () => {
       const ws = new MockWorkspace()
       // table "tasks" was never created
       ws.createTable(JSON.stringify({ id: 'other', name: 'Other', columns: {} }))
-      renderEntry(ws, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(ws, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       expect(screen.getByText(/table not found/i)).toBeInTheDocument()
     })
   })
@@ -47,7 +52,7 @@ describe('EntryView', () => {
   describe('new entry mode', () => {
     it('renders a field for every column in the schema', async () => {
       const ws = makeTasksWorkspace()
-      renderEntry(ws, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(ws, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       await waitFor(() => {
         expect(screen.getByText('Title')).toBeInTheDocument()
         expect(screen.getByText('Status')).toBeInTheDocument()
@@ -58,7 +63,7 @@ describe('EntryView', () => {
 
     it('shows breadcrumb with "New Entry" label', async () => {
       const ws = makeTasksWorkspace()
-      renderEntry(ws, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(ws, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       // "New Entry" appears in both the breadcrumb span and the h1 title for new entries
       await waitFor(() => {
         const els = screen.getAllByText('New Entry')
@@ -68,7 +73,7 @@ describe('EntryView', () => {
 
     it('shows Return and New entry buttons', async () => {
       const ws = makeTasksWorkspace()
-      renderEntry(ws, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(ws, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       await waitFor(() => {
         expect(screen.getByText('Return')).toBeInTheDocument()
         expect(screen.getByText('New entry')).toBeInTheDocument()
@@ -77,7 +82,7 @@ describe('EntryView', () => {
 
     it('shows the Back button pointing to the table', async () => {
       const ws = makeTasksWorkspace()
-      renderEntry(ws, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(ws, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       await waitFor(() => {
         expect(screen.getByText(/Back to Tasks/i)).toBeInTheDocument()
       })
@@ -91,7 +96,7 @@ describe('EntryView', () => {
     it('TODO(bug): editing a field updates the workspace cell without error', async () => {
       const ws = makeTasksWorkspace()
       const spy = vi.spyOn(ws, 'updateCell')
-      renderEntry(ws, '/table/tasks/entry/new', '/table/:tableId/entry/new')
+      renderEntry(ws, '/table/tasks/entry/new', '/workspace/:workspaceId/table/:tableId/entry/new')
       await waitFor(() => expect(screen.getByText('Title')).toBeInTheDocument())
 
       const titleInput = document.querySelector('input[placeholder*="title"]') as HTMLInputElement

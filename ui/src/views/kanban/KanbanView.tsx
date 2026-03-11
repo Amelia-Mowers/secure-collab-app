@@ -130,7 +130,7 @@ function DroppableColumn({
 }
 
 export function KanbanView({ workspace }: KanbanViewProps) {
-  const { tableId, viewId } = useParams<{ tableId: string; viewId: string }>()
+  const { workspaceId, tableId, viewId } = useParams<{ workspaceId: string; tableId: string; viewId: string }>()
   const navigate = useNavigate()
   const { rows, loading, error, updateCell } = useTable(workspace, tableId!)
   const [viewConfig, setViewConfig] = useState<any>(null)
@@ -236,7 +236,7 @@ export function KanbanView({ workspace }: KanbanViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
-            <ToolbarPrimaryButton onClick={() => navigate(`/table/${tableId}/entry/new`)}>New entry</ToolbarPrimaryButton>
+            <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}>New entry</ToolbarPrimaryButton>
           </>
         }
       />
@@ -273,7 +273,7 @@ export function KanbanView({ workspace }: KanbanViewProps) {
                         <SortableCard
                           key={card.id}
                           card={card}
-                          onOpen={(c) => navigate(`/table/${tableId}/entry/${c._row_id ?? c.id}`)}
+                          onOpen={(c) => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${c._row_id ?? c.id}`)}
                         />
                       ))}
                     </div>
@@ -283,7 +283,7 @@ export function KanbanView({ workspace }: KanbanViewProps) {
                 {/* Add entry — pre-fills status column via query param */}
                 <button
                   className="kcol__add"
-                  onClick={() => navigate(`/table/${tableId}/entry/new?status=${encodeURIComponent(column.id)}`)}
+                  onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new?status=${encodeURIComponent(column.id)}`)}
                 >
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <line x1="6" y1="1.5" x2="6" y2="10.5" />

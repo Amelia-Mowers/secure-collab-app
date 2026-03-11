@@ -24,7 +24,7 @@ function avatarColor(str: string): string {
 }
 
 export function CardView({ workspace }: CardViewProps) {
-  const { tableId } = useParams<{ tableId: string }>()
+  const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
   const { rows, loading, error } = useTable(workspace, tableId!)
 
@@ -67,7 +67,7 @@ export function CardView({ workspace }: CardViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
-            <ToolbarPrimaryButton onClick={() => navigate(`/table/${tableId}/entry/new`)}>
+            <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}>
               New entry
             </ToolbarPrimaryButton>
           </>
@@ -92,7 +92,7 @@ export function CardView({ workspace }: CardViewProps) {
               <div
                 key={row._row_id}
                 className="entry-card"
-                onClick={() => navigate(`/table/${tableId}/entry/${row._row_id}`)}
+                onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${row._row_id}`)}
               >
                 {/* Top row: status + assignee */}
                 <div className="entry-card__top">
