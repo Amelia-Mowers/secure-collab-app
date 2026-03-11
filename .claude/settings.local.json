@@ -24,7 +24,19 @@
       "Bash(gh run list:*)",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
-      "Bash(npm run lint)"
+      "Bash(npm run lint)",
+      "Bash(npm run type-check:*)",
+      "Bash(gh run view:*)",
+      "Bash(xargs -I {} sh -c 'echo \"\"\"\"=== {} ===\"\"\"\" && head -20 {}')",
+      "WebSearch",
+      "WebFetch(domain:matrix-org.github.io)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:github.com)",
+      "Bash(RUSTFLAGS=\"--cfg recursion_limit=512\" nix develop:*)",
+      "WebFetch(domain:spec.matrix.org)",
+      "Bash(xargs cat:*)",
+      "Bash(wasm-pack build:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

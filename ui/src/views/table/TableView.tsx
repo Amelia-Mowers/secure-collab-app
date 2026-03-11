@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useTable } from '@/hooks/useTable'
+import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import { AddColumnModal, type NewColumnDef } from '@/components/AddColumnModal'
 import './TableView.css'
 
 interface TableViewProps {
   workspace: any
+  syncCount?: number
 }
 
 interface ColumnMeta {
@@ -16,10 +17,10 @@ interface ColumnMeta {
   options?: string[]
 }
 
-export function TableView({ workspace }: TableViewProps) {
+export function TableView({ workspace, syncCount }: TableViewProps) {
   const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
-  const { rows, loading, error, updateCell, deleteRow, refresh } = useTable(workspace, tableId!)
+  const { rows, loading, error, updateCell, deleteRow, refresh } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [schema, setSchema] = useState<any>(null)
   const [isAddingColumn, setIsAddingColumn] = useState(false)
   /** Which cell is currently being edited: "rowId:colId" or null */
@@ -52,7 +53,7 @@ export function TableView({ workspace }: TableViewProps) {
     }
   }, [workspace, tableId, rows])
 
-  const handleAddColumn = (def: NewColumnDef) => {
+  const handleAddColumn = async (def: NewColumnDef) => {
     if (!workspace || !tableId) return
     const columnId = def.name.toLowerCase().replace(/\s+/g, '_')
     const columnDef = {
@@ -63,9 +64,10 @@ export function TableView({ workspace }: TableViewProps) {
       ...(def.options.length > 0 ? { options: def.options } : {}),
     }
     try {
-      workspace.addColumn(tableId, JSON.stringify(columnDef))
+      await workspace.addColumn(tableId, JSON.stringify(columnDef))
       setIsAddingColumn(false)
       refresh()
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
     } catch (err) {
       console.error('Failed to add column:', err)
     }

@@ -14,11 +14,28 @@ import './App.css'
 
 /** Guard: redirect to /signin if not authenticated */
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { username } = useAuth()
+  const { username, accounts, resetApp } = useAuth()
   const navigate = useNavigate()
+
+  // `username` is derived synchronously from localStorage (accounts + activeAccountId),
+  // so it's available immediately even before the Matrix session finishes restoring.
+  // We only need to redirect when there truly are no stored accounts.
   useEffect(() => {
-    if (!username) navigate('/signin', { replace: true })
-  }, [username, navigate])
+    if (!username && accounts.length === 0) {
+      navigate('/signin', { replace: true })
+    }
+  }, [username, accounts.length, navigate])
+
+  // If we have stored accounts but username isn't set yet (e.g. accounts exist
+  // but activeAccountId couldn't be resolved), show a brief spinner.
+  if (!username && accounts.length > 0) {
+    return (
+      <div className="app-loading">
+        <LoadingSpinner message="Restoring session..." onReset={resetApp} />
+      </div>
+    )
+  }
+
   if (!username) return null
   return <>{children}</>
 }
@@ -26,15 +43,18 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 /** The main workspace shell — loads WASM for a specific workspace ID */
 function WorkspaceShell() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const { username, matrixSession } = useAuth()
+  const { matrixSession, resetApp } = useAuth()
   const location = useLocation()
   const decodedWorkspaceId = decodeURIComponent(workspaceId!)
   const { workspace, loading, error, syncCount } = useWorkspace(decodedWorkspaceId, matrixSession)
 
-  if (loading) {
+  if (loading || (!workspace && !error)) {
     return (
       <div className="app-loading">
-        <LoadingSpinner message="Initializing workspace..." />
+        <LoadingSpinner
+          message={matrixSession ? 'Initializing workspace...' : 'Connecting...'}
+          onReset={resetApp}
+        />
       </div>
     )
   }
@@ -51,26 +71,29 @@ function WorkspaceShell() {
         <p className="error-hint">
           Try refreshing the page. If the problem persists, check the browser console.
         </p>
+        <button className="loading-reset" onClick={resetApp} type="button" style={{ marginTop: 16 }}>
+          Reset app data
+        </button>
       </div>
     )
   }
 
   return (
     <div className="app">
-      <Sidebar workspace={workspace} username={username} workspaceId={decodedWorkspaceId} />
+      <Sidebar workspace={workspace} workspaceId={decodedWorkspaceId} syncCount={syncCount} />
       <div className="app-main">
         <Routes>
           <Route path="/" element={<WorkspaceHome syncing={!!matrixSession} />} />
-          <Route path="/table/:tableId" element={<TableView workspace={workspace} key={syncCount} />} />
-          <Route path="/table/:tableId/view/:viewId" element={<ViewRouter workspace={workspace} key={syncCount} />} />
-          <Route path="/table/:tableId/cards" element={<CardView workspace={workspace} key={syncCount} />} />
+          <Route path="/table/:tableId" element={<TableView workspace={workspace} syncCount={syncCount} />} />
+          <Route path="/table/:tableId/view/:viewId" element={<ViewRouter workspace={workspace} syncCount={syncCount} />} />
+          <Route path="/table/:tableId/cards" element={<CardView workspace={workspace} syncCount={syncCount} />} />
           <Route
             path="/table/:tableId/entry/:rowId"
-            element={<EntryView workspace={workspace} key={`${location.key}-${syncCount}`} />}
+            element={<EntryView workspace={workspace} syncCount={syncCount} key={location.key} />}
           />
           <Route
             path="/table/:tableId/entry/new"
-            element={<EntryView workspace={workspace} key={`${location.key}-${syncCount}`} />}
+            element={<EntryView workspace={workspace} syncCount={syncCount} key={location.key} />}
           />
         </Routes>
       </div>
@@ -122,11 +145,21 @@ export default function App() {
 }
 
 function RootRedirect() {
-  const { username } = useAuth()
+  const { username, accounts } = useAuth()
   const navigate = useNavigate()
+
+  // Don't wait for the full session restore here — just decide where to go.
+  // If accounts exist in localStorage the user has signed in before, so send
+  // them to /workspaces where RequireAuth will show a spinner while the
+  // session finishes restoring.  This avoids getting stuck on "Restoring
+  // session..." at the root URL when initialSync is slow.
   useEffect(() => {
-    if (username) navigate('/workspaces', { replace: true })
-    else navigate('/signin', { replace: true })
-  }, [username, navigate])
+    if (username || accounts.length > 0) {
+      navigate('/workspaces', { replace: true })
+    } else {
+      navigate('/signin', { replace: true })
+    }
+  }, [username, accounts.length, navigate])
+
   return null
 }

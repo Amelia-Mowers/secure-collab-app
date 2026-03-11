@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
+import { AccountSwitcher } from '@/components/AccountSwitcher'
 import './WorkspacesPage.css'
 
 function formatDate(ts: number): string {
@@ -8,7 +9,7 @@ function formatDate(ts: number): string {
 }
 
 export function WorkspacesPage() {
-  const { username, userId, workspaces, signOut, createWorkspace, joinWorkspace, refreshWorkspaces } = useAuth()
+  const { workspaces, createWorkspace, joinWorkspace, refreshWorkspaces } = useAuth()
   const navigate = useNavigate()
   const [isCreating, setIsCreating] = useState(false)
   const [isJoining, setIsJoining] = useState(false)
@@ -51,11 +52,6 @@ export function WorkspacesPage() {
     }
   }
 
-  const handleSignOut = () => {
-    signOut()
-    navigate('/signin')
-  }
-
   const handleRefresh = async () => {
     setActionLoading(true)
     try {
@@ -79,9 +75,7 @@ export function WorkspacesPage() {
           Secure Collab
         </div>
         <div className="workspaces-page__user">
-          <div className="workspaces-page__avatar">{username?.[0]?.toUpperCase()}</div>
-          <span title={userId ?? undefined}>{username}</span>
-          <button className="workspaces-page__signout" onClick={handleSignOut}>Sign out</button>
+          <AccountSwitcher direction="down" />
         </div>
       </div>
 

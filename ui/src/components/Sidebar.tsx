@@ -3,12 +3,14 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
+import { AccountSwitcher } from '@/components/AccountSwitcher'
+import { notifyWorkspaceChanged } from '@/hooks/useTable'
 import './Sidebar.css'
 
 interface SidebarProps {
   workspace: any
-  username: string | null
   workspaceId: string
+  syncCount?: number
 }
 
 interface TableInfo {
@@ -119,7 +121,7 @@ export function viewPath(view: ViewInfo, workspaceId: string): string {
   return `/workspace/${workspaceId}/table/${view.table_id}/view/${view.id}`
 }
 
-export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
+export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [tables, setTables] = useState<TableInfo[]>([])
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
@@ -128,18 +130,13 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const { theme, toggleTheme } = useTheme()
-  const { workspaces, signOut } = useAuth()
+  const { workspaces } = useAuth()
   const workspaceName = workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace'
-
-  const handleSignOut = () => {
-    signOut()
-    navigate('/signin')
-  }
 
   useEffect(() => {
     if (workspace) refreshData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace, location.pathname])
+  }, [workspace, location.pathname, syncCount])
 
   const refreshData = () => {
     try {
@@ -181,12 +178,12 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
     }
   }
 
-  const handleCreateTable = (e: React.FormEvent) => {
+  const handleCreateTable = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newTableName.trim()) return
     try {
       const tableId = newTableName.toLowerCase().replace(/\s+/g, '-')
-      workspace.createTable(JSON.stringify({
+      await workspace.createTable(JSON.stringify({
         id: tableId,
         name: newTableName,
         columns: {
@@ -196,6 +193,7 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
       setNewTableName('')
       setIsCreatingTable(false)
       refreshData()
+      notifyWorkspaceChanged(workspaceId)
       navigate(`/workspace/${workspaceId}/table/${tableId}`)
     } catch (err) {
       console.error('Failed to create table:', err)
@@ -331,22 +329,13 @@ export function Sidebar({ workspace, username, workspaceId }: SidebarProps) {
           {/* Spacer */}
           <div style={{ flex: 1 }} />
 
-          {/* Footer: user + theme + sign out */}
+          {/* Footer: theme + account switcher */}
           <div className="sidebar__footer">
             <button className="sidebar__item sidebar__item--theme" onClick={toggleTheme}>
               {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
               <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
             </button>
-            <div className="sidebar__user">
-              <div className="sidebar__user-avatar">{username?.[0]?.toUpperCase()}</div>
-              <span className="sidebar__user-name">{username}</span>
-              <button className="sidebar__signout" title="Sign out" onClick={handleSignOut}>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4">
-                  <path d="M8 6H1M5 3l-3 3 3 3" />
-                  <path d="M6 1h4a1 1 0 011 1v8a1 1 0 01-1 1H6" />
-                </svg>
-              </button>
-            </div>
+            <AccountSwitcher />
           </div>
         </>
       )}

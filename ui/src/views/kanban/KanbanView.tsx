@@ -26,6 +26,7 @@ import './KanbanView.css'
 
 interface KanbanViewProps {
   workspace: any
+  syncCount?: number
 }
 
 interface KanbanCard {
@@ -129,10 +130,10 @@ function DroppableColumn({
   )
 }
 
-export function KanbanView({ workspace }: KanbanViewProps) {
+export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const { workspaceId, tableId, viewId } = useParams<{ workspaceId: string; tableId: string; viewId: string }>()
   const navigate = useNavigate()
-  const { rows, loading, error, updateCell } = useTable(workspace, tableId!)
+  const { rows, loading, error, updateCell } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [viewConfig, setViewConfig] = useState<any>(null)
   const [viewError, setViewError] = useState<Error | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)

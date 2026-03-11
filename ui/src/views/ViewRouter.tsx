@@ -6,6 +6,7 @@ import { CardView } from './card/CardView'
 
 interface ViewRouterProps {
   workspace: any
+  syncCount?: number
 }
 
 /**
@@ -18,7 +19,7 @@ interface ViewRouterProps {
  *   - 'table'    → TableView (spreadsheet, rare but valid)
  *   - everything else → KanbanView fallback
  */
-export function ViewRouter({ workspace }: ViewRouterProps) {
+export function ViewRouter({ workspace, syncCount }: ViewRouterProps) {
   const { viewId } = useParams<{ viewId: string }>()
   const [viewType, setViewType] = useState<string | null>(null)
 
@@ -38,13 +39,13 @@ export function ViewRouter({ workspace }: ViewRouterProps) {
   }
 
   if (viewType === 'card') {
-    return <CardView workspace={workspace} />
+    return <CardView workspace={workspace} syncCount={syncCount} />
   }
 
   if (viewType === 'table') {
-    return <TableView workspace={workspace} />
+    return <TableView workspace={workspace} syncCount={syncCount} />
   }
 
   // Default: kanban (covers 'kanban', 'calendar', 'tasklist', unknown)
-  return <KanbanView workspace={workspace} />
+  return <KanbanView workspace={workspace} syncCount={syncCount} />
 }

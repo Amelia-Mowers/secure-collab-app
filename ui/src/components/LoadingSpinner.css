@@ -31,3 +31,20 @@
   color: #666;
   margin: 0;
 }
+
+.loading-reset {
+  margin-top: 20px;
+  padding: 6px 14px;
+  background: none;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary, #999);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.loading-reset:hover {
+  color: var(--red, #ef4444);
+  border-color: var(--red, #ef4444);
+}

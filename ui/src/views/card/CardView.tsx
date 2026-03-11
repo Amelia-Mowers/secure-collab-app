@@ -5,6 +5,7 @@ import './CardView.css'
 
 interface CardViewProps {
   workspace: any
+  syncCount?: number
 }
 
 // Pick a colour for the status badge
@@ -23,10 +24,10 @@ function avatarColor(str: string): string {
   return palette[h % palette.length]
 }
 
-export function CardView({ workspace }: CardViewProps) {
+export function CardView({ workspace, syncCount }: CardViewProps) {
   const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
-  const { rows, loading, error } = useTable(workspace, tableId!)
+  const { rows, loading, error } = useTable(workspace, tableId!, workspaceId, syncCount)
 
   if (!tableId) {
     return <div className="card-view"><div className="state-empty"><p>No table selected</p></div></div>

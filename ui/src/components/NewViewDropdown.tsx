@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { notifyWorkspaceChanged } from '@/hooks/useTable'
 import './NewViewDropdown.css'
 
 // ── View type icons ────────────────────────────────────────────
@@ -237,7 +238,7 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
     return true
   })()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!canSubmit) return
     setError(null)
@@ -250,7 +251,7 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
         const groupByCol = columns.find(c => c.id === kanbanConfig.groupByColumn)
         const columnOptions = groupByCol?.options ?? []
 
-        workspace.createView(JSON.stringify({
+        await workspace.createView(JSON.stringify({
           id: viewId,
           name: viewName.trim(),
           table_id: selectedTableId,
@@ -265,7 +266,7 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
           },
         }))
       } else if (viewType === 'card') {
-        workspace.createView(JSON.stringify({
+        await workspace.createView(JSON.stringify({
           id: viewId,
           name: viewName.trim(),
           table_id: selectedTableId,
@@ -274,7 +275,7 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
           filters: [],
         }))
       } else if (viewType === 'table') {
-        workspace.createView(JSON.stringify({
+        await workspace.createView(JSON.stringify({
           id: viewId,
           name: viewName.trim(),
           table_id: selectedTableId,
@@ -392,6 +393,7 @@ export function NewViewButton({ workspace, workspaceId, onCreated }: NewViewButt
   const handleCreated = (viewId: string, viewType: ViewType, tableId: string) => {
     setIsOpen(false)
     onCreated?.(viewId, viewType, tableId)
+    notifyWorkspaceChanged(workspaceId)
     if (viewType === 'table') {
       navigate(`/workspace/${workspaceId}/table/${tableId}`)
     } else {

@@ -170,10 +170,28 @@ impl Workspace {
         // Route to appropriate table
         if let Some(table) = self.tables.get_mut(&table_id) {
             table.apply_update(update);
-        } else {
-            // Might be a system table
-            self.schema_manager.apply_updates(vec![update.clone()]);
+        } else if table_id == crate::schema::TABLES_TABLE_ID
+            || table_id == crate::schema::SCHEMA_TABLE_ID
+        {
+            // System table update for schema — when we see a _tables row, ensure
+            // the corresponding user-data table exists in self.tables.
+            if table_id == crate::schema::TABLES_TABLE_ID {
+                let user_table_id = update.row_id.clone();
+                self.tables
+                    .entry(user_table_id.clone())
+                    .or_insert_with(|| Table::new(&user_table_id));
+            }
+            self.schema_manager.apply_updates(vec![update]);
+        } else if table_id == crate::schema::VIEWS_TABLE_ID {
             self.view_manager.apply_updates(vec![update]);
+        } else {
+            // Unknown table — might be a user-data table we haven't seen a
+            // _tables entry for yet (out-of-order replay). Create it lazily.
+            let table = self
+                .tables
+                .entry(table_id)
+                .or_insert_with(|| Table::new(&update.table_id));
+            table.apply_update(update);
         }
 
         Ok(())
@@ -832,6 +850,192 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].get("title"), Some(&json!("Build the API")));
         assert_eq!(rows[0].get("status"), Some(&json!("In Progress")));
+    }
+
+    // ─── History replay (cold-start) tests ─────────────────────────────────
+
+    #[test]
+    fn test_replay_restores_tables() {
+        // 1. Build a workspace, create a table, add data — capture all updates
+        let mut source = Workspace::new("source");
+        let def = make_tasks_def();
+        let schema_updates = source.create_table(def).unwrap();
+
+        source
+            .update_cell("tasks", "r1", "title", json!("Fix bug"))
+            .unwrap();
+        source
+            .update_cell("tasks", "r1", "status", json!("Todo"))
+            .unwrap();
+        source
+            .update_cell("tasks", "r2", "title", json!("Ship feature"))
+            .unwrap();
+
+        // Manually build the user-data updates the same way ConnectedWorkspace would
+        let mut all_updates: Vec<CellUpdate> = schema_updates;
+        all_updates.push(CellUpdate::new(
+            "tasks",
+            "r1",
+            "title",
+            json!("Fix bug"),
+            100,
+        ));
+        all_updates.push(CellUpdate::new("tasks", "r1", "status", json!("Todo"), 101));
+        all_updates.push(CellUpdate::new(
+            "tasks",
+            "r2",
+            "title",
+            json!("Ship feature"),
+            102,
+        ));
+
+        // 2. Replay on a fresh workspace
+        let mut target = Workspace::new("target");
+        for update in all_updates {
+            target.apply_update(update).unwrap();
+        }
+
+        // 3. Verify tables exist
+        assert!(target.list_tables().contains(&"tasks".to_string()));
+
+        // 4. Verify schema was reconstructed
+        let schema = target.get_table_schema("tasks").unwrap();
+        assert_eq!(schema.name, "Tasks");
+        assert!(schema.columns.contains_key("title"));
+        assert!(schema.columns.contains_key("status"));
+
+        // 5. Verify rows were reconstructed
+        let rows = target.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 2);
+        let r1 = rows
+            .iter()
+            .find(|r| r.get("_row_id") == Some(&json!("r1")))
+            .unwrap();
+        assert_eq!(r1.get("title"), Some(&json!("Fix bug")));
+        assert_eq!(r1.get("status"), Some(&json!("Todo")));
+        let r2 = rows
+            .iter()
+            .find(|r| r.get("_row_id") == Some(&json!("r2")))
+            .unwrap();
+        assert_eq!(r2.get("title"), Some(&json!("Ship feature")));
+    }
+
+    #[test]
+    fn test_replay_restores_views() {
+        let mut source = Workspace::new("source");
+        let table_updates = source.create_table(make_tasks_def()).unwrap();
+        let view_config = ViewConfig::new(
+            "board-1",
+            "Sprint Board",
+            "tasks",
+            crate::views::ViewType::Kanban,
+        )
+        .with_kanban_config(make_kanban_config());
+        let view_updates = source.create_view(view_config).unwrap();
+
+        // Replay all updates on a fresh workspace
+        let mut target = Workspace::new("target");
+        for update in table_updates.into_iter().chain(view_updates.into_iter()) {
+            target.apply_update(update).unwrap();
+        }
+
+        // Verify table exists
+        assert!(target.list_tables().contains(&"tasks".to_string()));
+
+        // Verify view was reconstructed
+        let view = target.get_view("board-1").unwrap();
+        assert_eq!(view.name, "Sprint Board");
+        assert_eq!(view.table_id, "tasks");
+        assert!(view.kanban_config.is_some());
+
+        let kanban = view.kanban_config.unwrap();
+        assert_eq!(kanban.group_by_column, "status");
+        assert_eq!(kanban.column_options, vec!["Todo", "In Progress", "Done"]);
+
+        // Verify views are listed for the table
+        let views = target.list_views_for_table("tasks");
+        assert_eq!(views, vec!["board-1"]);
+    }
+
+    #[test]
+    fn test_replay_handles_out_of_order_events() {
+        // User-data events might arrive before schema events (out of order)
+        let mut ws = Workspace::new("test");
+
+        // Data event arrives first (before _tables entry)
+        ws.apply_update(CellUpdate::new("tasks", "r1", "title", json!("First"), 50))
+            .unwrap();
+
+        // Then schema events arrive
+        ws.apply_update(CellUpdate::new(
+            "_tables",
+            "tasks",
+            "name",
+            json!("Tasks"),
+            1,
+        ))
+        .unwrap();
+
+        // The table should exist and have the row
+        assert!(ws.list_tables().contains(&"tasks".to_string()));
+        let rows = ws.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("title"), Some(&json!("First")));
+    }
+
+    #[test]
+    fn test_replay_multiple_tables_and_views() {
+        let mut source = Workspace::new("source");
+
+        let tasks_updates = source.create_table(make_tasks_def()).unwrap();
+        let projects_updates =
+            source
+                .create_table(
+                    TableDefinition::new("projects", "Projects")
+                        .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text)),
+                )
+                .unwrap();
+
+        let view1_updates = source
+            .create_view(
+                ViewConfig::new(
+                    "tasks-board",
+                    "Task Board",
+                    "tasks",
+                    crate::views::ViewType::Kanban,
+                )
+                .with_kanban_config(make_kanban_config()),
+            )
+            .unwrap();
+        let view2_updates = source
+            .create_view(
+                ViewConfig::new(
+                    "proj-board",
+                    "Project Board",
+                    "projects",
+                    crate::views::ViewType::Kanban,
+                )
+                .with_kanban_config(make_kanban_config()),
+            )
+            .unwrap();
+
+        // Replay
+        let mut target = Workspace::new("target");
+        let all = tasks_updates
+            .into_iter()
+            .chain(projects_updates)
+            .chain(view1_updates)
+            .chain(view2_updates);
+        for update in all {
+            target.apply_update(update).unwrap();
+        }
+
+        let tables = target.list_tables();
+        assert!(tables.contains(&"tasks".to_string()));
+        assert!(tables.contains(&"projects".to_string()));
+
+        assert_eq!(target.list_views_for_table("tasks"), vec!["tasks-board"]);
+        assert_eq!(target.list_views_for_table("projects"), vec!["proj-board"]);
     }
 
     #[test]

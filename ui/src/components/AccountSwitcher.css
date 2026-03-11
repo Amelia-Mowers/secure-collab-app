@@ -1,0 +1,238 @@
+/* ── Account Switcher ─────────────────────────────────────── */
+.account-switcher {
+  position: relative;
+}
+
+/* ── Trigger button ──────────────────────────────────────── */
+.account-switcher__trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.account-switcher__trigger:hover {
+  background-color: var(--bg-hover);
+  color: var(--text);
+  border: none;
+}
+
+.account-switcher__trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.account-switcher__avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.account-switcher__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-switcher__badge {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--accent-muted);
+  color: var(--accent);
+  padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.account-switcher__chevron {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* ── Dropdown ────────────────────────────────────────────── */
+.account-switcher__dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  z-index: 100;
+  min-width: 200px;
+}
+
+.account-switcher__dropdown--up {
+  bottom: calc(100% + 6px);
+  animation: account-switcher-up 0.12s ease-out;
+}
+
+.account-switcher__dropdown--down {
+  top: calc(100% + 6px);
+  animation: account-switcher-down 0.12s ease-out;
+}
+
+@keyframes account-switcher-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes account-switcher-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.account-switcher__header {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 4px 8px 6px;
+}
+
+/* ── Account item ────────────────────────────────────────── */
+.account-switcher__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.12s;
+  position: relative;
+}
+
+.account-switcher__item:hover {
+  background-color: var(--bg-hover);
+}
+
+.account-switcher__item--active {
+  background-color: var(--bg-active);
+}
+
+.account-switcher__item-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.account-switcher__item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.account-switcher__item-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-switcher__item-server {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-switcher__check {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.account-switcher__item-remove {
+  background: none;
+  border: none;
+  padding: 3px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+  flex-shrink: 0;
+}
+
+.account-switcher__item:hover .account-switcher__item-remove {
+  opacity: 1;
+}
+
+.account-switcher__item-remove:hover {
+  color: var(--red, #ef4444);
+  background: var(--red-muted, #fef2f2);
+  border: none;
+}
+
+/* ── Divider ─────────────────────────────────────────────── */
+.account-switcher__divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ── Add account button ──────────────────────────────────── */
+.account-switcher__add {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.account-switcher__add:hover {
+  background-color: var(--bg-hover);
+  color: var(--text);
+  border: none;
+}

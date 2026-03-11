@@ -1,0 +1,153 @@
+import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '@/hooks/useAuth'
+import type { AccountSession } from '@/hooks/useAuth'
+import './AccountSwitcher.css'
+
+interface AccountSwitcherProps {
+  /** Direction the dropdown opens. Default: 'up' (for sidebar footer). */
+  direction?: 'up' | 'down'
+}
+
+/**
+ * Dropdown that shows all logged-in accounts and lets users:
+ * - Switch between accounts (per-window)
+ * - Sign out the current account
+ * - Remove other accounts
+ * - Add a new account (navigates to /signin?addAccount=1)
+ */
+export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
+  const {
+    accounts,
+    activeAccountId,
+    username,
+    switchAccount,
+    removeAccount,
+    signOut,
+  } = useAuth()
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [open])
+
+  const handleSwitch = async (account: AccountSession) => {
+    if (account.userId === activeAccountId) {
+      setOpen(false)
+      return
+    }
+    setOpen(false)
+    await switchAccount(account.userId)
+    // Navigate to workspaces for the new account
+    navigate('/workspaces')
+  }
+
+  const handleRemove = (e: React.MouseEvent, userId: string) => {
+    e.stopPropagation()
+    if (userId === activeAccountId) {
+      signOut()
+      navigate('/signin')
+    } else {
+      removeAccount(userId)
+    }
+  }
+
+  const handleAddAccount = () => {
+    setOpen(false)
+    navigate('/signin?addAccount=1')
+  }
+
+  if (accounts.length === 0) return null
+
+  return (
+    <div className="account-switcher" ref={containerRef}>
+      <button
+        className="account-switcher__trigger"
+        onClick={() => setOpen(o => !o)}
+        title="Switch account"
+      >
+        <div className="account-switcher__avatar">
+          {username?.[0]?.toUpperCase() ?? '?'}
+        </div>
+        <span className="account-switcher__name">{username}</span>
+        {accounts.length > 1 && (
+          <span className="account-switcher__badge">{accounts.length}</span>
+        )}
+        <svg className="account-switcher__chevron" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M3 4l2 2 2-2" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className={`account-switcher__dropdown account-switcher__dropdown--${direction}`}>
+          <div className="account-switcher__header">Accounts</div>
+          {accounts.map(account => (
+            <div
+              key={account.userId}
+              className={`account-switcher__item ${account.userId === activeAccountId ? 'account-switcher__item--active' : ''}`}
+              onClick={() => handleSwitch(account)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => e.key === 'Enter' && handleSwitch(account)}
+            >
+              <div className="account-switcher__item-avatar">
+                {account.username[0]?.toUpperCase() ?? '?'}
+              </div>
+              <div className="account-switcher__item-info">
+                <span className="account-switcher__item-name">{account.username}</span>
+                <span className="account-switcher__item-server">
+                  {account.homeserverUrl.replace(/^https?:\/\//, '')}
+                </span>
+              </div>
+              {account.userId === activeAccountId && (
+                <svg className="account-switcher__check" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M2.5 6.5L5 9l4.5-6" />
+                </svg>
+              )}
+              <button
+                className="account-switcher__item-remove"
+                title={account.userId === activeAccountId ? 'Sign out' : 'Remove account'}
+                onClick={e => handleRemove(e, account.userId)}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4">
+                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+                </svg>
+              </button>
+            </div>
+          ))}
+          <div className="account-switcher__divider" />
+          <button
+            className="account-switcher__add"
+            onClick={handleAddAccount}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <line x1="6" y1="2" x2="6" y2="10" />
+              <line x1="2" y1="6" x2="10" y2="6" />
+            </svg>
+            Add account
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}

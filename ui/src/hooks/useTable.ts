@@ -1,4 +1,44 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { getWasmModule } from '../wasm/loader'
+
+// ── Cross-tab broadcast ──────────────────────────────────────────────────────
+//
+// When a tab mutates data or receives a Matrix sync event, it posts a
+// data-free signal on a BroadcastChannel keyed to the workspace (room) ID.
+// Other tabs listening on the same channel re-read from their own WASM
+// workspace (kept up-to-date by the Matrix sync stream).
+//
+// SECURITY: The broadcast carries NO plaintext content — only a "something
+// changed" ping.  This prevents leaking decrypted data to same-origin
+// contexts that might be listening on the channel.
+
+const CHANNEL_PREFIX = 'collab:workspace:'
+
+/** Get or create a BroadcastChannel for a workspace. */
+function getWorkspaceChannel(workspaceId: string): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') return null
+  try {
+    return new BroadcastChannel(`${CHANNEL_PREFIX}${workspaceId}`)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Post a signal to sibling tabs that something changed in this workspace.
+ *
+ * SECURITY: This intentionally sends NO data — only a signal.  Plaintext
+ * workspace content must never leave the tab that decrypted it.  Receiving
+ * tabs re-read from their own WASM workspace (populated via the Matrix
+ * sync stream) when they see this signal.
+ */
+export function notifyWorkspaceChanged(workspaceId: string) {
+  const ch = getWorkspaceChannel(workspaceId)
+  if (ch) {
+    ch.postMessage({ type: 'workspace-changed' })
+    ch.close()
+  }
+}
 
 /**
  * Shared workspace interface.
@@ -46,10 +86,17 @@ interface UseTableResult {
  * Works with both WasmWorkspace (local-only) and ConnectedWorkspace (Matrix).
  * When a ConnectedWorkspace is used, remote changes trigger automatic
  * re-fetches via the startSync onChange callback.
+ *
+ * After every local mutation the hook broadcasts a change notification so
+ * sibling tabs can refresh in near-real-time.
  */
 export function useTable(
   workspace: WorkspaceHandle | null,
-  tableId: string
+  tableId: string,
+  workspaceId?: string,
+  /** Incremented when remote changes arrive (from sync or cross-tab broadcast).
+   *  Triggers a re-read of rows from the WASM workspace. */
+  syncCount?: number,
 ): UseTableResult {
   const [rows, setRows] = useState<TableRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -74,9 +121,17 @@ export function useTable(
     }
   }, [workspace, tableId])
 
+  // Fetch rows on mount and whenever workspace/tableId change
   useEffect(() => {
     fetchRows()
   }, [fetchRows])
+
+  // Re-read rows when syncCount changes (remote changes already applied in WASM)
+  useEffect(() => {
+    if (syncCount === undefined || syncCount === 0) return
+    fetchRows()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncCount])
 
   const updateCell = useCallback(
     async (rowId: string, columnId: string, value: any) => {
@@ -86,17 +141,27 @@ export function useTable(
 
       try {
         const valueJson = JSON.stringify(value)
-        // updateCell may be async (ConnectedWorkspace) or sync (WasmWorkspace)
+
+        // Optimistically update React state before the async write completes
+        setRows(prev => prev.map(row =>
+          row._row_id === rowId ? { ...row, [columnId]: value } : row
+        ))
+
+        // Apply to WASM + send to Matrix (may be async for ConnectedWorkspace)
         await workspace.updateCell(tableId, rowId, columnId, valueJson)
 
-        // Refresh to show the update
-        await fetchRows()
+        // Signal sibling tabs that something changed (no data sent)
+        if (workspaceId) {
+          notifyWorkspaceChanged(workspaceId)
+        }
       } catch (err) {
+        // Revert optimistic update on failure by re-reading from WASM
+        await fetchRows()
         setError(err instanceof Error ? err : new Error(String(err)))
         throw err
       }
     },
-    [workspace, tableId, fetchRows]
+    [workspace, tableId, workspaceId, fetchRows]
   )
 
   const deleteRow = useCallback(
@@ -106,14 +171,23 @@ export function useTable(
       }
 
       try {
+        // Optimistically remove the row from React state
+        setRows(prev => prev.filter(row => row._row_id !== rowId))
+
         workspace.deleteRow(tableId, rowId)
-        await fetchRows()
+
+        // Signal sibling tabs that something changed (no data sent)
+        if (workspaceId) {
+          notifyWorkspaceChanged(workspaceId)
+        }
       } catch (err) {
+        // Revert on failure
+        await fetchRows()
         setError(err instanceof Error ? err : new Error(String(err)))
         throw err
       }
     },
-    [workspace, tableId, fetchRows]
+    [workspace, tableId, workspaceId, fetchRows]
   )
 
   return {
@@ -133,75 +207,179 @@ export function useTable(
  * starts the sync loop, and provides an onChange counter that increments
  * whenever remote changes arrive. Components using `useTable` will
  * automatically re-fetch rows when this happens.
+ *
+ * Cross-tab sync is handled via two complementary mechanisms:
+ *
+ * 1. **BroadcastChannel** (primary): When any tab mutates data or receives
+ *    a Matrix sync event, it posts a data-free signal on a per-workspace
+ *    BroadcastChannel.  Sibling tabs re-read from their own WASM workspace
+ *    (kept current by the Matrix sync stream).  No plaintext content is
+ *    ever sent over the channel — only a "something changed" ping.
+ *
+ * 2. **Visibility change** (fallback): If BroadcastChannel is unavailable
+ *    or an event is missed, the workspace is refreshed when the tab
+ *    regains focus after being hidden.
  */
 export function useWorkspace(workspaceId: string, matrixSession?: any) {
   const [workspace, setWorkspace] = useState<WorkspaceHandle | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Start loading only when matrixSession is already available; otherwise
+  // we'll transition to loading once it becomes available.
+  const [loading, setLoading] = useState(!!matrixSession)
   const [error, setError] = useState<Error | null>(null)
   const [syncCount, setSyncCount] = useState(0)
   const workspaceRef = useRef<WorkspaceHandle | null>(null)
 
-  useEffect(() => {
-    let mounted = true
+  // Track whether the workspace needs to be refreshed on tab focus
+  const needsRefreshRef = useRef(false)
 
-    async function initWorkspace() {
-      try {
-        console.log('Loading WASM module...')
+  // Guard against triggering a refresh while one is already in progress
+  const refreshingRef = useRef(false)
 
-        const wasmModule = await import('../wasm/app_core.js')
+  // ── Create / recreate the ConnectedWorkspace ───────────────────
+  //
+  // When `initialSync()` was skipped (timed out because another tab holds
+  // the sync stream), the Matrix SDK cache may be empty and
+  // `ConnectedWorkspace.create()` will throw "Room not found".  We retry
+  // a few times with exponential back-off to give the background sync
+  // time to populate the cache.
+  const initWorkspace = useCallback(async (isRefresh = false) => {
+    if (isRefresh && refreshingRef.current) return
+    refreshingRef.current = isRefresh
 
-        console.log('Initializing WASM binary...')
-        await wasmModule.default()
+    try {
+      const wasmModule = await getWasmModule()
 
-        console.log('Setting up panic hook...')
-        wasmModule.init_panic_hook()
+      if (!matrixSession) {
+        // matrixSession is null — either still restoring or not signed in.
+        // Don't error yet; the effect will re-run when matrixSession changes.
+        // Make sure loading is false so the UI doesn't show a spinner
+        // while we're just waiting for the session.
+        console.log('[workspace] Waiting for Matrix session (matrixSession is null)')
+        setLoading(false)
+        return
+      }
 
-        if (matrixSession) {
-          // Matrix-connected workspace
-          console.log('Creating connected workspace for room:', workspaceId)
-          const cws = new wasmModule.ConnectedWorkspace(matrixSession, workspaceId)
+      // matrixSession is available — start the actual workspace init.
+      console.log('[workspace] matrixSession available, initializing workspace', workspaceId)
+      setLoading(true)
+
+      // Matrix-connected workspace (async factory — loads room history)
+      if (!isRefresh) {
+        console.log('Creating connected workspace for room:', workspaceId)
+      }
+
+      // Retry loop — handles the case where the SDK room cache is not yet
+      // populated (initialSync still running in the background).
+      const MAX_RETRIES = 6
+      const BASE_DELAY_MS = 1_000
+      let lastErr: unknown
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const cws = await wasmModule.ConnectedWorkspace.create(matrixSession, workspaceId)
 
           // Start the sync loop with a change callback
           cws.startSync(() => {
-            if (mounted) {
-              console.log('[sync] Remote change detected, triggering refresh')
-              setSyncCount(c => c + 1)
-            }
+            console.log('[sync] Remote change detected, triggering refresh')
+            setSyncCount(c => c + 1)
+            needsRefreshRef.current = false
+
+            // Notify sibling tabs about the change we just received
+            notifyWorkspaceChanged(workspaceId)
           })
 
-          if (mounted) {
-            workspaceRef.current = cws
-            setWorkspace(cws)
-            setLoading(false)
+          workspaceRef.current = cws
+          setWorkspace(cws)
+          setLoading(false)
+          if (!isRefresh) {
             console.log('Connected workspace initialized with sync')
           }
-        } else {
-          // Local-only workspace (fallback when no MatrixSession)
-          console.log('Creating local workspace:', workspaceId)
-          const wasmWorkspace = new wasmModule.WasmWorkspace(workspaceId)
-
-          if (mounted) {
-            workspaceRef.current = wasmWorkspace
-            setWorkspace(wasmWorkspace)
-            setLoading(false)
-            console.log('Local workspace initialized')
+          return // success — exit the retry loop
+        } catch (err) {
+          lastErr = err
+          const msg = err instanceof Error ? err.message : String(err)
+          if (msg.includes('Room not found') && attempt < MAX_RETRIES) {
+            const delay = BASE_DELAY_MS * Math.pow(2, attempt) // 1s, 2s, 4s, 8s, 16s, 32s
+            console.log(
+              `[workspace] Room not in SDK cache yet, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
+            )
+            await new Promise(resolve => setTimeout(resolve, delay))
+            continue
           }
-        }
-      } catch (err) {
-        console.error('Failed to initialize workspace:', err)
-        if (mounted) {
-          setError(err instanceof Error ? err : new Error(String(err)))
-          setLoading(false)
+          throw err // non-retryable error or retries exhausted
         }
       }
-    }
 
-    initWorkspace()
+      // Should not reach here, but just in case
+      throw lastErr
+    } catch (err) {
+      console.error('Failed to initialize workspace:', err)
+      setError(err instanceof Error ? err : new Error(String(err)))
+      setLoading(false)
+    } finally {
+      refreshingRef.current = false
+    }
+  }, [workspaceId, matrixSession])
+
+  // ── Initial creation ───────────────────────────────────────────
+  useEffect(() => {
+    let mounted = true
+    needsRefreshRef.current = false
+
+    ;(async () => {
+      await initWorkspace()
+      if (!mounted) return
+    })()
 
     return () => {
       mounted = false
     }
+  }, [initWorkspace])
+
+  // ── BroadcastChannel listener ──────────────────────────────────
+  // Listen for change signals from sibling tabs.  The broadcast
+  // carries NO data (security: plaintext must not leave the tab
+  // that decrypted it).  We simply bump syncCount so all consumers
+  // re-read from the local WASM workspace, which the Matrix sync
+  // stream keeps up-to-date.
+  useEffect(() => {
+    if (!matrixSession) return
+
+    const ch = getWorkspaceChannel(workspaceId)
+    if (!ch) return
+
+    ch.onmessage = (event) => {
+      if (event.data?.type !== 'workspace-changed' || !workspaceRef.current) return
+      console.log('[broadcast] Change signal from sibling tab, triggering re-read')
+      setSyncCount(c => c + 1)
+    }
+
+    return () => ch.close()
   }, [workspaceId, matrixSession])
+
+  // ── Visibility-based refresh (fallback) ────────────────────────
+  // When the tab goes hidden, mark it as needing a refresh.
+  // When it becomes visible again, bump syncCount to trigger
+  // a re-read from the WASM workspace (which startSync keeps
+  // up-to-date via the Matrix sync stream).
+  useEffect(() => {
+    if (!matrixSession) return
+
+    function handleVisibility() {
+      if (document.hidden) {
+        // Tab is being hidden — mark for refresh when it comes back
+        needsRefreshRef.current = true
+      } else if (needsRefreshRef.current && workspaceRef.current) {
+        // Tab regained focus — re-read from WASM to pick up any
+        // changes that arrived while the tab was hidden.
+        console.log('[visibility] Tab regained focus, triggering re-read')
+        needsRefreshRef.current = false
+        setSyncCount(c => c + 1)
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [matrixSession])
 
   return { workspace, loading, error, syncCount }
 }

@@ -5,6 +5,7 @@ import './EntryView.css'
 
 interface EntryViewProps {
   workspace: any | null
+  syncCount?: number
 }
 
 interface Column {
@@ -63,7 +64,7 @@ function CommentBubble({ comment }: { comment: Comment }) {
   )
 }
 
-export function EntryView({ workspace }: EntryViewProps) {
+export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const { workspaceId, tableId, rowId } = useParams<{ workspaceId: string; tableId: string; rowId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
@@ -100,6 +101,27 @@ export function EntryView({ workspace }: EntryViewProps) {
       setLoading(false)
     }
   }, [workspace, tableId, rowId])
+
+  // Re-read row data and schema when syncCount changes (remote changes already applied in WASM)
+  useEffect(() => {
+    if (syncCount === undefined || syncCount === 0) return
+    if (!workspace || !tableId) return
+    try {
+      // Re-read schema (e.g. new columns added from another tab)
+      const parsedSchema = JSON.parse(workspace.getTableSchema(tableId))
+      setSchema(parsedSchema)
+
+      // Re-read row data for existing entries
+      if (rowId && rowId !== 'new') {
+        const rows = JSON.parse(workspace.getTableRows(tableId))
+        const row = rows.find((r: any) => r._row_id === rowId)
+        if (row) setRowData(row)
+      }
+    } catch {
+      // Ignore — initial load effect handles errors
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncCount])
 
   const handleFieldChange = async (columnId: string, value: any) => {
     if (!workspace || !tableId) return

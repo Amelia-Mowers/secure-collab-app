@@ -17,11 +17,26 @@ use wasm_bindgen_futures::spawn_local;
 
 use matrix_sdk::{
     config::SyncSettings,
+    room::MessagesOptions,
     ruma::{
-        api::client::room::create_room::v3::Request as CreateRoomRequest, OwnedRoomId, OwnedUserId,
+        api::client::room::create_room::v3::Request as CreateRoomRequest,
+        events::{macros::EventContent, StateEventType},
+        OwnedDeviceId, OwnedRoomId, OwnedUserId,
     },
     Client, LoopCtrl, RoomMemberships,
 };
+use serde::{Deserialize, Serialize};
+
+/// Custom state event type string to tag rooms as workspaces.
+const WORKSPACE_STATE_TYPE: &str = "com.securecollab.workspace";
+
+/// Content for the workspace marker state event.
+#[derive(Clone, Debug, Deserialize, Serialize, EventContent)]
+#[ruma_event(type = "com.securecollab.workspace", kind = State, state_key_type = String)]
+pub struct WorkspaceMarkerEventContent {
+    /// Always true — the presence of this event marks the room as a workspace.
+    pub workspace: bool,
+}
 
 use crate::workspace::Workspace;
 use tables_over_matrix::{CellUpdate, MatrixClient};
@@ -68,6 +83,8 @@ impl MatrixSession {
     }
 
     /// Create a new room (workspace) and return its room ID.
+    /// Tags the room with a custom state event so it can be identified as
+    /// a workspace when listing rooms.
     #[wasm_bindgen(js_name = createRoom)]
     pub async fn create_room(&self, name: String) -> Result<String, JsValue> {
         let mut request = CreateRoomRequest::new();
@@ -80,6 +97,12 @@ impl MatrixSession {
             .create_room(request)
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to create room: {e}")))?;
+
+        // Tag the room as a workspace
+        let marker = WorkspaceMarkerEventContent { workspace: true };
+        room.send_state_event_for_key("", marker)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to tag room as workspace: {e}")))?;
 
         Ok(room.room_id().to_string())
     }
@@ -100,21 +123,119 @@ impl MatrixSession {
         Ok(())
     }
 
-    /// List joined rooms. Returns a JSON array of `{id, name}` objects.
+    /// List joined rooms. Returns a JSON array of `{id, name, isWorkspace}` objects.
+    /// The `isWorkspace` flag is true if the room has a `com.securecollab.workspace`
+    /// state event, allowing the UI to filter out system rooms.
     #[wasm_bindgen(js_name = listRooms)]
-    pub fn list_rooms(&self) -> String {
-        let rooms: Vec<serde_json::Value> = self
-            .client
-            .joined_rooms()
-            .iter()
-            .map(|room| {
-                serde_json::json!({
-                    "id": room.room_id().to_string(),
-                    "name": room.name().unwrap_or_default(),
+    pub async fn list_rooms(&self) -> String {
+        let workspace_event_type = StateEventType::from(WORKSPACE_STATE_TYPE.to_owned());
+
+        let mut rooms = Vec::new();
+        for room in self.client.joined_rooms() {
+            let is_workspace = room
+                .get_state_event(workspace_event_type.clone(), "")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|raw| {
+                    // Serialize the raw event to JSON, then inspect the content
+                    let json: serde_json::Value = serde_json::to_value(&raw).ok()?;
+                    json.get("content")?.get("workspace")?.as_bool()
                 })
-            })
-            .collect();
+                .unwrap_or(false);
+
+            rooms.push(serde_json::json!({
+                "id": room.room_id().to_string(),
+                "name": room.name().unwrap_or_default(),
+                "isWorkspace": is_workspace,
+            }));
+        }
         serde_json::to_string(&rooms).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Return session data as a JSON string so the JS side can persist it
+    /// and later call `restore()` without needing the password again.
+    ///
+    /// The JSON contains: `homeserverUrl`, `userId`, `deviceId`, `accessToken`.
+    #[wasm_bindgen(js_name = sessionData)]
+    pub fn session_data(&self) -> Result<String, JsValue> {
+        let session = self
+            .client
+            .session()
+            .ok_or_else(|| JsValue::from_str("No active session"))?;
+
+        // Extract the Matrix session variant
+        let matrix_session = match session {
+            matrix_sdk::AuthSession::Matrix(ms) => ms,
+            _ => return Err(JsValue::from_str("Unsupported auth session type")),
+        };
+
+        let data = serde_json::json!({
+            "userId": matrix_session.meta.user_id.to_string(),
+            "deviceId": matrix_session.meta.device_id.to_string(),
+            "accessToken": matrix_session.tokens.access_token,
+        });
+
+        serde_json::to_string(&data)
+            .map_err(|e| JsValue::from_str(&format!("Serialization failed: {e}")))
+    }
+
+    /// Restore a previously saved session without re-entering the password.
+    ///
+    /// Accepts a homeserver URL plus the JSON blob returned by `sessionData()`.
+    /// Builds a new `Client`, calls the SDK's `restore_session()`, and runs
+    /// an initial sync so the SDK knows about joined rooms.
+    #[wasm_bindgen]
+    pub async fn restore(
+        homeserver_url: String,
+        session_json: String,
+    ) -> Result<MatrixSession, JsValue> {
+        #[derive(Deserialize)]
+        struct SavedSession {
+            #[serde(rename = "userId")]
+            user_id: String,
+            #[serde(rename = "deviceId")]
+            device_id: String,
+            #[serde(rename = "accessToken")]
+            access_token: String,
+        }
+
+        let saved: SavedSession = serde_json::from_str(&session_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid session JSON: {e}")))?;
+
+        let client = Client::builder()
+            .homeserver_url(&homeserver_url)
+            .build()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
+
+        let user_id: OwnedUserId = saved
+            .user_id
+            .as_str()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Invalid user ID in session"))?;
+        let device_id: OwnedDeviceId = saved.device_id.into();
+
+        let sdk_session = matrix_sdk::authentication::matrix::MatrixSession {
+            meta: matrix_sdk::SessionMeta {
+                user_id: user_id.clone(),
+                device_id,
+            },
+            tokens: matrix_sdk::SessionTokens {
+                access_token: saved.access_token,
+                refresh_token: None,
+            },
+        };
+
+        client
+            .restore_session(sdk_session)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Session restore failed: {e}")))?;
+
+        Ok(MatrixSession {
+            client,
+            user_id: Some(user_id),
+        })
     }
 
     /// Get a reference to the inner SDK client (for creating ConnectedWorkspace).
@@ -154,24 +275,66 @@ pub struct ConnectedWorkspace {
 #[wasm_bindgen]
 impl ConnectedWorkspace {
     /// Create a connected workspace from a session and room ID.
-    #[wasm_bindgen(constructor)]
-    pub fn new(session: &MatrixSession, room_id: String) -> Result<ConnectedWorkspace, JsValue> {
+    ///
+    /// This is an async factory method that:
+    /// 1. Verifies the room exists
+    /// 2. Fetches room history (backwards pagination)
+    /// 3. Replays all cell-update events to reconstruct workspace state
+    #[wasm_bindgen]
+    pub async fn create(
+        session: &MatrixSession,
+        room_id: String,
+    ) -> Result<ConnectedWorkspace, JsValue> {
         let room_id: OwnedRoomId = room_id
             .as_str()
             .try_into()
             .map_err(|_| JsValue::from_str("Invalid room ID"))?;
 
+        let client = session.inner().clone();
+
         // Verify the room exists in our session
-        session
-            .inner()
+        let room = client
             .get_room(&room_id)
             .ok_or_else(|| JsValue::from_str("Room not found — did you run initialSync?"))?;
 
-        let workspace = Workspace::new(room_id.to_string());
+        let mut workspace = Workspace::new(room_id.to_string());
+
+        // ── Fetch room history and replay events ──────────────────────
+        // Paginate backwards from the end of the timeline to reconstruct
+        // workspace state from all stored cell-update events.
+        let mut from_token: Option<String> = None;
+        loop {
+            let mut options = MessagesOptions::backward();
+            if let Some(ref token) = from_token {
+                options = options.from(token.as_str());
+            }
+
+            let response = room
+                .messages(options)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to fetch room history: {e}")))?;
+
+            if response.chunk.is_empty() {
+                break;
+            }
+
+            for timeline_event in &response.chunk {
+                if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
+                    if let Some(received) = MatrixClient::extract_cell_update(&json_str) {
+                        let _ = workspace.apply_update(received.update);
+                    }
+                }
+            }
+
+            match response.end {
+                Some(token) => from_token = Some(token),
+                None => break, // No more pages
+            }
+        }
 
         Ok(ConnectedWorkspace {
             inner: Rc::new(RefCell::new(workspace)),
-            client: session.inner().clone(),
+            client,
             room_id,
         })
     }

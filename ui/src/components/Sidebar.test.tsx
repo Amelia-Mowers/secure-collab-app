@@ -2,18 +2,21 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
+import { AuthProvider } from '@/hooks/useAuth'
 import { MockWorkspace, makeKanbanWorkspace } from '@/test/mockWorkspace'
 
 function renderSidebar(workspace: any, initialPath = '/') {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <Sidebar workspace={workspace} username="Alice" workspaceId="ws_test" />
-      <Routes>
-        <Route path="/workspace/:workspaceId/table/:tableId" element={<div data-testid="table-view" />} />
-        <Route path="/workspace/:workspaceId/table/:tableId/view/:viewId" element={<div data-testid="view-route" />} />
-        <Route path="/workspaces" element={<div data-testid="workspaces-page" />} />
-        <Route path="/" element={<div data-testid="home" />} />
-      </Routes>
+      <AuthProvider>
+        <Sidebar workspace={workspace} workspaceId="ws_test" />
+        <Routes>
+          <Route path="/workspace/:workspaceId/table/:tableId" element={<div data-testid="table-view" />} />
+          <Route path="/workspace/:workspaceId/table/:tableId/view/:viewId" element={<div data-testid="view-route" />} />
+          <Route path="/workspaces" element={<div data-testid="workspaces-page" />} />
+          <Route path="/" element={<div data-testid="home" />} />
+        </Routes>
+      </AuthProvider>
     </MemoryRouter>,
   )
 }
