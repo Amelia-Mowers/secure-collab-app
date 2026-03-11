@@ -484,12 +484,12 @@ async fn test_edge_case_numeric_extremes() {
     .await;
 
     // Float (now safe to send — value is string-encoded on the wire)
-    ws.update_cell("nums", "r3", "value", json!(3.14159265358979))
+    ws.update_cell("nums", "r3", "value", json!(9.87654321))
         .unwrap();
     let ts = ws.next_timestamp_pub();
     send_update(
         &ws,
-        &CellUpdate::new("nums", "r3", "value", json!(3.14159265358979), ts),
+        &CellUpdate::new("nums", "r3", "value", json!(9.87654321), ts),
     )
     .await;
 
@@ -508,7 +508,7 @@ async fn test_edge_case_numeric_extremes() {
     assert_eq!(table.get_value("r2", "value"), Some(&json!(-999999)));
     assert_eq!(
         table.get_value("r3", "value"),
-        Some(&json!(3.14159265358979))
+        Some(&json!(9.87654321))
     );
     assert_eq!(
         table.get_value("r4", "value"),

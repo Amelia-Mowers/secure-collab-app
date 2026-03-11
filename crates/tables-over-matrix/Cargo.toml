@@ -9,6 +9,10 @@ description = "LWW-based collaborative tables over Matrix protocol with E2E encr
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ["cfg(ruma_unstable_exhaustive_types)"]
+
 [dependencies]
 # Workspace dependencies
 serde = { workspace = true }

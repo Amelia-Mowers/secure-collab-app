@@ -378,7 +378,7 @@ mod matrix_impl {
                 "metrics",
                 "row_1",
                 "temperature",
-                json!(3.14159265358979),
+                json!(9.87654321),
                 100,
             );
 
@@ -386,11 +386,11 @@ mod matrix_impl {
             let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
 
             // On the wire, the float is encoded as a string
-            assert_eq!(parsed["value"], "3.14159265358979");
+            assert_eq!(parsed["value"], "9.87654321");
 
             // Round-trip: deserialize back to CellUpdateEventContent
             let decoded: CellUpdateEventContent = serde_json::from_str(&json_str).unwrap();
-            assert_eq!(decoded.value, json!(3.14159265358979));
+            assert_eq!(decoded.value, json!(9.87654321));
         }
 
         #[test]
@@ -460,14 +460,14 @@ mod matrix_impl {
                     "table_id": "metrics",
                     "row_id": "r1",
                     "column_id": "temperature",
-                    "value": "3.14",
+                    "value": "2.72",
                     "timestamp": 10
                 },
                 "sender": "@alice:example.com"
             });
 
             let received = MatrixClient::extract_cell_update(&event_json.to_string()).unwrap();
-            assert_eq!(received.update.value, json!(3.14));
+            assert_eq!(received.update.value, json!(2.72));
         }
 
         #[test]
