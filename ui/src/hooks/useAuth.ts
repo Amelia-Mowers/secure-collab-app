@@ -48,6 +48,7 @@ interface AuthState {
 
   // Actions
   signIn: (homeserver: string, user: string, password: string) => Promise<void>
+  signUp: (homeserver: string, user: string, password: string) => Promise<void>
   signOut: () => void
   createWorkspace: (name: string) => Promise<WorkspaceEntry>
   joinWorkspace: (roomId: string) => Promise<WorkspaceEntry>
@@ -403,6 +404,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  // ── signUp: register a new account and log in ────────────────────────────────
+  const signUp = useCallback(
+    async (homeserver: string, user: string, password: string) => {
+      setLoading(true)
+      setError(null)
+
+      try {
+        const wasm = await getWasmModule()
+        const ms = await wasm.MatrixSession.register(homeserver, user, password)
+        await ms.initialSync()
+
+        const uid = ms.userId() ?? `@${user}:unknown`
+
+        const matrixSessionData: string = ms.sessionData()
+
+        const account: AccountSession = {
+          homeserverUrl: homeserver,
+          userId: uid,
+          username: user,
+          matrixSessionData,
+        }
+
+        setAccounts(prev => {
+          const updated = prev.filter(a => a.userId !== uid)
+          updated.push(account)
+          saveAccounts(updated)
+          return updated
+        })
+
+        setActiveAccountId(uid)
+        saveActiveAccountId(uid)
+
+        matrixSessionRef.current = ms
+        setMatrixSession(ms)
+
+        const roomsJson = await ms.listRooms()
+        const entries = parseWorkspaceRooms(roomsJson)
+        setWorkspaces(entries)
+        saveWorkspaces(uid, entries)
+      } catch (err: any) {
+        const msg = err?.message ?? String(err)
+        setError(msg)
+        throw new Error(msg)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [],
+  )
+
   // ── signOut: remove the active account from the pool ───────────────────────
   const signOut = useCallback(() => {
     const currentId = activeAccountId
@@ -699,6 +750,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     accounts,
     activeAccountId,
     signIn,
+    signUp,
     signOut,
     createWorkspace,
     joinWorkspace,

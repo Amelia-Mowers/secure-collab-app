@@ -208,6 +208,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
   const [newTableName, setNewTableName] = useState('')
+  const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [members, setMembers] = useState<string[]>([])
@@ -281,7 +282,8 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
 
   const handleCreateTable = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newTableName.trim()) return
+    if (!newTableName.trim() || creatingTable) return
+    setCreatingTable(true)
     try {
       const tableId = newTableName.toLowerCase().replace(/\s+/g, '-')
       await workspace.createTable(JSON.stringify({
@@ -299,6 +301,8 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
     } catch (err) {
       console.error('Failed to create table:', err)
       alert('Failed to create table: ' + (err as Error).message)
+    } finally {
+      setCreatingTable(false)
     }
   }
 
@@ -366,11 +370,12 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
               <form className="sidebar__new-table-form" onSubmit={handleCreateTable}>
                 <input
                   type="text"
-                  value={newTableName}
+                  value={creatingTable ? 'Creating...' : newTableName}
                   onChange={e => setNewTableName(e.target.value)}
                   placeholder="Table name..."
                   autoFocus
-                  onBlur={() => { if (!newTableName.trim()) setIsCreatingTable(false) }}
+                  disabled={creatingTable}
+                  onBlur={() => { if (!newTableName.trim() && !creatingTable) setIsCreatingTable(false) }}
                 />
               </form>
             ) : (

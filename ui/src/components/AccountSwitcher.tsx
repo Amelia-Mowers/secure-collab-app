@@ -27,6 +27,7 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
   } = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
+  const [switching, setSwitching] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Close on outside click
@@ -56,10 +57,16 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
       setOpen(false)
       return
     }
-    setOpen(false)
-    await switchAccount(account.userId)
-    // Navigate to workspaces for the new account
-    navigate('/workspaces')
+    setSwitching(true)
+    try {
+      await switchAccount(account.userId)
+      setOpen(false)
+      navigate('/workspaces')
+    } catch (err) {
+      console.error('Failed to switch account:', err)
+    } finally {
+      setSwitching(false)
+    }
   }
 
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -95,11 +102,12 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
         className="account-switcher__trigger"
         onClick={() => setOpen(o => !o)}
         title="Switch account"
+        disabled={switching}
       >
         <div className="account-switcher__avatar">
           {username?.[0]?.toUpperCase() ?? '?'}
         </div>
-        <span className="account-switcher__name">{username}</span>
+        <span className="account-switcher__name">{switching ? 'Switching...' : username}</span>
         {accounts.length > 1 && (
           <span className="account-switcher__badge">{accounts.length}</span>
         )}

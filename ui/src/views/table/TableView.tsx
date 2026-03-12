@@ -25,6 +25,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const [isAddingColumn, setIsAddingColumn] = useState(false)
   /** Which cell is currently being edited: "rowId:colId" or null */
   const [editingCell, setEditingCell] = useState<string | null>(null)
+  /** Track which rows are currently being deleted */
+  const [deletingRows, setDeletingRows] = useState<Set<string>>(new Set())
+  /** Toast for cell update errors */
+  const [toast, setToast] = useState<string | null>(null)
 
   const columns: ColumnMeta[] = React.useMemo(() => {
     const columnSet = new Set<string>()
@@ -52,6 +56,16 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       }
     }
   }, [workspace, tableId, rows])
+
+  const showCellError = (err: any) => {
+    const msg = err?.message ?? String(err)
+    if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('M_LIMIT_EXCEEDED')) {
+      setToast('Rate limited — slow down a bit')
+    } else {
+      setToast(`Update failed: ${msg}`)
+    }
+    setTimeout(() => setToast(null), 4000)
+  }
 
   const handleAddColumn = async (def: NewColumnDef) => {
     if (!workspace || !tableId) return
@@ -173,7 +187,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                               value={displayValue}
                               onChange={e => {
                                 updateCell(row._row_id, col.id, e.target.value)
-                                  .catch(err => console.error('Failed to update cell:', err))
+                                  .catch(showCellError)
                               }}
                               onClick={e => e.stopPropagation()}
                             >
@@ -192,7 +206,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                               onBlur={() => setEditingCell(null)}
                               onChange={e => {
                                 updateCell(row._row_id, col.id, e.target.value)
-                                  .catch(err => console.error('Failed to update cell:', err))
+                                  .catch(showCellError)
                               }}
                             />
                           )}
@@ -203,14 +217,28 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                     <td className="cell-actions" onClick={e => e.stopPropagation()}>
                       <button
                         className="ghost cell-delete-btn"
-                        onClick={() => deleteRow(row._row_id).catch(console.error)}
+                        disabled={deletingRows.has(row._row_id)}
+                        onClick={() => {
+                          setDeletingRows(prev => new Set(prev).add(row._row_id))
+                          deleteRow(row._row_id)
+                            .catch(console.error)
+                            .finally(() => setDeletingRows(prev => {
+                              const next = new Set(prev)
+                              next.delete(row._row_id)
+                              return next
+                            }))
+                        }}
                         title="Delete row"
                       >
-                        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
-                          <polyline points="1,3 12,3" />
-                          <path d="M4.5 3V2a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1" />
-                          <rect x="2.5" y="3" width="8" height="8.5" rx="1" />
-                        </svg>
+                        {deletingRows.has(row._row_id) ? (
+                          <span className="cell-delete-spinner" />
+                        ) : (
+                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
+                            <polyline points="1,3 12,3" />
+                            <path d="M4.5 3V2a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1" />
+                            <rect x="2.5" y="3" width="8" height="8.5" rx="1" />
+                          </svg>
+                        )}
                       </button>
                     </td>
                   </tr>
@@ -226,6 +254,13 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           onAdd={handleAddColumn}
           onClose={() => setIsAddingColumn(false)}
         />
+      )}
+
+      {toast && (
+        <div className="table-toast" role="alert">
+          {toast}
+          <button className="table-toast__close" onClick={() => setToast(null)}>&times;</button>
+        </div>
       )}
     </div>
   )

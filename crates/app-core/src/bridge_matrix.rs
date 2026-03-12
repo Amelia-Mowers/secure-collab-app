@@ -76,6 +76,64 @@ impl MatrixSession {
         Ok(MatrixSession { client, user_id })
     }
 
+    /// Register a new account on the homeserver and log in.
+    ///
+    /// Uses the Matrix Client-Server `register` endpoint. If the server
+    /// requires a dummy UIAA stage (common for Conduit and Synapse with
+    /// open registration) it is handled automatically.
+    #[wasm_bindgen]
+    pub async fn register(
+        homeserver_url: String,
+        username: String,
+        password: String,
+    ) -> Result<MatrixSession, JsValue> {
+        use matrix_sdk::ruma::api::client::{account::register, uiaa};
+
+        let client = Client::builder()
+            .homeserver_url(&homeserver_url)
+            .build()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
+
+        // Build initial registration request (no auth data — probes UIAA)
+        let mut request = register::v3::Request::new();
+        request.username = Some(username.clone());
+        request.password = Some(password.clone());
+        request.initial_device_display_name = Some("Secure Collab".to_owned());
+
+        let result = client.matrix_auth().register(request).await;
+
+        match result {
+            Ok(_response) => {
+                // Registration succeeded without UIAA (rare but possible)
+            }
+            Err(err) => {
+                // Check if the error is a UIAA response requiring a dummy stage
+                if let Some(info) = err.as_uiaa_response() {
+                    let mut dummy = uiaa::Dummy::new();
+                    dummy.session = info.session.clone();
+                    let mut retry = register::v3::Request::new();
+                    retry.username = Some(username.clone());
+                    retry.password = Some(password.clone());
+                    retry.initial_device_display_name = Some("Secure Collab".to_owned());
+                    retry.auth = Some(uiaa::AuthData::Dummy(dummy));
+
+                    client
+                        .matrix_auth()
+                        .register(retry)
+                        .await
+                        .map_err(|e| JsValue::from_str(&format!("Registration failed: {e}")))?;
+                } else {
+                    return Err(JsValue::from_str(&format!("Registration failed: {err}")));
+                }
+            }
+        }
+
+        let user_id = client.user_id().map(|u| u.to_owned());
+
+        Ok(MatrixSession { client, user_id })
+    }
+
     /// Get the logged-in user ID.
     #[wasm_bindgen(js_name = userId)]
     pub fn user_id(&self) -> Option<String> {

@@ -103,14 +103,19 @@ export function useTable(
   const [error, setError] = useState<Error | null>(null)
   const prevSyncCountRef = useRef(syncCount)
 
-  const fetchRows = useCallback(async () => {
+  // Track in-flight mutations so sync-triggered re-reads don't clobber
+  // optimistic state while a write is still pending.
+  const pendingMutationsRef = useRef(0)
+
+  const fetchRows = useCallback(async (isInitial = true) => {
     if (!workspace) {
       setLoading(false)
       return
     }
 
     try {
-      setLoading(true)
+      // Only show loading spinner on initial fetch, not on sync-triggered re-reads
+      if (isInitial) setLoading(true)
       const rowsJson = workspace.getTableRows(tableId)
       const parsedRows = JSON.parse(rowsJson) as TableRow[]
       setRows(parsedRows)
@@ -118,24 +123,28 @@ export function useTable(
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)))
     } finally {
-      setLoading(false)
+      if (isInitial) setLoading(false)
     }
   }, [workspace, tableId])
 
   // Fetch rows on mount and whenever workspace/tableId change
   useEffect(() => {
-    fetchRows()
+    fetchRows(true)
   }, [fetchRows])
 
   // Re-read rows when syncCount changes (remote changes already applied in WASM).
   // We track the previous value via a ref to avoid a redundant fetch on mount
   // (the mount effect above already handles that) while still catching every
   // transition, including the first 0 → 1 bump.
+  //
+  // Skip the re-read if there are pending local mutations — the optimistic
+  // state is more recent and the mutation's own completion will refresh if needed.
   useEffect(() => {
     if (syncCount === undefined) return
     if (syncCount === prevSyncCountRef.current) return // no actual change (mount)
     prevSyncCountRef.current = syncCount
-    fetchRows()
+    if (pendingMutationsRef.current > 0) return // don't clobber optimistic state
+    fetchRows(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncCount])
 
@@ -145,6 +154,7 @@ export function useTable(
         throw new Error('Workspace not initialized')
       }
 
+      pendingMutationsRef.current++
       try {
         const valueJson = JSON.stringify(value)
 
@@ -162,9 +172,11 @@ export function useTable(
         }
       } catch (err) {
         // Revert optimistic update on failure by re-reading from WASM
-        await fetchRows()
+        await fetchRows(false)
         setError(err instanceof Error ? err : new Error(String(err)))
         throw err
+      } finally {
+        pendingMutationsRef.current--
       }
     },
     [workspace, tableId, workspaceId, fetchRows]
@@ -176,6 +188,7 @@ export function useTable(
         throw new Error('Workspace not initialized')
       }
 
+      pendingMutationsRef.current++
       try {
         // Optimistically remove the row from React state
         setRows(prev => prev.filter(row => row._row_id !== rowId))
@@ -188,9 +201,11 @@ export function useTable(
         }
       } catch (err) {
         // Revert on failure
-        await fetchRows()
+        await fetchRows(false)
         setError(err instanceof Error ? err : new Error(String(err)))
         throw err
+      } finally {
+        pendingMutationsRef.current--
       }
     },
     [workspace, tableId, workspaceId, fetchRows]

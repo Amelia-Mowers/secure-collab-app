@@ -69,15 +69,15 @@ describe('App shell', () => {
 
   it('redirects unauthenticated users to /signin from /', () => {
     renderAt('/')
-    expect(screen.getByText('Sign in')).toBeInTheDocument()
+    expect(screen.getByText('Secure Collab')).toBeInTheDocument()
   })
 
   it('shows the sign-in page at /signin', () => {
     renderAt('/signin')
-    expect(screen.getByLabelText(/homeserver/i)).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: /homeserver/i })).toBeInTheDocument()
     expect(screen.getByLabelText(/username/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument()
-    expect(screen.getByText('Sign in')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeInTheDocument()
   })
 
   it('shows the Matrix connection hint on sign-in page', () => {

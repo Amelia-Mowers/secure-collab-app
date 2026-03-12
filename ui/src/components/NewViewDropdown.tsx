@@ -216,6 +216,7 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
     titleColumn: '',
   })
   const [error, setError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
 
   // Load columns whenever the selected table changes
   useEffect(() => {
@@ -240,8 +241,9 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!canSubmit) return
+    if (!canSubmit || creating) return
     setError(null)
+    setCreating(true)
 
     try {
       const viewId = `${selectedTableId}-${viewName.trim().toLowerCase().replace(/\s+/g, '-')}`
@@ -288,6 +290,8 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
       onCreated(viewId, viewType, selectedTableId)
     } catch (err) {
       setError((err as Error).message)
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -367,9 +371,9 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
           {error && <p className="nvm__error">{error}</p>}
 
           <div className="modal-actions">
-            <button type="button" className="ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="primary" disabled={!canSubmit}>
-              Create view
+            <button type="button" className="ghost" onClick={onClose} disabled={creating}>Cancel</button>
+            <button type="submit" className="primary" disabled={!canSubmit || creating}>
+              {creating ? 'Creating...' : 'Create view'}
             </button>
           </div>
         </form>

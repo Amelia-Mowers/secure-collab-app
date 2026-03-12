@@ -4,27 +4,70 @@ import { useAuth } from '@/hooks/useAuth'
 import type { AccountSession } from '@/hooks/useAuth'
 import './SignInPage.css'
 
+// ── Suggested homeservers ────────────────────────────────────────────────────
+
+interface HomeserverOption {
+  label: string
+  url: string
+  description: string
+}
+
+const SUGGESTED_SERVERS: HomeserverOption[] = [
+  {
+    label: 'matrix.org',
+    url: 'https://matrix.org',
+    description: 'Large public server — sign in only (register at matrix.org)',
+  },
+  {
+    label: 'envs.net',
+    url: 'https://matrix.envs.net',
+    description: 'Community server — sign in only (register at envs.net)',
+  },
+  {
+    label: 'Local dev server',
+    url: 'http://localhost:6167',
+    description: 'Local Conduit instance for development',
+  },
+]
+
+type AuthMode = 'signin' | 'signup'
+
 export function SignInPage() {
-  const { signIn, switchAccount, loading, error, accounts } = useAuth()
+  const { signIn, signUp, switchAccount, loading, error, accounts } = useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isAddAccount = searchParams.get('addAccount') === '1'
+  const [mode, setMode] = useState<AuthMode>('signin')
   const [homeserver, setHomeserver] = useState('http://localhost:6167')
+  const [showCustomServer, setShowCustomServer] = useState(
+    !SUGGESTED_SERVERS.some(s => s.url === 'http://localhost:6167'),
+  )
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(isAddAccount || accounts.length === 0)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     if (!homeserver.trim() || !username.trim() || !password.trim()) return
+
+    if (mode === 'signup' && password !== confirmPassword) {
+      setLocalError('Passwords do not match')
+      return
+    }
+
     setLocalError(null)
 
     try {
-      await signIn(homeserver.trim(), username.trim(), password)
+      if (mode === 'signup') {
+        await signUp(homeserver.trim(), username.trim(), password)
+      } else {
+        await signIn(homeserver.trim(), username.trim(), password)
+      }
       navigate('/workspaces')
     } catch (err: any) {
-      setLocalError(err?.message ?? 'Sign-in failed')
+      setLocalError(err?.message ?? `${mode === 'signup' ? 'Registration' : 'Sign-in'} failed`)
     }
   }
 
@@ -42,8 +85,23 @@ export function SignInPage() {
     navigate('/workspaces')
   }
 
+  const handleSelectServer = (url: string) => {
+    setHomeserver(url)
+    setShowCustomServer(false)
+  }
+
+  const handleCustomServer = () => {
+    setShowCustomServer(true)
+    setHomeserver('')
+  }
+
   const displayError = localError ?? error
-  const canSubmit = !loading && homeserver.trim() && username.trim() && password.trim()
+  const canSubmit =
+    !loading &&
+    homeserver.trim() &&
+    username.trim() &&
+    password.trim() &&
+    (mode === 'signin' || confirmPassword.trim())
 
   // When there are existing accounts and we're not in add-account mode,
   // show account picker first instead of the full sign-in form.
@@ -75,7 +133,7 @@ export function SignInPage() {
                 <div className="signin__account-info">
                   <span className="signin__account-name">{account.username}</span>
                   <span className="signin__account-server">
-                    {account.homeserverUrl.replace(/^https?:\/\//, '')}
+                    {account.userId}
                   </span>
                 </div>
                 <svg className="signin__account-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -131,33 +189,75 @@ export function SignInPage() {
         </h1>
         <p className="signin__subtitle">
           {isAddAccount
-            ? 'Sign in to another Matrix account'
+            ? 'Sign in or create a Matrix account'
             : 'End-to-end encrypted collaborative workspace'}
         </p>
 
-        <form className="signin__form" onSubmit={handleSubmit}>
-          <div>
-            <label className="signin__label" htmlFor="homeserver">Homeserver</label>
+        {/* ── Sign in / Sign up tabs ─────────────────────────── */}
+        <div className="signin__tabs">
+          <button
+            className={`signin__tab ${mode === 'signin' ? 'signin__tab--active' : ''}`}
+            onClick={() => { setMode('signin'); setLocalError(null) }}
+            type="button"
+          >
+            Sign in
+          </button>
+          <button
+            className={`signin__tab ${mode === 'signup' ? 'signin__tab--active' : ''}`}
+            onClick={() => { setMode('signup'); setLocalError(null) }}
+            type="button"
+          >
+            Create account
+          </button>
+        </div>
+
+        {/* ── Homeserver picker ───────────────────────────────── */}
+        <fieldset className="signin__server-picker">
+          <legend className="signin__label">Homeserver</legend>
+          <div className="signin__server-list">
+            {SUGGESTED_SERVERS.map(server => (
+              <button
+                key={server.url}
+                type="button"
+                className={`signin__server-option ${homeserver === server.url && !showCustomServer ? 'signin__server-option--active' : ''}`}
+                onClick={() => handleSelectServer(server.url)}
+              >
+                <span className="signin__server-name">{server.label}</span>
+                <span className="signin__server-desc">{server.description}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className={`signin__server-option ${showCustomServer ? 'signin__server-option--active' : ''}`}
+              onClick={handleCustomServer}
+            >
+              <span className="signin__server-name">Custom server</span>
+              <span className="signin__server-desc">Enter a homeserver URL manually</span>
+            </button>
+          </div>
+          {showCustomServer && (
             <input
-              id="homeserver"
-              className="signin__input"
+              className="signin__input signin__server-input"
               type="url"
               placeholder="https://matrix.example.com"
               value={homeserver}
               onChange={e => setHomeserver(e.target.value)}
-              autoComplete="url"
+              autoFocus
             />
-          </div>
+          )}
+        </fieldset>
+
+        <form className="signin__form" onSubmit={handleSubmit}>
           <div>
             <label className="signin__label" htmlFor="username">Username</label>
             <input
               id="username"
               className="signin__input"
               type="text"
-              placeholder="e.g. alice"
+              placeholder={mode === 'signup' ? 'Choose a username' : 'e.g. alice'}
               value={username}
               onChange={e => setUsername(e.target.value)}
-              autoFocus
+              autoFocus={!showCustomServer}
               autoComplete="username"
             />
           </div>
@@ -167,12 +267,27 @@ export function SignInPage() {
               id="password"
               className="signin__input"
               type="password"
-              placeholder="Password"
+              placeholder={mode === 'signup' ? 'Choose a password' : 'Password'}
               value={password}
               onChange={e => setPassword(e.target.value)}
-              autoComplete="current-password"
+              autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             />
           </div>
+
+          {mode === 'signup' && (
+            <div>
+              <label className="signin__label" htmlFor="confirm-password">Confirm password</label>
+              <input
+                id="confirm-password"
+                className="signin__input"
+                type="password"
+                placeholder="Confirm your password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+          )}
 
           {displayError && (
             <div className="signin__error" role="alert">
@@ -185,12 +300,17 @@ export function SignInPage() {
             type="submit"
             disabled={!canSubmit}
           >
-            {loading ? 'Signing in...' : isAddAccount ? 'Add account' : 'Sign in'}
+            {loading
+              ? (mode === 'signup' ? 'Creating account...' : 'Signing in...')
+              : (mode === 'signup' ? 'Create account' : (isAddAccount ? 'Add account' : 'Sign in'))
+            }
           </button>
         </form>
 
         <p className="signin__hint">
-          Connect to any Matrix homeserver. Your data stays end-to-end encrypted.
+          {mode === 'signup'
+            ? 'Your account will be created on the selected homeserver. You can use it across any Matrix-compatible app.'
+            : 'Connect to any Matrix homeserver. Your data stays end-to-end encrypted.'}
         </p>
       </div>
     </div>

@@ -137,6 +137,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const [viewConfig, setViewConfig] = useState<any>(null)
   const [viewError, setViewError] = useState<Error | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -199,7 +200,15 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
     if (sourceColumn.id !== targetColumnId) {
       const { group_by_column } = viewConfig.kanban_config
       updateCell(cardData.id, group_by_column, targetColumnId)
-        .catch(err => console.error('Failed to update card:', err))
+        .catch(err => {
+          const msg = err?.message ?? String(err)
+          if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('M_LIMIT_EXCEEDED')) {
+            setToast('Rate limited — change will retry. Slow down a bit.')
+          } else {
+            setToast(`Update failed: ${msg}`)
+          }
+          setTimeout(() => setToast(null), 4000)
+        })
     }
     setActiveId(null)
   }
@@ -305,6 +314,13 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
           </DragOverlay>
         </DndContext>
       </div>
+
+      {toast && (
+        <div className="kanban-toast" role="alert">
+          {toast}
+          <button className="kanban-toast__close" onClick={() => setToast(null)}>&times;</button>
+        </div>
+      )}
     </div>
   )
 }

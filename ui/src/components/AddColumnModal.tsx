@@ -33,7 +33,7 @@ export interface NewColumnDef {
 }
 
 interface AddColumnModalProps {
-  onAdd: (def: NewColumnDef) => void
+  onAdd: (def: NewColumnDef) => Promise<void> | void
   onClose: () => void
 }
 
@@ -41,17 +41,23 @@ export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
   const [name, setName] = useState('')
   const [columnType, setColumnType] = useState<ColumnType>('text')
   const [optionsRaw, setOptionsRaw] = useState('Option 1, Option 2, Option 3')
+  const [adding, setAdding] = useState(false)
 
   const isSelectType = columnType === 'select' || columnType === 'multiselect'
   const canSubmit = name.trim().length > 0
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!canSubmit) return
+    if (!canSubmit || adding) return
     const options = isSelectType
       ? optionsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0)
       : []
-    onAdd({ name: name.trim(), columnType, options })
+    setAdding(true)
+    try {
+      await onAdd({ name: name.trim(), columnType, options })
+    } finally {
+      setAdding(false)
+    }
   }
 
   return (
@@ -123,9 +129,9 @@ export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
           )}
 
           <div className="modal-actions">
-            <button type="button" className="ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="primary" disabled={!canSubmit}>
-              Add column
+            <button type="button" className="ghost" onClick={onClose} disabled={adding}>Cancel</button>
+            <button type="submit" className="primary" disabled={!canSubmit || adding}>
+              {adding ? 'Adding...' : 'Add column'}
             </button>
           </div>
         </form>
