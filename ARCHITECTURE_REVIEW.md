@@ -86,7 +86,7 @@ fn next_timestamp(&mut self) -> u64 { self.timestamp_counter += 1; self.timestam
 
 ### 4.2 — 🔴 Critical: E2E encryption is claimed but never enabled
 
-> **Status (2026-06-07): enablement implemented** — rooms now `enable_encryption()` on creation, `send_updates` is fail-closed (refuses to send into a non-encrypted room), and the UI badge reflects the real `isEncrypted()` state. Compile-verified (wasm32 + matrix-wasm). **Still open:** encrypted round-trip test against Conduit, and device verification + key backup before launch. See `TODO.md` §4.2. Original finding below.
+> **Status (2026-06-07): enabled & round-trip verified** — rooms now `enable_encryption()` on creation, `send_updates` is fail-closed, and the UI badge reflects the real `isEncrypted()` state. An encrypted two-client send/decrypt round-trip is verified against Conduit (`test_two_client_encrypted_round_trip`), so the read path survives encryption. **Still open:** device verification + cross-signing + key backup before launch. See `TODO.md` §4.2. Original finding below.
 
 The product is "genuine E2E encryption, auditable not marketing." The Matrix SDK is compiled with `e2e-encryption`, the crypto store is configured, and the UI shows a lock badge (`Sidebar.tsx:320`, `SignInPage.tsx:193`). But **no code ever enables encryption on a room.** A grep for `encrypt` / `m.room.encryption` / `EncryptionSettings` finds only docs, marketing copy, the SDK feature flag, and the UI badge — zero call sites.
 

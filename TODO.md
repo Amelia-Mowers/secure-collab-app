@@ -22,11 +22,11 @@ Priority bands:
   - [x] Unit tests: post-replay write wins (`test_write_after_replay_wins_over_loaded_history`), monotonic-within-ms, order-independent tie-break by server ts (`test_lww_tiebreak_by_server_timestamp_is_order_independent`), wire omits server ts.
   - [x] **Follow-up:** two-client convergence via the real sync loop — done in `[§4.5]` (`test_two_client_sync_via_real_timeline`): Bob materializes from his own synced Conduit timeline and `origin_server_ts` is confirmed attached as the tiebreaker against real server-stamped events.
 
-- [~] **Make E2E encryption real — or stop claiming it** — `[§4.2]` — _enablement + guard + honest badge implemented & compile-verified 2026-06-07 (wasm32 + matrix-wasm build green). NOT yet round-trip-tested against a real encrypted homeserver — see caveats below._
+- [~] **Make E2E encryption real — or stop claiming it** — `[§4.2]` — _enablement + guard + honest badge done & compile-verified; encrypted send/decrypt round-trip now **verified against Conduit** (`test_two_client_encrypted_round_trip`). Remaining before launch: device verification + cross-signing + key backup._
   - [x] Enable encryption at room creation — `room.enable_encryption()` in `ConnectedWorkspace`'s `createRoom`; creation fails loudly if it can't be turned on.
   - [x] **Fail-closed send guard** — `send_updates` refuses to emit cell updates unless `room.encryption_state().is_encrypted()` (don't trust the server default). Placed at the bridge boundary only, so the native integration harness (unencrypted test rooms) is unaffected.
   - [x] **Honest badge** — new `ConnectedWorkspace::isEncrypted()` bridge method; `Sidebar` now shows "E2E Encrypted" only when the room really is, and a red "Not encrypted" warning otherwise (instead of a hard-coded claim).
-  - [ ] **Verify an encrypted round-trip** (send → sync → cold-start replay) against Conduit — the read path relies on the SDK auto-decrypting `raw().json()`; confirmed by docs, not yet by test. Harness is now available and green (`scripts/run-integration-tests.sh` via Nix/WSL); next step is to enable encryption on the harness room. Fold into `[§4.5]`.
+  - [x] **Verify an encrypted round-trip** against Conduit — `test_two_client_encrypted_round_trip`: Alice sends into an `m.room.encryption` room, the SDK Megolm-encrypts + shares the key, and Bob decrypts on sync and materializes the value. Confirms the SDK auto-decrypt of `raw().json()` works for our custom events (the read path survives encryption).
   - [ ] Cross-device key sharing / **device verification + cross-signing + key backup** — required before launch (currently keys are shared with unverified devices by default: functional, not verified-secure). Larger design effort; still open.
   - [ ] Decide policy for **legacy unencrypted rooms** (created before this change): the guard makes them read-only. Offer a migrate/recreate path or a clear UI state.
 
@@ -47,7 +47,7 @@ Priority bands:
 
 - [~] **Add a true end-to-end sync test** — `[§4.5]` — _harness runnable via Nix/WSL (`scripts/run-integration-tests.sh`) and green: tables-over-matrix integration tests + app-core `workspace_matrix` 17/17._
   - [x] Drive a real send → server → sync → fetch-timeline → extract → materialize round-trip (`test_two_client_sync_via_real_timeline`): Bob converges on Alice's value from his OWN synced timeline, not a re-applied in-memory update.
-  - [ ] **Encrypted** round-trip (overlaps `[§4.2]`): make the harness create an encrypted room + verify Megolm send/decrypt across two clients.
+  - [x] **Encrypted** round-trip (overlaps `[§4.2]`): `test_two_client_encrypted_round_trip` — Megolm send/decrypt across two clients via the `create_encrypted_room` harness helper.
   - [ ] Add at least one UI test against compiled WASM (not just `MockWorkspace`).
 
 ---
