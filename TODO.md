@@ -34,11 +34,10 @@ Priority bands:
 
 ## P1 — Should-fix (deliver the architecture's promises)
 
-- [ ] **Wire order-based bumping into the write path** — `[§4.3]`
-  `CompactionManager` is implemented + tested but never called; the field is `#[allow(dead_code)]` (`workspace.rs:25`). Nothing is ever bumped, so cold-start paginates full history.
-  - [ ] Emit a bump alongside each user write (`generate_updates_with_bump`).
-  - [ ] Decide how system tables (`_schema`/`_views`, held outside `tables`) get compacted.
-  - [ ] Remove dead `last_bump` tracking or actually use it.
+- [x] **Wire order-based bumping into the write path** — `[§4.3]` — _done 2026-06-07; unit + rotation tests, stable clippy, wasm build verified._
+  - [x] Emit a bump alongside each user write — `Workspace::update_cell_with_bump` (used by `ConnectedWorkspace::update_cell`) sends the user write **plus** a bump of the stalest cell; the local-only path stays no-bump.
+  - [x] System-table decision: `_schema`/`_views` are intentionally **not** bumped (low churn; lookback bounded by their small cell count) — documented on `update_cell_with_bump`.
+  - [x] Removed dead `last_bump`; `CompactionManager` is now stateless (`&self` methods).
 
 - [ ] **Unify cold-start to one implementation** — `[§4.4]`
   Three materializers exist: `materialize_from_timeline` (order-independent), `TimelinePaginator` (assumes newest-first), and the bridge's hand-rolled loop (`bridge_matrix.rs:445`).

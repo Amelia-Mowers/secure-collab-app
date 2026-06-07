@@ -104,6 +104,8 @@ Fix is small in code — set encryption at room creation **and verify the room i
 
 ### 4.3 — 🟠 High: order-based bumping is built but unplugged
 
+> **Status (2026-06-07): fixed** — `Workspace::update_cell_with_bump` now emits a bump of the stalest cell alongside each user write and `ConnectedWorkspace::update_cell` uses it, so cold-start lookback is bounded. Dead `last_bump` state removed. See `TODO.md` §4.3. Original finding below.
+
 Compaction-by-bumping is a headline of the design and the answer to bounded cold-start. The library implements it well (`compaction.rs`, `generate_updates_with_bump`) and tests it. But the actual write paths don't call it:
 
 - `Workspace::update_cell` (`workspace.rs:145`) emits a single `CellUpdate` — no bump.
