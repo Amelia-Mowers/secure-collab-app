@@ -9,7 +9,7 @@ mod harness;
 
 use harness::{setup_workspace, TestHarness};
 use serde_json::json;
-use tables_over_matrix::{CellUpdate, Table};
+use tables_over_matrix::{CellUpdate, MatrixClient, Table};
 
 #[tokio::test]
 #[ignore]
@@ -112,4 +112,63 @@ async fn test_send_multiple_updates() {
     assert_eq!(table.get_value("row1", "title"), Some(&json!("Task 1")));
     assert_eq!(table.get_value("row1", "status"), Some(&json!("todo")));
     assert_eq!(table.get_value("row2", "title"), Some(&json!("Task 2")));
+}
+
+/// End-to-end receive path (review §4.5): unlike `test_two_client_cell_sync`,
+/// which re-applies the same in-memory `CellUpdate`, this materializes Bob's
+/// table from his OWN synced room timeline — exercising the real path of
+/// `sync` → fetch timeline → `extract_cell_update` → `into_update` →
+/// `apply_update`. It also asserts the Matrix `origin_server_ts` is carried
+/// into the update as the LWW tiebreaker (the §4.1 plumbing), proving it works
+/// against real server-stamped events rather than hand-built ones.
+#[tokio::test]
+#[ignore]
+async fn test_two_client_sync_via_real_timeline() {
+    let harness = TestHarness::new().await.unwrap();
+    let (clients, _room_id) = setup_workspace(&harness, &["alice", "bob"]).await.unwrap();
+    let mut clients = clients.into_iter();
+    let alice = clients.next().unwrap();
+    let bob = clients.next().unwrap();
+
+    // Alice writes a cell over Matrix.
+    let update = CellUpdate::new("tasks", "t1", "title", json!("Hello from Alice"), 100);
+    alice.send_cell_update(&update).await.unwrap();
+
+    // Let it propagate, then Bob syncs so the SDK knows the room is current.
+    harness.wait_for_sync().await;
+    bob.sync_once().await.unwrap();
+
+    // Bob materializes from his own server-side timeline (the real receive path).
+    let room = bob.get_room().unwrap();
+    let response = room
+        .messages(matrix_sdk::room::MessagesOptions::backward())
+        .await
+        .unwrap();
+
+    let mut table = Table::new("tasks");
+    let mut received = 0;
+    for event in &response.chunk {
+        if let Ok(json_str) = serde_json::to_string(event.raw().json()) {
+            if let Some(rx) = MatrixClient::extract_cell_update(&json_str) {
+                let upd = rx.into_update();
+                // The server timestamp must be attached as the LWW tiebreaker.
+                assert!(
+                    upd.server_timestamp.is_some(),
+                    "origin_server_ts should be attached via into_update()"
+                );
+                table.apply_update(upd);
+                received += 1;
+            }
+        }
+    }
+
+    assert!(
+        received >= 1,
+        "Bob should have received Alice's cell update through sync"
+    );
+    assert_eq!(
+        table.get_value("t1", "title"),
+        Some(&json!("Hello from Alice")),
+        "Bob should converge on Alice's value via the real timeline"
+    );
 }

@@ -91,7 +91,10 @@ log = "warn"
         let client = reqwest::Client::new();
         let url = format!("{}/_matrix/client/versions", self.homeserver_url);
 
-        for i in 0..50 {
+        // Generous timeout: when several #[ignore]d tests run in parallel they
+        // each spin up their own Conduit + RocksDB, and a cold start under that
+        // contention can take well over 5s. 300 * 100ms = 30s.
+        for i in 0..300 {
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     eprintln!(
@@ -106,7 +109,7 @@ log = "warn"
         }
 
         bail!(
-            "Conduit failed to start within 5 seconds on port {}",
+            "Conduit failed to start within 30 seconds on port {}",
             self.port
         );
     }
