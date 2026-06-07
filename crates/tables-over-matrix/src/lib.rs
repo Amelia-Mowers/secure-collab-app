@@ -111,7 +111,7 @@ mod integration_tests {
         assert_eq!(row1.get("col1"), Some(&json!("a")));
 
         // Test compaction
-        let mut manager = CompactionManager::new();
+        let manager = CompactionManager::new();
         let bump_candidate = manager.select_bump_candidate(&table).unwrap();
         assert_eq!(bump_candidate.table_id, "test_table");
 

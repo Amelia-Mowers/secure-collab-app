@@ -23,7 +23,7 @@ fn test_bump_selection_picks_stalest() {
 #[test]
 fn test_bump_updates_timestamp() {
     let mut table = Table::new("test");
-    let mut manager = CompactionManager::new();
+    let manager = CompactionManager::new();
 
     table.apply_update(CellUpdate::new("test", "row1", "col1", json!("value"), 100));
 
@@ -40,7 +40,7 @@ fn test_bump_updates_timestamp() {
 #[test]
 fn test_automatic_bumping_with_updates() {
     let mut table = Table::new("test");
-    let mut manager = CompactionManager::new();
+    let manager = CompactionManager::new();
 
     // Create initial cells
     table.apply_update(CellUpdate::new("test", "row1", "col1", json!("a"), 100));
@@ -93,7 +93,7 @@ fn test_lookback_window_bounded_by_cell_count() {
 #[test]
 fn test_sequential_bumps_cycle_through_cells() {
     let mut table = Table::new("test");
-    let mut manager = CompactionManager::new();
+    let manager = CompactionManager::new();
 
     // Create 3 cells
     table.apply_update(CellUpdate::new("test", "row1", "col1", json!("a"), 100));
@@ -134,7 +134,7 @@ fn test_sequential_bumps_cycle_through_cells() {
 #[test]
 fn test_empty_table_no_bump() {
     let table = Table::new("test");
-    let mut manager = CompactionManager::new();
+    let manager = CompactionManager::new();
 
     let user_update = CellUpdate::new("test", "row1", "col1", json!("first"), 100);
 

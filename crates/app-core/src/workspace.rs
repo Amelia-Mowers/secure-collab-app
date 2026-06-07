@@ -47,8 +47,7 @@ pub struct Workspace {
     schema_manager: SchemaManager,
     /// View manager
     view_manager: ViewManager,
-    /// Compaction manager for bumping
-    #[allow(dead_code)]
+    /// Compaction helper for order-based bumping
     compaction_manager: CompactionManager,
     /// Hybrid logical clock: the highest timestamp seen or generated so far
     /// (≈ Unix ms). Advanced by both local writes and observed updates.
@@ -204,6 +203,74 @@ impl Workspace {
             }
             None => Err(crate::Error::TableNotFound),
         }
+    }
+
+    /// Like [`update_cell`](Self::update_cell), but also emits an order-based
+    /// **bump** of the stalest cell in the same table, and returns every
+    /// `CellUpdate` that must be sent to Matrix (the user write, plus the bump
+    /// when one applies).
+    ///
+    /// A bump re-emits the oldest cell's current value with a fresh timestamp,
+    /// so that after roughly one cycle of writes every live cell has a recent
+    /// timeline event — bounding the cold-start lookback to ~the table's cell
+    /// count. This is used by the Matrix-connected write path; the local-only
+    /// path uses [`update_cell`](Self::update_cell) (there is no timeline to
+    /// bound). See ARCHITECTURE_REVIEW.md §4.3.
+    ///
+    /// System tables (`_schema`/`_views`) are low-churn and are intentionally
+    /// not bumped here; their lookback is bounded by their (small) cell count.
+    pub fn update_cell_with_bump(
+        &mut self,
+        table_id: &str,
+        row_id: &str,
+        column_id: &str,
+        value: serde_json::Value,
+    ) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+
+        let user_timestamp = self.next_timestamp();
+        let user_update = CellUpdate::new(table_id, row_id, column_id, value, user_timestamp);
+        let user_cell = user_update.cell_id();
+
+        // Pick the stalest cell to bump from the table state *before* the user
+        // write, and never bump the cell we're about to write.
+        let candidate = {
+            let table = self
+                .tables
+                .get(table_id)
+                .ok_or(crate::Error::TableNotFound)?;
+            self.compaction_manager.select_bump_candidate(table)
+        }
+        .filter(|c| *c != user_cell);
+
+        let mut updates = vec![user_update];
+
+        if let Some(candidate) = candidate {
+            let bump_timestamp = self.next_timestamp();
+            let table = self
+                .tables
+                .get(table_id)
+                .ok_or(crate::Error::TableNotFound)?;
+            if let Some(bump) =
+                self.compaction_manager
+                    .create_bump_update(table, &candidate, bump_timestamp)
+            {
+                updates.push(bump);
+            }
+        }
+
+        // Apply everything locally so our materialized table matches what we send.
+        let table = self
+            .tables
+            .get_mut(table_id)
+            .ok_or(crate::Error::TableNotFound)?;
+        for update in &updates {
+            table.apply_update(update.clone());
+        }
+
+        Ok(updates)
     }
 
     /// Apply a cell update (from network or local)
@@ -1152,5 +1219,76 @@ mod tests {
             ws.get_table("tasks").unwrap().get_value("r1", "title"),
             Some(&json!("d")),
         );
+    }
+
+    // ─── Order-based bumping (ARCHITECTURE_REVIEW §4.3) ──────────────────────
+
+    #[test]
+    fn test_update_cell_with_bump_bumps_stalest_cell() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        // Two existing cells; r1 is the stalest (written first).
+        ws.update_cell("tasks", "r1", "title", json!("a")).unwrap();
+        ws.update_cell("tasks", "r2", "title", json!("b")).unwrap();
+
+        let updates = ws
+            .update_cell_with_bump("tasks", "r3", "title", json!("c"))
+            .unwrap();
+
+        // user write + exactly one bump
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].row_id, "r3");
+        assert_eq!(updates[0].value, json!("c"));
+        // the bump re-emits the stalest cell (r1) with its current value + fresh ts
+        assert_eq!(updates[1].row_id, "r1");
+        assert_eq!(updates[1].value, json!("a"));
+        assert!(updates[1].timestamp > updates[0].timestamp);
+
+        // the write is materialized; the bump did not change r1's value
+        let t = ws.get_table("tasks").unwrap();
+        assert_eq!(t.get_value("r3", "title"), Some(&json!("c")));
+        assert_eq!(t.get_value("r1", "title"), Some(&json!("a")));
+    }
+
+    #[test]
+    fn test_update_cell_with_bump_no_bump_when_nothing_stale() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        // First write into an otherwise-empty table: nothing else to bump.
+        let updates = ws
+            .update_cell_with_bump("tasks", "r1", "title", json!("a"))
+            .unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].row_id, "r1");
+    }
+
+    #[test]
+    fn test_update_cell_with_bump_rotates_through_cells() {
+        // Successive writes bump different (stalest) cells, so the lookback stays
+        // bounded rather than re-bumping the same cell forever.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        ws.update_cell("tasks", "r1", "title", json!("a")).unwrap();
+        ws.update_cell("tasks", "r2", "title", json!("b")).unwrap();
+        ws.update_cell("tasks", "r3", "title", json!("c")).unwrap();
+
+        // First bump targets r1 (stalest)...
+        let u1 = ws
+            .update_cell_with_bump("tasks", "r4", "title", json!("d"))
+            .unwrap();
+        assert_eq!(u1[1].row_id, "r1");
+        // ...and after r1 is bumped to newest, r2 becomes the stalest.
+        let u2 = ws
+            .update_cell_with_bump("tasks", "r5", "title", json!("e"))
+            .unwrap();
+        assert_eq!(u2[1].row_id, "r2");
+    }
+
+    #[test]
+    fn test_update_cell_with_bump_requires_existing_table() {
+        let mut ws = Workspace::new("w");
+        assert!(ws
+            .update_cell_with_bump("ghost", "r1", "c", json!("x"))
+            .is_err());
     }
 }

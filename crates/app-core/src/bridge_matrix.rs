@@ -617,18 +617,16 @@ impl ConnectedWorkspace {
         let value: serde_json::Value =
             serde_json::from_str(value_json).map_err(|_| JsValue::from_str("Invalid JSON"))?;
 
-        // Apply locally and capture the CellUpdate
-        let update = {
+        // Apply locally and capture the updates to send: the user write plus an
+        // order-based compaction bump of the stalest cell (review §4.3).
+        let updates = {
             let mut ws = self.inner.borrow_mut();
-            let ts = ws.next_timestamp_pub();
-            let update = CellUpdate::new(&table_id, &row_id, &column_id, value, ts);
-            ws.apply_update(update.clone())
-                .map_err(|_| JsValue::from_str("Update failed"))?;
-            update
+            ws.update_cell_with_bump(&table_id, &row_id, &column_id, value)
+                .map_err(|_| JsValue::from_str("Update failed"))?
         };
 
-        // Send to Matrix
-        self.send_updates(&[update]).await?;
+        // Send to Matrix (user write + bump).
+        self.send_updates(&updates).await?;
 
         Ok(())
     }
