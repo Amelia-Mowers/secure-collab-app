@@ -51,12 +51,13 @@ async fn test_cold_start_from_sent_events() {
     );
     assert_eq!(table.get_value("task2", "status"), Some(&json!("done")));
 
-    // In forward-chronological order, the newer task1.status (ts=104) supersedes
-    // the older one (ts=101). Both are "processed" since each was newest at the
-    // time it was encountered. events_skipped only increments when an event has
-    // a *lower* timestamp than a previously seen event for the same cell.
-    assert_eq!(result.events_skipped, 0);
-    assert_eq!(result.events_processed, 5);
+    // Accounting (unified engine, review §4.4): `events_processed` counts the
+    // first event seen for each distinct cell; `events_skipped` counts repeat
+    // events for an already-seen cell. task1.status is written twice (ts 101
+    // then 104), so of the 5 events 4 are first-seen and 1 is a repeat.
+    // Materialized values stay LWW-correct regardless (asserted above).
+    assert_eq!(result.events_processed, 4);
+    assert_eq!(result.events_skipped, 1);
 }
 
 #[tokio::test]
