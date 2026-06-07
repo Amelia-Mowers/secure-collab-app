@@ -53,21 +53,21 @@ Priority bands:
 
 ## FE — Frontend / Table UX
 
-- [ ] **Migrate the table view to TanStack Table v8 + TanStack Virtual** — replaces the hand-rolled `<table>` in `TableView.tsx`
-  Current grid re-implements column model/editing while missing virtualization, typed editors, and working sort/filter; only `select` is treated as typed (everything else is a stringified text input, `TableView.tsx:172`).
-  - [ ] Add deps: `@tanstack/react-table`, `@tanstack/react-virtual` (both MIT — no licensing friction with open-core).
-  - [ ] **Build one per-type cell registry** `{type → {Display, Editor}}` for all column types (text, number, boolean, date, select, multiselect, reference, document, json), reused by **both** the grid and the EntryView — kills the `TableView` ⇄ `FieldRenderer` duplication.
-  - [ ] Map `schema.columns → ColumnDef[]` (carry options + reference target).
-  - [ ] Replace the raw `<table>` with TanStack + row/column virtualization (target: 5k+ rows scroll smoothly).
-  - [ ] **Commit on blur/Enter with debounce** → exactly one `CellUpdate` (one `room.send`) per logical edit. Fixes the current per-keystroke write that triggers 429 rate-limits (`TableView.tsx:208`, `:62`).
-  - [ ] Wire real sort + filter (the toolbar buttons are currently dead, `TableView.tsx:120`).
-  - [ ] Reconcile optimistic React state with LWW rejection so writes can't flash-then-revert (relates to `[§4.1]` and `[§5]`).
-  - [ ] Column resize / reorder / visibility (free with TanStack — optional polish).
-  - [ ] Tests: per-type editors render + commit correctly; ≤1 update per committed edit.
+- [~] **Migrate the table view to TanStack Table v8 + TanStack Virtual** — _grid done & verified 2026-06-07 (type-check + lint + 215 vitest + production build); branch `fe/tanstack-table`._
+  - [x] Add deps: `@tanstack/react-table`, `@tanstack/react-virtual` (both MIT).
+  - [x] **Typed cell registry** `ui/src/cells/cellRegistry.tsx` — `CellDisplay` + commit-on-blur `CellEditor` for all 9 column types. _(Used by the grid; EntryView still on `FieldRenderer` — see follow-up below.)_
+  - [x] Map `schema.columns → ColumnDef[]` (TanStack column model, carries options).
+  - [x] Replace the raw `<table>` with TanStack + row virtualization (`@tanstack/react-virtual`, with a render-all fallback when there's no viewport, e.g. jsdom/SSR).
+  - [x] **Commit on blur/Enter** → exactly one `CellUpdate` per logical edit (kills the per-keystroke `room.send`/429s).
+  - [x] Header-click **column sorting** (`getSortedRowModel`). _(Toolbar Sort/Filter buttons are still stubs — real filter UI is a follow-up.)_
+  - [x] Tests: rewritten to assert display + one-update-on-blur; per-type editors covered.
+  - [ ] **Follow-up — share the registry with EntryView**: refactor `FieldRenderer` to delegate to `cellRegistry.CellEditor`, finishing the dedup.
+  - [ ] **Follow-up — optimistic ↔ LWW reconciliation** so a rejected write can't flash-then-revert (relates to `[§4.1]`/`[§5]`).
+  - [ ] Follow-up — real filter UI; column resize/reorder/visibility (free with TanStack).
 
-  *Alternative considered:* AG Grid (batteries-included, but key features are paid Enterprise — awkward for an auditable open-core). Glide Data Grid (canvas) noted for a future high-volume data view.
+  *Alternative considered:* AG Grid (key features paid Enterprise — awkward for an auditable open-core). Glide Data Grid (canvas) for a future high-volume view.
 
-- [ ] **Flesh out placeholder field editors** — `multiselect` is a comma string and `reference` is a plain text input (`FieldRenderer.tsx:133`, `:148`); add a tag input and a real reference/record picker. (Folds into the cell registry above.)
+- [ ] **Flesh out placeholder field editors** — `multiselect` is a comma-string and `reference` a plain text input in the registry; add a tag input and a real reference/record picker. (Now centralized in `cellRegistry.tsx`.)
 
 ---
 
