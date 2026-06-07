@@ -448,8 +448,14 @@ impl ConnectedWorkspace {
         let mut workspace = Workspace::new(room_id.to_string());
 
         // ── Fetch room history and replay events ──────────────────────
-        // Paginate backwards from the end of the timeline to reconstruct
-        // workspace state from all stored cell-update events.
+        // Workspace-level cold start (review §4.4): paginate backwards from the
+        // end of the timeline and replay every cell-update event through
+        // `Workspace::apply_update`, which routes user data, schema and view
+        // updates to the right place. This is intentionally distinct from the
+        // raw-table `TimelinePaginator` in `tables-over-matrix` — that engine
+        // materializes bare tables and has no notion of system tables. Values
+        // are LWW so order-independent; per-cell history is bounded by the
+        // order-based bumping wired in at write time (§4.3).
         let mut from_token: Option<String> = None;
         loop {
             let mut options = MessagesOptions::backward();
