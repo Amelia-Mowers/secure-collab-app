@@ -172,3 +172,84 @@ async fn test_two_client_sync_via_real_timeline() {
         "Bob should converge on Alice's value via the real timeline"
     );
 }
+
+/// End-to-end ENCRYPTED round-trip (review §4.2): a cell update sent into an
+/// E2E-encrypted room is Megolm-encrypted on the wire and must decrypt on the
+/// other client. This proves the SDK's transparent encrypt-on-send /
+/// decrypt-on-receive path works for our custom
+/// `com.securecollab.cell.update` events end to end — i.e. that enabling
+/// encryption (review §4.2) does not break the read path.
+#[tokio::test]
+#[ignore]
+async fn test_two_client_encrypted_round_trip() {
+    let harness = TestHarness::new().await.unwrap();
+
+    // Register two users and put them in a room that is encrypted from creation.
+    let mut alice = harness.register_user("alice").await.unwrap();
+    let mut bob = harness.register_user("bob").await.unwrap();
+    let room_id = harness
+        .create_encrypted_room(&alice, "secret-workspace")
+        .await
+        .unwrap();
+
+    alice.sync_once().await.unwrap();
+    alice.set_room_from_str(&room_id).unwrap();
+    harness
+        .invite_and_join(&alice, &bob, &room_id)
+        .await
+        .unwrap();
+    bob.sync_once().await.unwrap();
+    bob.set_room_from_str(&room_id).unwrap();
+
+    // Alice must sync *after* Bob joins so she learns his device and shares the
+    // Megolm room key with him when she sends.
+    alice.sync_once().await.unwrap();
+
+    // Sanity: both sides see the room as encrypted.
+    let alice_room = alice.get_room().unwrap();
+    let bob_room = bob.get_room().unwrap();
+    assert!(
+        alice_room.encryption_state().is_encrypted(),
+        "room should be encrypted for alice"
+    );
+    assert!(
+        bob_room.encryption_state().is_encrypted(),
+        "room should be encrypted for bob"
+    );
+
+    // Alice sends a cell update — the SDK Megolm-encrypts it for Bob's device.
+    let update = CellUpdate::new("tasks", "secret", "title", json!("Top secret"), 100);
+    alice.send_cell_update(&update).await.unwrap();
+
+    // Bob syncs to receive the to-device room key and the encrypted event, then
+    // materializes from his (auto-decrypted) timeline.
+    harness.wait_for_sync().await;
+    bob.sync_once().await.unwrap();
+    bob.sync_once().await.unwrap();
+
+    let response = bob_room
+        .messages(matrix_sdk::room::MessagesOptions::backward())
+        .await
+        .unwrap();
+
+    let mut table = Table::new("tasks");
+    let mut decrypted = 0;
+    for event in &response.chunk {
+        if let Ok(json_str) = serde_json::to_string(event.raw().json()) {
+            if let Some(rx) = MatrixClient::extract_cell_update(&json_str) {
+                table.apply_update(rx.into_update());
+                decrypted += 1;
+            }
+        }
+    }
+
+    assert!(
+        decrypted >= 1,
+        "Bob should have decrypted at least one cell update from the encrypted room"
+    );
+    assert_eq!(
+        table.get_value("secret", "title"),
+        Some(&json!("Top secret")),
+        "Bob should decrypt and converge on Alice's encrypted value"
+    );
+}

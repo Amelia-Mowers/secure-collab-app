@@ -196,6 +196,56 @@ log = "warn"
         Ok(resp_body.room_id)
     }
 
+    /// Create an **E2E-encrypted** room (adds an `m.room.encryption` state event
+    /// at creation, mirroring `ConnectedWorkspace::createRoom`) and return the
+    /// room ID string.
+    pub async fn create_encrypted_room(
+        &self,
+        client: &MatrixClient,
+        room_name: &str,
+    ) -> Result<String> {
+        let http = reqwest::Client::new();
+
+        let token = client
+            .inner()
+            .access_token()
+            .context("Client not logged in — no access token")?;
+
+        let url = format!("{}/_matrix/client/r0/createRoom", self.homeserver_url);
+
+        let body = serde_json::json!({
+            "name": room_name,
+            "preset": "private_chat",
+            "visibility": "private",
+            "initial_state": [{
+                "type": "m.room.encryption",
+                "state_key": "",
+                "content": { "algorithm": "m.megolm.v1.aes-sha2" }
+            }],
+        });
+
+        let resp = http
+            .post(&url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await
+            .context("Create encrypted room request failed")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            bail!("Create encrypted room failed ({}): {}", status, text);
+        }
+
+        #[derive(Deserialize)]
+        struct CreateRoomResponse {
+            room_id: String,
+        }
+        let resp_body: CreateRoomResponse = resp.json().await?;
+        Ok(resp_body.room_id)
+    }
+
     /// Invite a user to a room and have them join it.
     pub async fn invite_and_join(
         &self,
