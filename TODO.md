@@ -39,10 +39,10 @@ Priority bands:
   - [x] System-table decision: `_schema`/`_views` are intentionally **not** bumped (low churn; lookback bounded by their small cell count) — documented on `update_cell_with_bump`.
   - [x] Removed dead `last_bump`; `CompactionManager` is now stateless (`&self` methods).
 
-- [ ] **Unify cold-start to one implementation** — `[§4.4]`
-  Three materializers exist: `materialize_from_timeline` (order-independent), `TimelinePaginator` (assumes newest-first), and the bridge's hand-rolled loop (`bridge_matrix.rs:445`).
-  - [ ] Keep the order-independent one; route the bridge through it.
-  - [ ] Make the "newest-first" assumption explicit where relied on; fix the misleading processed/skipped accounting.
+- [x] **Unify cold-start to one implementation** — `[§4.4]` — _done 2026-06-07; tables-over-matrix tests + clippy + fmt verified._
+  - [x] One engine: `TimelinePaginator` (LWW apply → order-independent values); `materialize_from_timeline` now delegates to it, so they can't drift.
+  - [x] Newest-first assumption made explicit (documented on `process_batch`: it governs only the dedup counters + early-stop); old order-dependent accounting removed; added an order-independence test.
+  - [x] Bridge cold-start documented as the deliberately-separate **workspace** layer (routes schema/views via `apply_update`) — not a duplicate of the raw-table engine.
 
 - [~] **Add a true end-to-end sync test** — `[§4.5]` — _harness runnable via Nix/WSL (`scripts/run-integration-tests.sh`) and green: tables-over-matrix integration tests + app-core `workspace_matrix` 17/17._
   - [x] Drive a real send → server → sync → fetch-timeline → extract → materialize round-trip (`test_two_client_sync_via_real_timeline`): Bob converges on Alice's value from his OWN synced timeline, not a re-applied in-memory update.

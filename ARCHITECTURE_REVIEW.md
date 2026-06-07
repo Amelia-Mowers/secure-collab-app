@@ -118,6 +118,8 @@ So in the running system, **nothing is ever bumped**, and cold-start (`bridge_ma
 
 ### 4.4 — 🟠 High: two divergent cold-start implementations
 
+> **Status (2026-06-07): fixed** — consolidated onto one engine: `TimelinePaginator` applies via LWW (order-independent values) and `materialize_from_timeline` delegates to it; the newest-first assumption is now documented as governing only the dedup counters + early-stop. The bridge's loop is documented as the deliberately-separate workspace-level cold start (routes schema/views through `apply_update`). See `TODO.md` §4.4. Original finding below.
+
 `coldstart.rs` ships two materializers with **different correctness models**:
 
 - `materialize_from_timeline` (`coldstart.rs:23`) applies every event and relies on `Table`'s LWW — order-independent and correct, but its `events_processed`/`events_skipped` accounting is arrival-order-dependent and effectively meaningless when events arrive oldest-first.
