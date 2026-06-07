@@ -20,13 +20,13 @@ Priority bands:
   - [x] Seed the counter from cold-start history (falls out of `observe_timestamp`; cold-start replays through `apply_update`).
   - [x] Plumb Matrix `origin_server_ts` into `Cell::server_timestamp` (wire-skipped `CellUpdate::server_timestamp` + `with_server_timestamp` + `ReceivedCellUpdate::into_update`; both bridge receive paths now call `into_update()`).
   - [x] Unit tests: post-replay write wins (`test_write_after_replay_wins_over_loaded_history`), monotonic-within-ms, order-independent tie-break by server ts (`test_lww_tiebreak_by_server_timestamp_is_order_independent`), wire omits server ts.
-  - [ ] **Follow-up:** full two-client end-to-end convergence assertion via the real sync loop — folded into the `[§4.5]` e2e sync test (needs Conduit/WSL).
+  - [x] **Follow-up:** two-client convergence via the real sync loop — done in `[§4.5]` (`test_two_client_sync_via_real_timeline`): Bob materializes from his own synced Conduit timeline and `origin_server_ts` is confirmed attached as the tiebreaker against real server-stamped events.
 
 - [~] **Make E2E encryption real — or stop claiming it** — `[§4.2]` — _enablement + guard + honest badge implemented & compile-verified 2026-06-07 (wasm32 + matrix-wasm build green). NOT yet round-trip-tested against a real encrypted homeserver — see caveats below._
   - [x] Enable encryption at room creation — `room.enable_encryption()` in `ConnectedWorkspace`'s `createRoom`; creation fails loudly if it can't be turned on.
   - [x] **Fail-closed send guard** — `send_updates` refuses to emit cell updates unless `room.encryption_state().is_encrypted()` (don't trust the server default). Placed at the bridge boundary only, so the native integration harness (unencrypted test rooms) is unaffected.
   - [x] **Honest badge** — new `ConnectedWorkspace::isEncrypted()` bridge method; `Sidebar` now shows "E2E Encrypted" only when the room really is, and a red "Not encrypted" warning otherwise (instead of a hard-coded claim).
-  - [ ] **Verify an encrypted round-trip** (send → sync → cold-start replay) against Conduit — the read path relies on the SDK auto-decrypting `raw().json()`; confirmed by docs, not yet by test. Needs the integration harness (WSL/Docker + Conduit). Fold into `[§4.5]`.
+  - [ ] **Verify an encrypted round-trip** (send → sync → cold-start replay) against Conduit — the read path relies on the SDK auto-decrypting `raw().json()`; confirmed by docs, not yet by test. Harness is now available and green (`scripts/run-integration-tests.sh` via Nix/WSL); next step is to enable encryption on the harness room. Fold into `[§4.5]`.
   - [ ] Cross-device key sharing / **device verification + cross-signing + key backup** — required before launch (currently keys are shared with unverified devices by default: functional, not verified-secure). Larger design effort; still open.
   - [ ] Decide policy for **legacy unencrypted rooms** (created before this change): the guard makes them read-only. Offer a migrate/recreate path or a clear UI state.
 
@@ -45,9 +45,9 @@ Priority bands:
   - [ ] Keep the order-independent one; route the bridge through it.
   - [ ] Make the "newest-first" assumption explicit where relied on; fix the misleading processed/skipped accounting.
 
-- [ ] **Add a true end-to-end sync test** — `[§4.5]`
-  Integration tests manually `apply_update` rather than letting the sync loop deliver events (`workspace_matrix.rs:706`), so the real receive path is unasserted.
-  - [ ] Drive an actual `start_sync` round-trip (send on A → sync delivers to B → assert B's materialized state).
+- [~] **Add a true end-to-end sync test** — `[§4.5]` — _harness runnable via Nix/WSL (`scripts/run-integration-tests.sh`) and green: tables-over-matrix integration tests + app-core `workspace_matrix` 17/17._
+  - [x] Drive a real send → server → sync → fetch-timeline → extract → materialize round-trip (`test_two_client_sync_via_real_timeline`): Bob converges on Alice's value from his OWN synced timeline, not a re-applied in-memory update.
+  - [ ] **Encrypted** round-trip (overlaps `[§4.2]`): make the harness create an encrypted room + verify Megolm send/decrypt across two clients.
   - [ ] Add at least one UI test against compiled WASM (not just `MockWorkspace`).
 
 ---
