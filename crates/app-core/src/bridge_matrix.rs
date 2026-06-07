@@ -156,6 +156,15 @@ impl MatrixSession {
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to create room: {e}")))?;
 
+        // Enable E2E (Megolm) encryption before the room carries any workspace
+        // data. Matrix rooms are NOT encrypted by default — without this the
+        // homeserver would see every cell update in plaintext. We fail room
+        // creation if encryption can't be turned on rather than silently
+        // creating an unencrypted workspace. See ARCHITECTURE_REVIEW.md §4.2.
+        room.enable_encryption().await.map_err(|e| {
+            JsValue::from_str(&format!("Failed to enable end-to-end encryption: {e}"))
+        })?;
+
         // Tag the room as a workspace
         let marker = WorkspaceMarkerEventContent { workspace: true };
         room.send_state_event_for_key("", marker)
@@ -660,6 +669,17 @@ impl ConnectedWorkspace {
         serde_json::to_string(&tables).unwrap_or_else(|_| "[]".to_string())
     }
 
+    /// Whether the underlying Matrix room is end-to-end encrypted. The UI uses
+    /// this to show an honest encryption indicator instead of a hard-coded
+    /// claim. See ARCHITECTURE_REVIEW.md §4.2.
+    #[wasm_bindgen(js_name = isEncrypted)]
+    pub fn is_encrypted(&self) -> bool {
+        self.client
+            .get_room(&self.room_id)
+            .map(|room| room.encryption_state().is_encrypted())
+            .unwrap_or(false)
+    }
+
     /// Create a view from JSON configuration.
     #[wasm_bindgen(js_name = createView)]
     pub async fn create_view(&self, config_json: &str) -> Result<String, JsValue> {
@@ -732,6 +752,16 @@ impl ConnectedWorkspace {
             .client
             .get_room(&self.room_id)
             .ok_or_else(|| JsValue::from_str("Room not found"))?;
+
+        // Fail closed: never emit workspace data into a room that is not
+        // end-to-end encrypted. The SDK encrypts `room.send` automatically once
+        // the room is encrypted, but it would happily send plaintext otherwise.
+        // See ARCHITECTURE_REVIEW.md §4.2.
+        if !room.encryption_state().is_encrypted() {
+            return Err(JsValue::from_str(
+                "Refusing to send: this workspace room is not end-to-end encrypted",
+            ));
+        }
 
         for update in updates {
             let content: tables_over_matrix::CellUpdateEventContent = update.clone().into();

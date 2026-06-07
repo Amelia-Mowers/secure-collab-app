@@ -22,12 +22,13 @@ Priority bands:
   - [x] Unit tests: post-replay write wins (`test_write_after_replay_wins_over_loaded_history`), monotonic-within-ms, order-independent tie-break by server ts (`test_lww_tiebreak_by_server_timestamp_is_order_independent`), wire omits server ts.
   - [ ] **Follow-up:** full two-client end-to-end convergence assertion via the real sync loop — folded into the `[§4.5]` e2e sync test (needs Conduit/WSL).
 
-- [ ] **Make E2E encryption real — or stop claiming it** — `[§4.2]`
-  Rooms are created without an `m.room.encryption` state event (`bridge_matrix.rs:147`); on a default homeserver every cell update is sent as plaintext while the UI shows a "🔒 E2E Encrypted" badge.
-  - [ ] Enable encryption at room creation (set `m.room.encryption`).
-  - [ ] **Verify the room is encrypted before sending any cell update** — don't trust the server default (`send_updates`, `bridge_matrix.rs:728`).
-  - [ ] Remove / gate the "E2E Encrypted" UI badge until verification + key backup exist (`Sidebar.tsx:320`, `SignInPage.tsx:193`).
-  - [ ] Design device verification + key backup story (blocker for launch, not for the toggle).
+- [~] **Make E2E encryption real — or stop claiming it** — `[§4.2]` — _enablement + guard + honest badge implemented & compile-verified 2026-06-07 (wasm32 + matrix-wasm build green). NOT yet round-trip-tested against a real encrypted homeserver — see caveats below._
+  - [x] Enable encryption at room creation — `room.enable_encryption()` in `ConnectedWorkspace`'s `createRoom`; creation fails loudly if it can't be turned on.
+  - [x] **Fail-closed send guard** — `send_updates` refuses to emit cell updates unless `room.encryption_state().is_encrypted()` (don't trust the server default). Placed at the bridge boundary only, so the native integration harness (unencrypted test rooms) is unaffected.
+  - [x] **Honest badge** — new `ConnectedWorkspace::isEncrypted()` bridge method; `Sidebar` now shows "E2E Encrypted" only when the room really is, and a red "Not encrypted" warning otherwise (instead of a hard-coded claim).
+  - [ ] **Verify an encrypted round-trip** (send → sync → cold-start replay) against Conduit — the read path relies on the SDK auto-decrypting `raw().json()`; confirmed by docs, not yet by test. Needs the integration harness (WSL/Docker + Conduit). Fold into `[§4.5]`.
+  - [ ] Cross-device key sharing / **device verification + cross-signing + key backup** — required before launch (currently keys are shared with unverified devices by default: functional, not verified-secure). Larger design effort; still open.
+  - [ ] Decide policy for **legacy unencrypted rooms** (created before this change): the guard makes them read-only. Offer a migrate/recreate path or a clear UI state.
 
 ---
 

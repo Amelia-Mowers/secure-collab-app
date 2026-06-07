@@ -213,6 +213,8 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [showShareModal, setShowShareModal] = useState(false)
   const [members, setMembers] = useState<string[]>([])
   const [showMembers, setShowMembers] = useState(false)
+  // null = unknown (e.g. local-only or mock workspace); true/false = real room state.
+  const [encrypted, setEncrypted] = useState<boolean | null>(null)
   const navigate = useNavigate()
   const location = useLocation()
   const { theme, toggleTheme } = useTheme()
@@ -239,6 +241,21 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
     if (workspace) refreshData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace, location.pathname, syncCount])
+
+  // Reflect the room's *real* E2E encryption state rather than asserting it.
+  // Only ConnectedWorkspace exposes isEncrypted(); mocks/local workspaces leave
+  // it null (unknown).
+  useEffect(() => {
+    if (workspace && typeof workspace.isEncrypted === 'function') {
+      try {
+        setEncrypted(!!workspace.isEncrypted())
+      } catch {
+        setEncrypted(null)
+      }
+    } else {
+      setEncrypted(null)
+    }
+  }, [workspace, syncCount])
 
   const refreshData = () => {
     try {
@@ -316,8 +333,21 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
         {!collapsed && (
           <div className="sidebar__workspace-text" onClick={() => setCollapsed(c => !c)}>
             <span className="sidebar__workspace-name">{workspaceName}</span>
-            <span className="sidebar__workspace-badge">
-              <LockIcon /> E2E Encrypted
+            <span className={`sidebar__workspace-badge${encrypted === false ? ' sidebar__workspace-badge--warn' : ''}`}>
+              {encrypted === false ? (
+                <>
+                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+                    <path d="M6 1.2 1 10.8h10L6 1.2z" />
+                    <line x1="6" y1="5" x2="6" y2="8" />
+                    <circle cx="6" cy="9.6" r="0.5" fill="currentColor" stroke="none" />
+                  </svg>
+                  Not encrypted
+                </>
+              ) : (
+                <>
+                  <LockIcon /> E2E Encrypted
+                </>
+              )}
             </span>
           </div>
         )}
