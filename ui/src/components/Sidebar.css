@@ -64,6 +64,12 @@
   gap: 3px;
 }
 
+/* Shown when the workspace room is NOT end-to-end encrypted. */
+.sidebar__workspace-badge--warn {
+  color: var(--danger, #d9534f);
+  font-weight: 600;
+}
+
 /* ── Back to workspaces button ──────────────────────────────── */
 .sidebar__back-btn {
   background: none;

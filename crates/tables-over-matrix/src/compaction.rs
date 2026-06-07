@@ -2,19 +2,18 @@
 
 use crate::cell::{CellId, CellUpdate};
 use crate::table::Table;
-use std::collections::HashMap;
 
-/// Manages bump tracking and selection for multiple tables.
-pub struct CompactionManager {
-    /// Track the last bump timestamp for each cell across all tables
-    last_bump: HashMap<CellId, u64>,
-}
+/// Stateless helper for order-based bump selection and creation.
+///
+/// A bump re-emits the current value of the stalest cell with a fresh
+/// timestamp so that, after enough writes, every live cell has a recent event
+/// in the room timeline — bounding the cold-start lookback to ~the number of
+/// cells in the table.
+pub struct CompactionManager;
 
 impl CompactionManager {
     pub fn new() -> Self {
-        Self {
-            last_bump: HashMap::new(),
-        }
+        Self
     }
 
     /// Select the stalest cell from a table that needs to be bumped.
@@ -26,15 +25,12 @@ impl CompactionManager {
     /// Create a bump update for a given cell.
     /// A bump is just a regular cell update with the current value and a new timestamp.
     pub fn create_bump_update(
-        &mut self,
+        &self,
         table: &Table,
         cell_id: &CellId,
         new_timestamp: u64,
     ) -> Option<CellUpdate> {
         let cell = table.get_cell(&cell_id.row_id, &cell_id.column_id)?;
-
-        // Record this bump
-        self.last_bump.insert(cell_id.clone(), new_timestamp);
 
         Some(CellUpdate::new(
             &cell_id.table_id,
@@ -48,7 +44,7 @@ impl CompactionManager {
     /// Helper to generate a bump alongside a user update.
     /// When a user makes a write, we also bump the stalest cell in that table.
     pub fn generate_updates_with_bump(
-        &mut self,
+        &self,
         table: &Table,
         user_update: CellUpdate,
         mut timestamp_generator: impl FnMut() -> u64,
@@ -130,7 +126,7 @@ mod tests {
     #[test]
     fn test_create_bump_update() {
         let mut table = Table::new("test_table");
-        let mut manager = CompactionManager::new();
+        let manager = CompactionManager::new();
 
         table.apply_update(CellUpdate::new(
             "test_table",
@@ -153,7 +149,7 @@ mod tests {
     #[test]
     fn test_generate_updates_with_bump() {
         let mut table = Table::new("test_table");
-        let mut manager = CompactionManager::new();
+        let manager = CompactionManager::new();
 
         // Add initial cells
         table.apply_update(CellUpdate::new(
@@ -193,7 +189,7 @@ mod tests {
     #[test]
     fn test_no_self_bump() {
         let mut table = Table::new("test_table");
-        let mut manager = CompactionManager::new();
+        let manager = CompactionManager::new();
 
         // Single cell table
         table.apply_update(CellUpdate::new(

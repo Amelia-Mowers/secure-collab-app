@@ -11,6 +11,32 @@ use tracing::info;
 #[cfg(feature = "matrix")]
 use tables_over_matrix::MatrixClient;
 
+/// Current wall-clock time in milliseconds since the Unix epoch — the physical
+/// component of the hybrid logical clock.
+///
+/// On wasm32 we use the browser clock (`js_sys::Date::now`) because
+/// `std::time::SystemTime` panics there; on native targets we use `SystemTime`.
+#[cfg(not(target_arch = "wasm32"))]
+fn now_millis() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+fn now_millis() -> u64 {
+    js_sys::Date::now() as u64
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
+fn now_millis() -> u64 {
+    // No clock source available in this configuration; the hybrid logical clock
+    // degrades to a pure monotonic counter (still correct, just not wall-clock-aligned).
+    0
+}
+
 /// A workspace containing tables, schema, and views.
 pub struct Workspace {
     /// Workspace ID (maps to Matrix room ID)
@@ -21,10 +47,10 @@ pub struct Workspace {
     schema_manager: SchemaManager,
     /// View manager
     view_manager: ViewManager,
-    /// Compaction manager for bumping
-    #[allow(dead_code)]
+    /// Compaction helper for order-based bumping
     compaction_manager: CompactionManager,
-    /// Logical timestamp counter
+    /// Hybrid logical clock: the highest timestamp seen or generated so far
+    /// (≈ Unix ms). Advanced by both local writes and observed updates.
     timestamp_counter: u64,
     /// Matrix client (when connected)
     #[cfg(feature = "matrix")]
@@ -51,10 +77,26 @@ impl Workspace {
         }
     }
 
-    /// Generate the next logical timestamp
+    /// Generate the next timestamp for a *local* write using a hybrid logical
+    /// clock: `max(last_seen + 1, wall_clock_ms)`.
+    ///
+    /// This keeps timestamps (a) strictly monotonic per client even within the
+    /// same millisecond and (b) comparable across clients (≈ Unix ms). Crucially,
+    /// because the clock is advanced from every applied update (see
+    /// [`observe_timestamp`](Self::observe_timestamp)), a write made right after
+    /// cold-start replay still wins LWW against the history it just loaded.
+    /// See ARCHITECTURE_REVIEW.md §4.1.
     fn next_timestamp(&mut self) -> u64 {
-        self.timestamp_counter += 1;
+        let now = now_millis();
+        self.timestamp_counter = self.timestamp_counter.saturating_add(1).max(now);
         self.timestamp_counter
+    }
+
+    /// Advance the clock to account for a timestamp observed on an applied
+    /// update (local echo or remote). This is what seeds the clock from history
+    /// during cold start and keeps local writes ahead of peers' timestamps.
+    fn observe_timestamp(&mut self, ts: u64) {
+        self.timestamp_counter = self.timestamp_counter.max(ts);
     }
 
     /// Public version of next_timestamp for the connected bridge.
@@ -163,8 +205,80 @@ impl Workspace {
         }
     }
 
+    /// Like [`update_cell`](Self::update_cell), but also emits an order-based
+    /// **bump** of the stalest cell in the same table, and returns every
+    /// `CellUpdate` that must be sent to Matrix (the user write, plus the bump
+    /// when one applies).
+    ///
+    /// A bump re-emits the oldest cell's current value with a fresh timestamp,
+    /// so that after roughly one cycle of writes every live cell has a recent
+    /// timeline event — bounding the cold-start lookback to ~the table's cell
+    /// count. This is used by the Matrix-connected write path; the local-only
+    /// path uses [`update_cell`](Self::update_cell) (there is no timeline to
+    /// bound). See ARCHITECTURE_REVIEW.md §4.3.
+    ///
+    /// System tables (`_schema`/`_views`) are low-churn and are intentionally
+    /// not bumped here; their lookback is bounded by their (small) cell count.
+    pub fn update_cell_with_bump(
+        &mut self,
+        table_id: &str,
+        row_id: &str,
+        column_id: &str,
+        value: serde_json::Value,
+    ) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+
+        let user_timestamp = self.next_timestamp();
+        let user_update = CellUpdate::new(table_id, row_id, column_id, value, user_timestamp);
+        let user_cell = user_update.cell_id();
+
+        // Pick the stalest cell to bump from the table state *before* the user
+        // write, and never bump the cell we're about to write.
+        let candidate = {
+            let table = self
+                .tables
+                .get(table_id)
+                .ok_or(crate::Error::TableNotFound)?;
+            self.compaction_manager.select_bump_candidate(table)
+        }
+        .filter(|c| *c != user_cell);
+
+        let mut updates = vec![user_update];
+
+        if let Some(candidate) = candidate {
+            let bump_timestamp = self.next_timestamp();
+            let table = self
+                .tables
+                .get(table_id)
+                .ok_or(crate::Error::TableNotFound)?;
+            if let Some(bump) =
+                self.compaction_manager
+                    .create_bump_update(table, &candidate, bump_timestamp)
+            {
+                updates.push(bump);
+            }
+        }
+
+        // Apply everything locally so our materialized table matches what we send.
+        let table = self
+            .tables
+            .get_mut(table_id)
+            .ok_or(crate::Error::TableNotFound)?;
+        for update in &updates {
+            table.apply_update(update.clone());
+        }
+
+        Ok(updates)
+    }
+
     /// Apply a cell update (from network or local)
     pub fn apply_update(&mut self, update: CellUpdate) -> Result<()> {
+        // Advance the hybrid logical clock from every observed update so that
+        // subsequent local writes are ordered after replayed/remote history.
+        self.observe_timestamp(update.timestamp);
+
         let table_id = update.table_id.clone();
 
         // Route to appropriate table
@@ -935,7 +1049,7 @@ mod tests {
 
         // Replay all updates on a fresh workspace
         let mut target = Workspace::new("target");
-        for update in table_updates.into_iter().chain(view_updates.into_iter()) {
+        for update in table_updates.into_iter().chain(view_updates) {
             target.apply_update(update).unwrap();
         }
 
@@ -1059,5 +1173,122 @@ mod tests {
         assert_eq!(table.get_value("t1", "status"), Some(&json!("Done")));
         // Title must not be touched
         assert_eq!(table.get_value("t1", "title"), Some(&json!("Fix bug")));
+    }
+
+    // ─── Hybrid logical clock (ARCHITECTURE_REVIEW §4.1) ─────────────────────
+
+    #[test]
+    fn test_write_after_replay_wins_over_loaded_history() {
+        // Reproduces the post-reload data-loss bug: after cold-start replay seeds
+        // the workspace with historical cells, a fresh local edit must still win
+        // LWW — even when the loaded history carries a timestamp far above the
+        // current wall clock. With the old `counter += 1` clock the new edit got
+        // ts=1 and lost; with the hybrid clock it is seeded from history.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+
+        // Simulate replaying a historical event whose timestamp is far in the
+        // "future" relative to the wall clock (e.g. a peer with a skewed clock).
+        let huge = 9_000_000_000_000_000u64;
+        ws.apply_update(CellUpdate::new("tasks", "r1", "title", json!("old"), huge))
+            .unwrap();
+
+        // A brand-new local edit must beat the loaded value.
+        ws.update_cell("tasks", "r1", "title", json!("new"))
+            .unwrap();
+
+        assert_eq!(
+            ws.get_table("tasks").unwrap().get_value("r1", "title"),
+            Some(&json!("new")),
+            "local write after replay must win LWW (clock seeded from history)"
+        );
+    }
+
+    #[test]
+    fn test_local_writes_are_strictly_monotonic_within_a_millisecond() {
+        // Even when several writes land in the same wall-clock millisecond, each
+        // must get a strictly larger timestamp so the last write wins.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+
+        for v in ["a", "b", "c", "d"] {
+            ws.update_cell("tasks", "r1", "title", json!(v)).unwrap();
+        }
+
+        assert_eq!(
+            ws.get_table("tasks").unwrap().get_value("r1", "title"),
+            Some(&json!("d")),
+        );
+    }
+
+    // ─── Order-based bumping (ARCHITECTURE_REVIEW §4.3) ──────────────────────
+
+    #[test]
+    fn test_update_cell_with_bump_bumps_stalest_cell() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        // Two existing cells; r1 is the stalest (written first).
+        ws.update_cell("tasks", "r1", "title", json!("a")).unwrap();
+        ws.update_cell("tasks", "r2", "title", json!("b")).unwrap();
+
+        let updates = ws
+            .update_cell_with_bump("tasks", "r3", "title", json!("c"))
+            .unwrap();
+
+        // user write + exactly one bump
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0].row_id, "r3");
+        assert_eq!(updates[0].value, json!("c"));
+        // the bump re-emits the stalest cell (r1) with its current value + fresh ts
+        assert_eq!(updates[1].row_id, "r1");
+        assert_eq!(updates[1].value, json!("a"));
+        assert!(updates[1].timestamp > updates[0].timestamp);
+
+        // the write is materialized; the bump did not change r1's value
+        let t = ws.get_table("tasks").unwrap();
+        assert_eq!(t.get_value("r3", "title"), Some(&json!("c")));
+        assert_eq!(t.get_value("r1", "title"), Some(&json!("a")));
+    }
+
+    #[test]
+    fn test_update_cell_with_bump_no_bump_when_nothing_stale() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        // First write into an otherwise-empty table: nothing else to bump.
+        let updates = ws
+            .update_cell_with_bump("tasks", "r1", "title", json!("a"))
+            .unwrap();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].row_id, "r1");
+    }
+
+    #[test]
+    fn test_update_cell_with_bump_rotates_through_cells() {
+        // Successive writes bump different (stalest) cells, so the lookback stays
+        // bounded rather than re-bumping the same cell forever.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        ws.update_cell("tasks", "r1", "title", json!("a")).unwrap();
+        ws.update_cell("tasks", "r2", "title", json!("b")).unwrap();
+        ws.update_cell("tasks", "r3", "title", json!("c")).unwrap();
+
+        // First bump targets r1 (stalest)...
+        let u1 = ws
+            .update_cell_with_bump("tasks", "r4", "title", json!("d"))
+            .unwrap();
+        assert_eq!(u1[1].row_id, "r1");
+        // ...and after r1 is bumped to newest, r2 becomes the stalest.
+        let u2 = ws
+            .update_cell_with_bump("tasks", "r5", "title", json!("e"))
+            .unwrap();
+        assert_eq!(u2[1].row_id, "r2");
+    }
+
+    #[test]
+    fn test_update_cell_with_bump_requires_existing_table() {
+        let mut ws = Workspace::new("w");
+        assert!(ws
+            .update_cell_with_bump("ghost", "r1", "c", json!("x"))
+            .is_err());
     }
 }

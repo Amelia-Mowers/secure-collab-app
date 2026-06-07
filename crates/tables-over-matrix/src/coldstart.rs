@@ -15,55 +15,22 @@ pub struct ColdStartResult {
     pub events_skipped: usize,
 }
 
-/// Materializes tables from a timeline of cell updates.
+/// Materialize tables from a full set of timeline cell updates.
 ///
-/// This function processes events using LWW (Last-Write-Wins) conflict resolution.
-/// Events can be in any order - the Table's apply_update method handles LWW.
-/// With proper bumping, the lookback window is bounded.
+/// Convenience wrapper over [`TimelinePaginator`] that processes every event as
+/// a single batch — the two share **one** materialization engine, so they can't
+/// drift apart.
+///
+/// Materialized **values are order-independent**: every event is applied with
+/// LWW resolution (`Table::apply_update`), so the result is the same regardless
+/// of the order events are supplied in. The `events_processed` /
+/// `events_skipped` counters are an informational dedup count and are most
+/// meaningful for newest-first (Matrix backward-pagination) input — see
+/// [`TimelinePaginator`].
 pub fn materialize_from_timeline(events: Vec<CellUpdate>) -> ColdStartResult {
-    let mut tables: HashMap<String, Table> = HashMap::new();
-    let mut seen_cells = HashMap::new();
-    let mut events_processed = 0;
-    let mut events_skipped = 0;
-
-    for event in events {
-        let cell_key = (
-            event.table_id.clone(),
-            event.row_id.clone(),
-            event.column_id.clone(),
-        );
-
-        // Get or create the table
-        let table = tables
-            .entry(event.table_id.clone())
-            .or_insert_with(|| Table::new(event.table_id.clone()));
-
-        // Apply the update (Table handles LWW internally)
-        table.apply_update(event.clone());
-
-        // Track what we've seen for optimization in reverse-chronological scenarios
-        if let Some(&existing_timestamp) = seen_cells.get(&cell_key) {
-            // We've seen this cell before
-            if event.timestamp < existing_timestamp {
-                // This is an older event, count as skipped
-                events_skipped += 1;
-            } else {
-                // This is newer, update the tracking
-                seen_cells.insert(cell_key, event.timestamp);
-                events_processed += 1;
-            }
-        } else {
-            // First time seeing this cell
-            seen_cells.insert(cell_key, event.timestamp);
-            events_processed += 1;
-        }
-    }
-
-    ColdStartResult {
-        tables,
-        events_processed,
-        events_skipped,
-    }
+    let mut paginator = TimelinePaginator::new();
+    paginator.process_batch(events);
+    paginator.finalize()
 }
 
 /// Estimates the required lookback window for a table.
@@ -96,8 +63,16 @@ impl TimelinePaginator {
         }
     }
 
-    /// Process a batch of events from the timeline.
-    /// Returns true if we should continue fetching more events.
+    /// Process a batch of events from the timeline (newest-first, as produced by
+    /// Matrix backward pagination).
+    ///
+    /// Every event is applied with LWW resolution, so materialized **values are
+    /// order-independent**. The seen-cell tracking serves two newest-first
+    /// purposes only: the `events_processed`/`events_skipped` dedup counters,
+    /// and the early-stop signal (the return value). Returns `true` while new
+    /// cells are still being discovered; once a batch reveals no new cells the
+    /// caller may stop paginating, because under newest-first pagination every
+    /// cell's most recent value has already been seen.
     pub fn process_batch(&mut self, events: Vec<CellUpdate>) -> bool {
         let initial_size = self.seen_cells.len();
 
@@ -107,23 +82,28 @@ impl TimelinePaginator {
                 event.row_id.clone(),
                 event.column_id.clone(),
             );
+            let timestamp = event.timestamp;
+            let table_id = event.table_id.clone();
 
-            if let std::collections::hash_map::Entry::Vacant(e) = self.seen_cells.entry(cell_key) {
-                e.insert(event.timestamp);
+            // Always apply via LWW — correctness does not depend on order.
+            self.tables
+                .entry(table_id.clone())
+                .or_insert_with(|| Table::new(table_id))
+                .apply_update(event);
 
-                let table = self
-                    .tables
-                    .entry(event.table_id.clone())
-                    .or_insert_with(|| Table::new(event.table_id.clone()));
-
-                table.apply_update(event);
-                self.events_processed += 1;
-            } else {
-                self.events_skipped += 1;
+            // First-seen tracking drives the dedup counters and the early-stop.
+            match self.seen_cells.entry(cell_key) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(timestamp);
+                    self.events_processed += 1;
+                }
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    self.events_skipped += 1;
+                }
             }
         }
 
-        // Continue if we're still discovering new cells
+        // Continue while still discovering new cells.
         self.seen_cells.len() > initial_size
     }
 
@@ -223,5 +203,31 @@ mod tests {
         let result = paginator.finalize();
         assert_eq!(result.events_processed, 3);
         assert_eq!(result.events_skipped, 3);
+    }
+
+    #[test]
+    fn test_materialize_is_order_independent() {
+        // Same events, fed newest-first vs oldest-first, must materialize the
+        // same values (the unified engine applies LWW, not first-seen-wins).
+        let events = || {
+            vec![
+                CellUpdate::new("t", "r1", "c", json!("old"), 100),
+                CellUpdate::new("t", "r1", "c", json!("new"), 200),
+                CellUpdate::new("t", "r2", "c", json!("x"), 150),
+            ]
+        };
+
+        let oldest_first = materialize_from_timeline(events());
+        let newest_first = materialize_from_timeline({
+            let mut v = events();
+            v.reverse();
+            v
+        });
+
+        for result in [&oldest_first, &newest_first] {
+            let table = result.tables.get("t").unwrap();
+            assert_eq!(table.get_value("r1", "c"), Some(&json!("new")));
+            assert_eq!(table.get_value("r2", "c"), Some(&json!("x")));
+        }
     }
 }
