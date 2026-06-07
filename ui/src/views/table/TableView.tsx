@@ -1,8 +1,17 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  type ColumnDef,
+  type SortingState,
+} from '@tanstack/react-table'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import { AddColumnModal, type NewColumnDef } from '@/components/AddColumnModal'
+import { CellDisplay, CellEditor, type CellColumn } from '@/cells/cellRegistry'
 import './TableView.css'
 
 interface TableViewProps {
@@ -17,20 +26,26 @@ interface ColumnMeta {
   options?: string[]
 }
 
+interface TableRow {
+  _row_id: string
+  [key: string]: any
+}
+
+const ROW_HEIGHT = 40
+
 export function TableView({ workspace, syncCount }: TableViewProps) {
   const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
   const { rows, loading, error, updateCell, deleteRow, refresh } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [schema, setSchema] = useState<any>(null)
   const [isAddingColumn, setIsAddingColumn] = useState(false)
-  /** Which cell is currently being edited: "rowId:colId" or null */
-  const [editingCell, setEditingCell] = useState<string | null>(null)
-  /** Track which rows are currently being deleted */
+  /** Which cell is being edited: "rowId:colId" or null */
+  const [editing, setEditing] = useState<string | null>(null)
   const [deletingRows, setDeletingRows] = useState<Set<string>>(new Set())
-  /** Toast for cell update errors */
   const [toast, setToast] = useState<string | null>(null)
+  const [sorting, setSorting] = useState<SortingState>([])
 
-  const columns: ColumnMeta[] = React.useMemo(() => {
+  const columnsMeta: ColumnMeta[] = React.useMemo(() => {
     const columnSet = new Set<string>()
     rows.forEach(row => {
       Object.keys(row).forEach(key => { if (key !== '_row_id') columnSet.add(key) })
@@ -49,8 +64,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   useEffect(() => {
     if (workspace && tableId) {
       try {
-        const schemaJson = workspace.getTableSchema(tableId)
-        setSchema(JSON.parse(schemaJson))
+        setSchema(JSON.parse(workspace.getTableSchema(tableId)))
       } catch (err) {
         console.error('Failed to load schema:', err)
       }
@@ -86,6 +100,81 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       console.error('Failed to add column:', err)
     }
   }
+
+  // ── TanStack column model (data columns only; add-column + actions are
+  //    rendered separately so the grid model stays purely schema-driven) ──
+  const columns = useMemo<ColumnDef<TableRow>[]>(() => {
+    return columnsMeta.map(col => ({
+      id: col.id,
+      accessorFn: (row: TableRow) => row[col.id],
+      header: col.name,
+      enableSorting: true,
+      cell: ctx => {
+        const rowId = ctx.row.original._row_id
+        const cellKey = `${rowId}:${col.id}`
+        const value = ctx.getValue()
+        const cellColumn: CellColumn = {
+          id: col.id,
+          name: col.name,
+          column_type: col.column_type,
+          options: col.options,
+        }
+        if (editing === cellKey) {
+          return (
+            <CellEditor
+              column={cellColumn}
+              value={value}
+              autoFocus
+              commit={v => updateCell(rowId, col.id, v).catch(showCellError)}
+              onDone={() => setEditing(null)}
+            />
+          )
+        }
+        return (
+          <div
+            className="cell-click"
+            onClick={e => { e.stopPropagation(); setEditing(cellKey) }}
+          >
+            <CellDisplay column={cellColumn} value={value} />
+          </div>
+        )
+      },
+    }))
+  }, [columnsMeta, editing, updateCell])
+
+  const table = useReactTable({
+    data: rows as TableRow[],
+    columns,
+    state: { sorting },
+    onSortingChange: setSorting,
+    getRowId: (row: TableRow) => row._row_id,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  })
+
+  const tableRows = table.getRowModel().rows
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const virtualizer = useVirtualizer({
+    count: tableRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 12,
+    // Assume a viewport even before measurement so rows render under jsdom/SSR.
+    initialRect: { width: 1000, height: 800 },
+  })
+  const virtualRows = virtualizer.getVirtualItems()
+  // Fall back to rendering every row when the virtualizer has no measurable
+  // viewport (jsdom / SSR / zero-height container). In a real browser the
+  // viewport is measured, so only the visible window renders.
+  const useVirtual = virtualRows.length > 0
+  const totalSize = virtualizer.getTotalSize()
+  const paddingTop = useVirtual ? virtualRows[0].start : 0
+  const paddingBottom = useVirtual ? totalSize - virtualRows[virtualRows.length - 1].end : 0
+  const displayRows = useVirtual ? virtualRows.map(v => tableRows[v.index]) : tableRows
+
+  // total columns including the add-column spacer and the actions column
+  const totalColSpan = columnsMeta.length + 2
 
   if (!tableId) {
     return <div className="table-view"><div className="state-empty"><p>No table selected</p></div></div>
@@ -125,18 +214,24 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       />
 
       <div className="table-view__content">
-        <div className="table-scroll">
+        <div className="table-scroll" ref={scrollRef}>
           <table className="data-table">
             <thead>
               <tr>
-                {columns.map(col => (
-                  <th key={col.id}>
-                    <span className="col-name">{col.name}</span>
-                    {col.column_type !== 'text' && (
-                      <span className="col-type-badge">{col.column_type}</span>
-                    )}
-                  </th>
-                ))}
+                {table.getHeaderGroups()[0]?.headers.map(header => {
+                  const sorted = header.column.getIsSorted()
+                  return (
+                    <th
+                      key={header.id}
+                      className="col-sortable"
+                      onClick={header.column.getToggleSortingHandler()}
+                      title="Sort"
+                    >
+                      <span className="col-name">{String(header.column.columnDef.header)}</span>
+                      <span className="col-sort-indicator">{sorted === 'asc' ? ' ▲' : sorted === 'desc' ? ' ▼' : ''}</span>
+                    </th>
+                  )
+                })}
                 <th className="col-add-header">
                   <button
                     className="col-add-btn ghost"
@@ -148,9 +243,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && (
+              {tableRows.length === 0 && (
                 <tr className="row-empty-cta">
-                  <td colSpan={columns.length + 2}>
+                  <td colSpan={totalColSpan}>
                     <button
                       className="empty-cta-btn"
                       onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}
@@ -160,77 +255,42 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                   </td>
                 </tr>
               )}
-              {rows.map(row => (
-                  <tr
-                    key={row._row_id}
-                    onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${row._row_id}`)}
-                  >
-                    {columns.map((col, i) => {
-                      const cellKey = `${row._row_id}:${col.id}`
-                      const isEditing = editingCell === cellKey
-                      const rawValue = row[col.id]
-                      const displayValue = rawValue != null ? String(rawValue) : ''
-                      const isSelect = col.column_type === 'select' || col.column_type === 'multiselect'
 
-                      return (
-                        <td
-                          key={col.id}
-                          onClick={e => {
-                            e.stopPropagation()
-                            setEditingCell(cellKey)
-                          }}
-                        >
-                          {isSelect ? (
-                            // Select columns always show a <select> dropdown
-                            <select
-                              className="cell-select"
-                              value={displayValue}
-                              onChange={e => {
-                                updateCell(row._row_id, col.id, e.target.value)
-                                  .catch(showCellError)
-                              }}
-                              onClick={e => e.stopPropagation()}
-                            >
-                              <option value="">—</option>
-                              {(col.options ?? []).map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            // Text/number/etc columns — always an input, focused when editing
-                            <input
-                              type="text"
-                              className={`cell-input ${i === 0 ? 'cell-input--title' : ''}`}
-                              value={displayValue}
-                              autoFocus={isEditing}
-                              onBlur={() => setEditingCell(null)}
-                              onChange={e => {
-                                updateCell(row._row_id, col.id, e.target.value)
-                                  .catch(showCellError)
-                              }}
-                            />
-                          )}
-                        </td>
-                      )
-                    })}
+              {paddingTop > 0 && (
+                <tr aria-hidden="true"><td colSpan={totalColSpan} style={{ height: paddingTop, padding: 0 }} /></tr>
+              )}
+
+              {displayRows.map(row => {
+                const rowId = row.original._row_id
+                return (
+                  <tr
+                    key={row.id}
+                    style={{ height: ROW_HEIGHT }}
+                    onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${rowId}`)}
+                  >
+                    {row.getVisibleCells().map(cell => (
+                      <td key={cell.id}>
+                        {(cell.column.columnDef.cell as any)(cell.getContext())}
+                      </td>
+                    ))}
                     <td onClick={e => e.stopPropagation()} />
                     <td className="cell-actions" onClick={e => e.stopPropagation()}>
                       <button
                         className="ghost cell-delete-btn"
-                        disabled={deletingRows.has(row._row_id)}
+                        disabled={deletingRows.has(rowId)}
                         onClick={() => {
-                          setDeletingRows(prev => new Set(prev).add(row._row_id))
-                          deleteRow(row._row_id)
+                          setDeletingRows(prev => new Set(prev).add(rowId))
+                          deleteRow(rowId)
                             .catch(console.error)
                             .finally(() => setDeletingRows(prev => {
                               const next = new Set(prev)
-                              next.delete(row._row_id)
+                              next.delete(rowId)
                               return next
                             }))
                         }}
                         title="Delete row"
                       >
-                        {deletingRows.has(row._row_id) ? (
+                        {deletingRows.has(rowId) ? (
                           <span className="cell-delete-spinner" />
                         ) : (
                           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -242,10 +302,15 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                )
+              })}
+
+              {paddingBottom > 0 && (
+                <tr aria-hidden="true"><td colSpan={totalColSpan} style={{ height: paddingBottom, padding: 0 }} /></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Add column modal */}

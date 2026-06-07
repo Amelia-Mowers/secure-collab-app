@@ -20,10 +20,8 @@ function renderTable(workspace: any, tableId = 'tasks') {
 describe('TableView', () => {
   describe('loading and error states', () => {
     it('shows a loading indicator while rows are being fetched', () => {
-      // Workspace that hangs getTableRows
       const hanging = { getTableRows: () => { throw new Error('Loading...') }, getTableSchema: () => '{}' }
       renderTable(hanging)
-      // error state or loading – either is acceptable; just don't crash
       expect(document.body).toBeInTheDocument()
     })
 
@@ -44,18 +42,20 @@ describe('TableView', () => {
   })
 
   describe('rendering rows', () => {
+    // Cells now render compact read-only display text (click to edit), so we
+    // assert on text content rather than input display values.
     it('renders a row for each entry in the table', async () => {
       const ws = makeTasksWorkspace()
       seedTasks(ws)
       renderTable(ws)
       await waitFor(() => {
-        expect(screen.getByDisplayValue('Design homepage')).toBeInTheDocument()
-        expect(screen.getByDisplayValue('Set up CI/CD')).toBeInTheDocument()
-        expect(screen.getByDisplayValue('Write unit tests')).toBeInTheDocument()
+        expect(screen.getByText('Design homepage')).toBeInTheDocument()
+        expect(screen.getByText('Set up CI/CD')).toBeInTheDocument()
+        expect(screen.getByText('Write unit tests')).toBeInTheDocument()
       })
     })
 
-    it('renders column headers derived from row data', async () => {
+    it('renders column headers derived from the schema', async () => {
       const ws = makeTasksWorkspace()
       seedTasks(ws)
       renderTable(ws)
@@ -90,20 +90,28 @@ describe('TableView', () => {
       const ws = makeTasksWorkspace()
       seedTasks(ws)
       renderTable(ws)
-      await waitFor(() => expect(screen.getByDisplayValue('Design homepage')).toBeInTheDocument())
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
       const deleteButtons = screen.getAllByTitle('Delete row')
       fireEvent.click(deleteButtons[0])
       await waitFor(() => expect(ws._rowCount('tasks')).toBe(3))
     })
 
-    it('inline editing a cell calls updateCell with the new value', async () => {
+    it('click-to-edit commits a single updateCell on blur (not per keystroke)', async () => {
       const ws = makeTasksWorkspace()
       seedTasks(ws)
       const spy = vi.spyOn(ws, 'updateCell')
       renderTable(ws)
-      await waitFor(() => screen.getByDisplayValue('Design homepage'))
-      const input = screen.getByDisplayValue('Design homepage')
+      await waitFor(() => screen.getByText('Design homepage'))
+
+      // Click the cell to enter edit mode, then type and blur to commit.
+      fireEvent.click(screen.getByText('Design homepage'))
+      const input = await screen.findByDisplayValue('Design homepage')
+      const callsBefore = spy.mock.calls.length
       fireEvent.change(input, { target: { value: 'Redesign homepage' } })
+      // No commit yet — editing in progress.
+      expect(spy.mock.calls.length).toBe(callsBefore)
+      fireEvent.blur(input)
+
       await waitFor(() => expect(spy).toHaveBeenCalledWith(
         'tasks',
         expect.any(String),
@@ -125,7 +133,6 @@ describe('TableView', () => {
       renderTable(ws)
       await waitFor(() => screen.getByTitle('Add column'))
       fireEvent.click(screen.getByTitle('Add column'))
-      // Modal renders with its column-name input
       expect(screen.getByPlaceholderText('e.g. Priority')).toBeInTheDocument()
     })
 
@@ -138,7 +145,6 @@ describe('TableView', () => {
       fireEvent.click(screen.getByTitle('Add column'))
       const input = screen.getByPlaceholderText('e.g. Priority')
       fireEvent.change(input, { target: { value: 'Tags' } })
-      // Submit the modal form
       fireEvent.submit(input.closest('form')!)
       await waitFor(() => expect(spy).toHaveBeenCalledWith(
         'tasks',
@@ -163,7 +169,6 @@ describe('TableView', () => {
     it('does not have a "New view" button (new views are created from the sidebar)', async () => {
       const ws = makeTasksWorkspace()
       renderTable(ws)
-      // Give it a moment to fully render, then assert absence
       await waitFor(() => expect(screen.getByText('Filter')).toBeInTheDocument())
       expect(screen.queryByText(/New view/i)).not.toBeInTheDocument()
     })
@@ -179,7 +184,7 @@ describe('TableView', () => {
       }))
       ws.updateCell('simple', 'r1', 'name', '"Hello"')
       renderTable(ws, 'simple')
-      await waitFor(() => expect(screen.getByDisplayValue('Hello')).toBeInTheDocument())
+      await waitFor(() => expect(screen.getByText('Hello')).toBeInTheDocument())
     })
 
     it('handles cell values with special characters', async () => {
@@ -187,7 +192,7 @@ describe('TableView', () => {
       ws.updateCell('tasks', 'r1', 'title', '"Fix <script>alert(1)</script>"')
       renderTable(ws)
       await waitFor(() =>
-        expect(screen.getByDisplayValue('Fix <script>alert(1)</script>')).toBeInTheDocument(),
+        expect(screen.getByText('Fix <script>alert(1)</script>')).toBeInTheDocument(),
       )
     })
 
@@ -195,7 +200,7 @@ describe('TableView', () => {
       const ws = makeTasksWorkspace()
       ws.updateCell('tasks', 'r1', 'priority', '42')
       renderTable(ws)
-      await waitFor(() => expect(screen.getByDisplayValue('42')).toBeInTheDocument())
+      await waitFor(() => expect(screen.getByText('42')).toBeInTheDocument())
     })
   })
 })
