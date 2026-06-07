@@ -11,6 +11,32 @@ use tracing::info;
 #[cfg(feature = "matrix")]
 use tables_over_matrix::MatrixClient;
 
+/// Current wall-clock time in milliseconds since the Unix epoch — the physical
+/// component of the hybrid logical clock.
+///
+/// On wasm32 we use the browser clock (`js_sys::Date::now`) because
+/// `std::time::SystemTime` panics there; on native targets we use `SystemTime`.
+#[cfg(not(target_arch = "wasm32"))]
+fn now_millis() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+fn now_millis() -> u64 {
+    js_sys::Date::now() as u64
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
+fn now_millis() -> u64 {
+    // No clock source available in this configuration; the hybrid logical clock
+    // degrades to a pure monotonic counter (still correct, just not wall-clock-aligned).
+    0
+}
+
 /// A workspace containing tables, schema, and views.
 pub struct Workspace {
     /// Workspace ID (maps to Matrix room ID)
@@ -24,7 +50,8 @@ pub struct Workspace {
     /// Compaction manager for bumping
     #[allow(dead_code)]
     compaction_manager: CompactionManager,
-    /// Logical timestamp counter
+    /// Hybrid logical clock: the highest timestamp seen or generated so far
+    /// (≈ Unix ms). Advanced by both local writes and observed updates.
     timestamp_counter: u64,
     /// Matrix client (when connected)
     #[cfg(feature = "matrix")]
@@ -51,10 +78,26 @@ impl Workspace {
         }
     }
 
-    /// Generate the next logical timestamp
+    /// Generate the next timestamp for a *local* write using a hybrid logical
+    /// clock: `max(last_seen + 1, wall_clock_ms)`.
+    ///
+    /// This keeps timestamps (a) strictly monotonic per client even within the
+    /// same millisecond and (b) comparable across clients (≈ Unix ms). Crucially,
+    /// because the clock is advanced from every applied update (see
+    /// [`observe_timestamp`](Self::observe_timestamp)), a write made right after
+    /// cold-start replay still wins LWW against the history it just loaded.
+    /// See ARCHITECTURE_REVIEW.md §4.1.
     fn next_timestamp(&mut self) -> u64 {
-        self.timestamp_counter += 1;
+        let now = now_millis();
+        self.timestamp_counter = self.timestamp_counter.saturating_add(1).max(now);
         self.timestamp_counter
+    }
+
+    /// Advance the clock to account for a timestamp observed on an applied
+    /// update (local echo or remote). This is what seeds the clock from history
+    /// during cold start and keeps local writes ahead of peers' timestamps.
+    fn observe_timestamp(&mut self, ts: u64) {
+        self.timestamp_counter = self.timestamp_counter.max(ts);
     }
 
     /// Public version of next_timestamp for the connected bridge.
@@ -165,6 +208,10 @@ impl Workspace {
 
     /// Apply a cell update (from network or local)
     pub fn apply_update(&mut self, update: CellUpdate) -> Result<()> {
+        // Advance the hybrid logical clock from every observed update so that
+        // subsequent local writes are ordered after replayed/remote history.
+        self.observe_timestamp(update.timestamp);
+
         let table_id = update.table_id.clone();
 
         // Route to appropriate table
@@ -935,7 +982,7 @@ mod tests {
 
         // Replay all updates on a fresh workspace
         let mut target = Workspace::new("target");
-        for update in table_updates.into_iter().chain(view_updates.into_iter()) {
+        for update in table_updates.into_iter().chain(view_updates) {
             target.apply_update(update).unwrap();
         }
 
@@ -1059,5 +1106,51 @@ mod tests {
         assert_eq!(table.get_value("t1", "status"), Some(&json!("Done")));
         // Title must not be touched
         assert_eq!(table.get_value("t1", "title"), Some(&json!("Fix bug")));
+    }
+
+    // ─── Hybrid logical clock (ARCHITECTURE_REVIEW §4.1) ─────────────────────
+
+    #[test]
+    fn test_write_after_replay_wins_over_loaded_history() {
+        // Reproduces the post-reload data-loss bug: after cold-start replay seeds
+        // the workspace with historical cells, a fresh local edit must still win
+        // LWW — even when the loaded history carries a timestamp far above the
+        // current wall clock. With the old `counter += 1` clock the new edit got
+        // ts=1 and lost; with the hybrid clock it is seeded from history.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+
+        // Simulate replaying a historical event whose timestamp is far in the
+        // "future" relative to the wall clock (e.g. a peer with a skewed clock).
+        let huge = 9_000_000_000_000_000u64;
+        ws.apply_update(CellUpdate::new("tasks", "r1", "title", json!("old"), huge))
+            .unwrap();
+
+        // A brand-new local edit must beat the loaded value.
+        ws.update_cell("tasks", "r1", "title", json!("new"))
+            .unwrap();
+
+        assert_eq!(
+            ws.get_table("tasks").unwrap().get_value("r1", "title"),
+            Some(&json!("new")),
+            "local write after replay must win LWW (clock seeded from history)"
+        );
+    }
+
+    #[test]
+    fn test_local_writes_are_strictly_monotonic_within_a_millisecond() {
+        // Even when several writes land in the same wall-clock millisecond, each
+        // must get a strictly larger timestamp so the last write wins.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+
+        for v in ["a", "b", "c", "d"] {
+            ws.update_cell("tasks", "r1", "title", json!(v)).unwrap();
+        }
+
+        assert_eq!(
+            ws.get_table("tasks").unwrap().get_value("r1", "title"),
+            Some(&json!("d")),
+        );
     }
 }

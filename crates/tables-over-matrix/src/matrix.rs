@@ -156,6 +156,9 @@ mod matrix_impl {
                 column_id: content.column_id,
                 value: content.value,
                 timestamp: content.timestamp,
+                // The wire format carries no server timestamp; it is attached
+                // from the Matrix event envelope via `ReceivedCellUpdate::into_update`.
+                server_timestamp: None,
             }
         }
     }
@@ -170,6 +173,15 @@ mod matrix_impl {
         /// Server-side timestamp (milliseconds since Unix epoch).
         /// Used as a tie-breaker for LWW resolution.
         pub origin_server_ts: MilliSecondsSinceUnixEpoch,
+    }
+
+    impl ReceivedCellUpdate {
+        /// Consume into a [`CellUpdate`] with the Matrix `origin_server_ts`
+        /// attached as the LWW tiebreaker for equal logical timestamps.
+        pub fn into_update(self) -> CellUpdate {
+            let server_ms: u64 = self.origin_server_ts.0.into();
+            self.update.with_server_timestamp(server_ms)
+        }
     }
 
     // ── Matrix Client ───────────────────────────────────────────────────

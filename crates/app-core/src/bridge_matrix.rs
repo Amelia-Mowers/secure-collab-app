@@ -460,7 +460,8 @@ impl ConnectedWorkspace {
             for timeline_event in &response.chunk {
                 if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
                     if let Some(received) = MatrixClient::extract_cell_update(&json_str) {
-                        let _ = workspace.apply_update(received.update);
+                        // Attach origin_server_ts as the LWW tiebreaker.
+                        let _ = workspace.apply_update(received.into_update());
                     }
                 }
             }
@@ -510,7 +511,8 @@ impl ConnectedWorkspace {
                                         MatrixClient::extract_cell_update(&json_str)
                                     {
                                         let mut ws = workspace.borrow_mut();
-                                        let _ = ws.apply_update(received.update);
+                                        // Attach origin_server_ts as the LWW tiebreaker.
+                                        let _ = ws.apply_update(received.into_update());
                                         changed = true;
                                     }
                                 }

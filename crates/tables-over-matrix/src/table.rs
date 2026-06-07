@@ -283,4 +283,27 @@ mod tests {
         assert_eq!(stalest.row_id, "row2");
         assert_eq!(stalest.column_id, "col1");
     }
+
+    #[test]
+    fn test_lww_tiebreak_by_server_timestamp_is_order_independent() {
+        // Two writes with the SAME logical timestamp but different server
+        // timestamps must converge to the same winner regardless of the order
+        // they are applied. Without the tiebreaker, a logical-clock tie resolves
+        // to "last applied locally", which diverges between clients.
+        // See ARCHITECTURE_REVIEW.md §4.1.
+        let a = CellUpdate::new("t", "r", "c", json!("A"), 5).with_server_timestamp(100);
+        let b = CellUpdate::new("t", "r", "c", json!("B"), 5).with_server_timestamp(200);
+
+        let mut t1 = Table::new("t");
+        t1.apply_update(a.clone());
+        t1.apply_update(b.clone());
+
+        let mut t2 = Table::new("t");
+        t2.apply_update(b);
+        t2.apply_update(a);
+
+        // Higher server timestamp (B) wins in BOTH application orders.
+        assert_eq!(t1.get_value("r", "c"), Some(&json!("B")));
+        assert_eq!(t2.get_value("r", "c"), Some(&json!("B")));
+    }
 }

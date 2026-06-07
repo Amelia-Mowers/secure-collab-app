@@ -104,6 +104,12 @@ pub struct CellUpdate {
     pub column_id: String,
     pub value: serde_json::Value,
     pub timestamp: u64,
+    /// Server-assigned timestamp (Matrix `origin_server_ts`, in ms) used purely
+    /// as a deterministic tiebreaker when two updates share the same logical
+    /// `timestamp`. It is **never serialized to the wire** — the receiver fills
+    /// it in from the Matrix event envelope. `None` for local writes.
+    #[serde(skip)]
+    pub server_timestamp: Option<u64>,
 }
 
 impl CellUpdate {
@@ -121,24 +127,37 @@ impl CellUpdate {
             column_id: column_id.into(),
             value,
             timestamp,
+            server_timestamp: None,
         }
     }
 
+    /// Attach a server timestamp, used as the LWW tiebreaker when two updates
+    /// share the same logical `timestamp`.
+    pub fn with_server_timestamp(mut self, server_timestamp: u64) -> Self {
+        self.server_timestamp = Some(server_timestamp);
+        self
+    }
+
     pub fn to_cell(&self) -> Cell {
-        Cell::new(
+        let mut cell = Cell::new(
             CellId::new(&self.table_id, &self.row_id, &self.column_id),
             self.value.clone(),
             self.timestamp,
-        )
+        );
+        cell.server_timestamp = self.server_timestamp;
+        cell
     }
 
     /// Convert to Cell by consuming self (avoids clones)
     pub fn into_cell(self) -> Cell {
-        Cell::new(
+        let server_timestamp = self.server_timestamp;
+        let mut cell = Cell::new(
             CellId::new(self.table_id, self.row_id, self.column_id),
             self.value,
             self.timestamp,
-        )
+        );
+        cell.server_timestamp = server_timestamp;
+        cell
     }
 
     pub fn cell_id(&self) -> CellId {
@@ -190,5 +209,23 @@ mod tests {
         assert_eq!(cell.id.column_id, "col1");
         assert_eq!(cell.value, json!("test"));
         assert_eq!(cell.timestamp, 123);
+    }
+
+    #[test]
+    fn test_cell_update_carries_server_timestamp_into_cell() {
+        let update = CellUpdate::new("t", "r", "c", json!("x"), 1).with_server_timestamp(42);
+        assert_eq!(update.to_cell().server_timestamp, Some(42));
+        assert_eq!(update.into_cell().server_timestamp, Some(42));
+    }
+
+    #[test]
+    fn test_server_timestamp_is_not_serialized() {
+        // server_timestamp is receiver-local metadata and must never go on the wire.
+        let update = CellUpdate::new("t", "r", "c", json!("x"), 1).with_server_timestamp(42);
+        let json = serde_json::to_value(&update).unwrap();
+        assert!(json.get("server_timestamp").is_none());
+        // And it round-trips back to None on deserialize.
+        let back: CellUpdate = serde_json::from_value(json).unwrap();
+        assert_eq!(back.server_timestamp, None);
     }
 }
