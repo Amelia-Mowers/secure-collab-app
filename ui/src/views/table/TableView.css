@@ -146,6 +146,73 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* ── Display / click-to-edit cells (cellRegistry) ───────────────── */
+.cell-click {
+  display: block;
+  width: 100%;
+  min-width: 100px;
+  min-height: 40px;
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: text;
+  box-sizing: border-box;
+}
+
+.cell-click:hover {
+  background: var(--bg-active);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.cell-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 18px;
+}
+
+.cell-display--muted { color: var(--text-tertiary); }
+.cell-display--mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+.cell-display--bool { font-weight: 600; color: var(--green, #4ade80); }
+
+.cell-pill {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.cell-display--tags { flex-wrap: wrap; }
+.cell-tag {
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--accent-muted, rgba(99, 102, 241, 0.12));
+  color: var(--accent, #6366f1);
+}
+
+.cell-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.cell-input--json {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  resize: vertical;
+}
+
+/* Sortable header */
+.col-sortable { cursor: pointer; user-select: none; }
+.col-sortable:hover .col-name { color: var(--text); }
+.col-sort-indicator { font-size: 9px; color: var(--accent, #6366f1); }
+
 /* Select dropdown cell */
 .cell-select {
   display: block;

@@ -1,14 +1,15 @@
-/* Field renderer — horizontal label + value layout to match mockup */
+/* Field renderer — horizontal label + value layout to match mockup.
+ *
+ * The editors come from the shared cell registry (classes `cell-input`,
+ * `cell-checkbox`, …). These rules restyle those classes *within* the entry
+ * view so it keeps its field look, while the table grid keeps the grid look —
+ * same components, context-specific styling. */
 .field-renderer {
   display: flex;
   align-items: flex-start;
   gap: 12px;
   min-height: 32px;
   padding: 4px 0;
-}
-
-.field-renderer.focused .field-label {
-  color: var(--text-secondary);
 }
 
 .field-label {
@@ -26,8 +27,8 @@
   margin-left: 2px;
 }
 
-/* ── All inputs share these base styles ──────────────────────── */
-.field-input {
+/* ── Registry inputs, restyled for the entry view ────────────────── */
+.field-renderer .cell-input {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
@@ -37,58 +38,54 @@
   font-size: 13px;
   color: var(--text);
   font-family: inherit;
+  box-shadow: none;
   transition: border-color 0.15s, background-color 0.15s;
 }
 
-.field-input:hover {
+.field-renderer .cell-input:hover {
   background: var(--bg-hover);
   border-color: var(--border);
 }
 
-.field-input:focus {
+.field-renderer .cell-input:focus {
   outline: none;
   background: var(--bg-elevated);
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-muted);
 }
 
-.field-input::placeholder {
+.field-renderer .cell-input::placeholder {
   color: var(--text-tertiary);
 }
 
-/* ── Type-specific overrides ─────────────────────────────────── */
-.field-number,
-.field-date {
+/* ── Type-specific overrides ─────────────────────────────────────── */
+.field-renderer .cell-input--number,
+.field-renderer .cell-input--date {
   max-width: 180px;
 }
 
-.field-select {
+.field-renderer .cell-input--select {
   max-width: 260px;
   background: transparent;
   cursor: pointer;
 }
 
-.field-select:hover {
+.field-renderer .cell-input--select:hover {
   background: var(--bg-hover);
 }
 
-.field-reference {
-  font-family: 'JetBrains Mono', 'Monaco', monospace;
-  font-size: 12px;
-}
-
 /* Checkbox row */
-.field-checkbox {
+.field-renderer .cell-checkbox {
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
   font-size: 13px;
   color: var(--text);
-  padding-top: 4px;
+  padding: 4px 0 0;
 }
 
-.field-checkbox input[type="checkbox"] {
+.field-renderer .cell-checkbox input[type="checkbox"] {
   width: 16px;
   height: 16px;
   cursor: pointer;
@@ -97,8 +94,8 @@
 }
 
 /* JSON / document textarea */
-.field-json,
-textarea.field-input {
+.field-renderer .cell-input--json,
+.field-renderer textarea.cell-input {
   font-family: 'JetBrains Mono', 'Monaco', monospace;
   font-size: 12px;
   min-height: 120px;
