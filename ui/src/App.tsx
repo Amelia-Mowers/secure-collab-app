@@ -5,6 +5,7 @@ import { useWorkspace } from './hooks/useTable'
 import { LoadingSpinner } from './components/LoadingSpinner'
 import { Sidebar } from './components/Sidebar'
 import { EncryptionWarningBanner } from './components/EncryptionWarningBanner'
+import { UnverifiedDevicesBanner } from './components/UnverifiedDevicesBanner'
 import { RecoveryGate } from './components/RecoveryGate'
 import { TableView } from './views/table/TableView'
 import { EntryView } from './views/entry/EntryView'
@@ -85,6 +86,7 @@ function WorkspaceShell() {
       <Sidebar workspace={workspace} workspaceId={decodedWorkspaceId} syncCount={syncCount} />
       <div className="app-main">
         <EncryptionWarningBanner workspace={workspace} syncCount={syncCount} />
+        <UnverifiedDevicesBanner workspace={workspace} syncCount={syncCount} />
         <Routes>
           <Route path="/" element={<WorkspaceHome syncing={!!matrixSession} />} />
           <Route path="/table/:tableId" element={<TableView workspace={workspace} syncCount={syncCount} />} />

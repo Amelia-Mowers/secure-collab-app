@@ -178,7 +178,16 @@ suite once it passes.
 - **C. UIA callback** — handle the auth interactive flow for cross-signing
   bootstrap.
 - **D. Verification UX + trust policy** — SAS verification UI; warn-on-unverified
-  first, then an opt-in require-verified mode.
+  first, then an opt-in require-verified mode. **D-1 landed (warn-on-unverified):**
+  `count_unverified_devices()` / `MatrixClient::unverified_device_count()` walk
+  the room's member devices and count those this device hasn't verified
+  (excluding our own); the bridge exposes
+  `ConnectedWorkspace::unverifiedDeviceCount()` and the UI shows an
+  `UnverifiedDevicesBanner`, with a green harness test
+  (`test_unverified_member_device_is_surfaced`). **D-2 remaining:** the
+  interactive SAS verification flow (request → accept → start_sas → emoji →
+  confirm → done) to *clear* the warning, and the opt-in require-verified send
+  policy (the SDK can refuse to send to unverified devices; surface the error).
 - **E. Cold-start decryption UX** — *(detection landed in this change:
   `MatrixClient::is_undecryptable_event` + the cold-start/sync loops now count
   `m.room.encrypted` events and expose `ConnectedWorkspace::undecryptableCount()`,
