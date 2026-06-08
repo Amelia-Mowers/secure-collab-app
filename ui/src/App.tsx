@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useWorkspace } from './hooks/useTable'
 import { LoadingSpinner } from './components/LoadingSpinner'
 import { Sidebar } from './components/Sidebar'
+import { EncryptionWarningBanner } from './components/EncryptionWarningBanner'
 import { TableView } from './views/table/TableView'
 import { EntryView } from './views/entry/EntryView'
 import { CardView } from './views/card/CardView'
@@ -82,6 +83,7 @@ function WorkspaceShell() {
     <div className="app">
       <Sidebar workspace={workspace} workspaceId={decodedWorkspaceId} syncCount={syncCount} />
       <div className="app-main">
+        <EncryptionWarningBanner workspace={workspace} syncCount={syncCount} />
         <Routes>
           <Route path="/" element={<WorkspaceHome syncing={!!matrixSession} />} />
           <Route path="/table/:tableId" element={<TableView workspace={workspace} syncCount={syncCount} />} />
