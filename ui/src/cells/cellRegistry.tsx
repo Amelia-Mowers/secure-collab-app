@@ -169,7 +169,7 @@ function SelectEditor({ column, value, commit, autoFocus, onDone }: CellEditorPr
       onChange={e => { commit(e.target.value === '' ? null : e.target.value); onDone?.() }}
       onBlur={onDone}
     >
-      <option value="">—</option>
+      <option value="">Select {column.name}...</option>
       {(column.options ?? []).map(opt => (
         <option key={opt} value={opt}>{opt}</option>
       ))}
