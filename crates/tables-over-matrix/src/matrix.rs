@@ -14,6 +14,7 @@ pub use matrix_impl::*;
 mod matrix_impl {
     use crate::cell::{CellUpdate, CELL_UPDATE_VERSION};
     use anyhow::Result;
+    use matrix_sdk::encryption::{BackupDownloadStrategy, EncryptionSettings};
     use matrix_sdk::{
         config::SyncSettings,
         room::Room,
@@ -25,6 +26,18 @@ mod matrix_impl {
     };
     use serde::{Deserialize, Serialize};
     use tracing::{debug, info};
+
+    /// Default client encryption settings (ADR 0001 / review §4.2): auto-enable
+    /// cross-signing and key backup, and download backup keys on startup so a
+    /// new device can decrypt and materialize encrypted workspace history.
+    /// Apply at every `Client::builder()` call site.
+    pub fn default_encryption_settings() -> EncryptionSettings {
+        EncryptionSettings {
+            auto_enable_cross_signing: true,
+            auto_enable_backups: true,
+            backup_download_strategy: BackupDownloadStrategy::OneShot,
+        }
+    }
 
     // ── Custom Matrix Event ─────────────────────────────────────────────
 
@@ -201,6 +214,7 @@ mod matrix_impl {
         pub async fn new(homeserver_url: &str) -> Result<Self> {
             let client = Client::builder()
                 .homeserver_url(homeserver_url)
+                .with_encryption_settings(default_encryption_settings())
                 .build()
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create Matrix client: {e}"))?;

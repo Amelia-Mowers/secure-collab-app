@@ -154,7 +154,14 @@ suite once it passes.
 - **A. `EncryptionSettings`** — set `auto_enable_backups` +
   `auto_enable_cross_signing` + `backup_download_strategy` on the client
   builder; verify an encrypted round-trip + that a backup is created, in the
-  Conduit harness. *(Low risk; the verifiable first step.)*
+  Conduit harness. *(Low risk; the verifiable first step.)* **Wiring landed:**
+  `default_encryption_settings()` (`auto_enable_cross_signing` +
+  `auto_enable_backups` + `BackupDownloadStrategy::OneShot`) is now applied at
+  every `Client::builder()` site (the `MatrixClient` ctor and all three
+  `bridge_matrix` builders); the encrypted round-trip still passes and the
+  multi-device red test stays red (it needs the Phase B recovery key to
+  restore). *Remaining for A:* a backup-state accessor on `MatrixClient` so the
+  "backup exists after setup" assertion can be made directly.
 - **B. Recovery-key flow** — enable Recovery, surface/store the recovery key,
   restore on a new login; add a harness test: client A writes, client B logs in
   fresh on a new device and reconstructs the workspace from backup.
