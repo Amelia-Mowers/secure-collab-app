@@ -55,13 +55,13 @@ Priority bands:
 
 - [~] **Migrate the table view to TanStack Table v8 + TanStack Virtual** — _grid done & verified 2026-06-07 (type-check + lint + 215 vitest + production build); branch `fe/tanstack-table`._
   - [x] Add deps: `@tanstack/react-table`, `@tanstack/react-virtual` (both MIT).
-  - [x] **Typed cell registry** `ui/src/cells/cellRegistry.tsx` — `CellDisplay` + commit-on-blur `CellEditor` for all 9 column types. _(Used by the grid; EntryView still on `FieldRenderer` — see follow-up below.)_
+  - [x] **Typed cell registry** `ui/src/cells/cellRegistry.tsx` — `CellDisplay` + commit-on-blur `CellEditor` for all 9 column types, used by **both** the grid and the entry view (`FieldRenderer` delegates to it).
   - [x] Map `schema.columns → ColumnDef[]` (TanStack column model, carries options).
   - [x] Replace the raw `<table>` with TanStack + row virtualization (`@tanstack/react-virtual`, with a render-all fallback when there's no viewport, e.g. jsdom/SSR).
   - [x] **Commit on blur/Enter** → exactly one `CellUpdate` per logical edit (kills the per-keystroke `room.send`/429s).
   - [x] Header-click **column sorting** (`getSortedRowModel`). _(Toolbar Sort/Filter buttons are still stubs — real filter UI is a follow-up.)_
   - [x] Tests: rewritten to assert display + one-update-on-blur; per-type editors covered.
-  - [ ] **Follow-up — share the registry with EntryView**: refactor `FieldRenderer` to delegate to `cellRegistry.CellEditor`, finishing the dedup.
+  - [x] **Shared the registry with EntryView** — `FieldRenderer` now delegates to `cellRegistry.CellEditor`; the `TableView` ⇄ `FieldRenderer` duplication is gone (−220 lines).
   - [ ] **Follow-up — optimistic ↔ LWW reconciliation** so a rejected write can't flash-then-revert (relates to `[§4.1]`/`[§5]`).
   - [ ] Follow-up — real filter UI; column resize/reorder/visibility (free with TanStack).
 
