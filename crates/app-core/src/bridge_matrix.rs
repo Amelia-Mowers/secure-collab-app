@@ -768,6 +768,23 @@ impl ConnectedWorkspace {
         self.undecryptable.get()
     }
 
+    /// Number of devices among this workspace's members that this device has
+    /// not verified (excluding our own). The SDK shares room keys with *every*
+    /// device in an encrypted room, verified or not, so the UI surfaces this so
+    /// the user knows data is reaching devices whose identity hasn't been
+    /// attested. See `docs/adr/0001-e2e-key-management.md` Phase D / review §4.2.
+    #[wasm_bindgen(js_name = unverifiedDeviceCount)]
+    pub async fn unverified_device_count(&self) -> Result<u32, JsValue> {
+        let room = self
+            .client
+            .get_room(&self.room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+        let count = tables_over_matrix::count_unverified_devices(&self.client, &room)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to count unverified devices: {e}")))?;
+        Ok(count as u32)
+    }
+
     /// Create a view from JSON configuration.
     #[wasm_bindgen(js_name = createView)]
     pub async fn create_view(&self, config_json: &str) -> Result<String, JsValue> {

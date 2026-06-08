@@ -22,7 +22,7 @@ mod matrix_impl {
             events::macros::EventContent, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId,
             UInt,
         },
-        Client,
+        Client, RoomMemberships,
     };
     use serde::{Deserialize, Serialize};
     use tracing::{debug, info};
@@ -398,6 +398,49 @@ mod matrix_impl {
             info!("Recovered secrets from secure backup");
             Ok(())
         }
+
+        /// Count devices of the workspace room's members that this device has
+        /// not verified (excluding our own current device). The SDK shares room
+        /// keys with *every* device in an encrypted room, verified or not, so
+        /// surfacing this lets the user see that data is going to devices whose
+        /// identity hasn't been attested. See ADR 0001 Phase D / review §4.2.
+        pub async fn unverified_device_count(&self) -> Result<usize> {
+            let room = self.get_room()?;
+            count_unverified_devices(&self.client, &room).await
+        }
+    }
+
+    /// Shared implementation of "how many devices among this room's members are
+    /// unverified", excluding our own current device. Used by both
+    /// `MatrixClient` (native) and the WASM bridge so the warn-on-unverified
+    /// logic lives in one place (ADR 0001 Phase D).
+    pub async fn count_unverified_devices(client: &Client, room: &Room) -> Result<usize> {
+        let own_device_id = client.device_id();
+        let mut count = 0usize;
+
+        let members = room
+            .members(RoomMemberships::JOIN)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to list room members: {e}"))?;
+
+        for member in members {
+            let devices = client
+                .encryption()
+                .get_user_devices(member.user_id())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to fetch user devices: {e}"))?;
+            for device in devices.devices() {
+                // Our own current device is implicitly trusted; skip it.
+                if Some(device.device_id()) == own_device_id {
+                    continue;
+                }
+                if !device.is_verified() {
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// Session information for persistence.
