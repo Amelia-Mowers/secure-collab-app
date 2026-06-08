@@ -39,7 +39,7 @@ pub struct WorkspaceMarkerEventContent {
 }
 
 use crate::workspace::Workspace;
-use tables_over_matrix::{CellUpdate, MatrixClient};
+use tables_over_matrix::{default_encryption_settings, CellUpdate, MatrixClient};
 
 /// A Matrix session that owns the SDK client and can create workspaces
 /// bound to rooms.
@@ -60,6 +60,7 @@ impl MatrixSession {
     ) -> Result<MatrixSession, JsValue> {
         let client = Client::builder()
             .homeserver_url(&homeserver_url)
+            .with_encryption_settings(default_encryption_settings())
             .build()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
@@ -91,6 +92,7 @@ impl MatrixSession {
 
         let client = Client::builder()
             .homeserver_url(&homeserver_url)
+            .with_encryption_settings(default_encryption_settings())
             .build()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
@@ -317,6 +319,7 @@ impl MatrixSession {
 
         let client = Client::builder()
             .homeserver_url(&homeserver_url)
+            .with_encryption_settings(default_encryption_settings())
             .build()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
