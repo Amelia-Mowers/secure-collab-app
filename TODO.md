@@ -67,7 +67,9 @@ Priority bands:
 
   *Alternative considered:* AG Grid (key features paid Enterprise — awkward for an auditable open-core). Glide Data Grid (canvas) for a future high-volume view.
 
-- [ ] **Flesh out placeholder field editors** — `multiselect` is a comma-string and `reference` a plain text input in the registry; add a tag input and a real reference/record picker. (Now centralized in `cellRegistry.tsx`.)
+- [~] **Flesh out placeholder field editors** (`cellRegistry.tsx`)
+  - [x] `multiselect` is now a proper **chip/tag editor** (add on Enter w/ `options` autocomplete, removable tags, dedupe) with unit tests.
+  - [ ] `reference` is still a plain id input — a real **record picker** needs the target table's rows threaded into the editor (add an optional `lookup` prop on `CellEditor`, supplied by TableView/FieldRenderer from the workspace).
 
 ---
 
