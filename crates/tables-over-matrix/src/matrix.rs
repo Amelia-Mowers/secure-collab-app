@@ -19,8 +19,8 @@ mod matrix_impl {
         config::SyncSettings,
         room::Room,
         ruma::{
-            events::macros::EventContent, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId,
-            UInt,
+            events::macros::EventContent, MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedEventId,
+            OwnedRoomId, UInt,
         },
         Client, RoomMemberships,
     };
@@ -407,6 +407,25 @@ mod matrix_impl {
         pub async fn unverified_device_count(&self) -> Result<usize> {
             let room = self.get_room()?;
             count_unverified_devices(&self.client, &room).await
+        }
+
+        /// Whether the given device of *our own* user is verified from this
+        /// device's perspective (via SAS or cross-signing). Used to confirm a
+        /// verification flow took effect and to drive trust UI. ADR 0001 Phase D.
+        pub async fn is_device_verified(&self, device_id: &str) -> Result<bool> {
+            let user_id = self
+                .client
+                .user_id()
+                .ok_or_else(|| anyhow::anyhow!("Not logged in"))?;
+            let device_id: OwnedDeviceId = device_id.into();
+            let device = self
+                .client
+                .encryption()
+                .get_device(user_id, &device_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get device: {e}"))?
+                .ok_or_else(|| anyhow::anyhow!("Device not found"))?;
+            Ok(device.is_verified())
         }
     }
 

@@ -17,8 +17,10 @@
 mod harness;
 
 use harness::TestHarness;
+use matrix_sdk::encryption::verification::Verification;
 use serde_json::json;
-use tables_over_matrix::CellUpdate;
+use std::time::Duration;
+use tables_over_matrix::{CellUpdate, MatrixClient};
 
 /// With a collaborator (a second user) in the encrypted room, that user's
 /// device is unverified from our perspective and must be counted, so the UI can
@@ -57,5 +59,162 @@ async fn test_unverified_member_device_is_surfaced() {
     assert!(
         count >= 1,
         "alice should see at least bob's unverified device, got {count}"
+    );
+}
+
+/// Sync both clients once and pause so to-device verification events propagate.
+///
+/// Uses a short sync timeout: the default long-poll would block ~30s whenever
+/// the next verification event hasn't arrived yet, making the handshake take
+/// many minutes. A bounded timeout returns as soon as events are available (or
+/// after a short wait), keeping each polling iteration fast.
+async fn sync_both(a: &MatrixClient, b: &MatrixClient) {
+    let settings = matrix_sdk::config::SyncSettings::default().timeout(Duration::from_millis(500));
+    let _ = a.inner().sync_once(settings.clone()).await;
+    let _ = b.inner().sync_once(settings).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+}
+
+/// Two devices of the same user complete an SAS (emoji) verification and end up
+/// mutually verified. This is the mechanism that lets a user attest that the
+/// devices receiving room keys are genuinely theirs (review §4.2 / ADR 0001
+/// Phase D). The flow is interactive (to-device messages each way), so we pump
+/// both clients' syncs between steps and poll the live request/SAS handles.
+#[tokio::test]
+#[ignore]
+async fn test_two_devices_self_verify_via_sas() {
+    let harness = TestHarness::new().await.unwrap();
+
+    // Device 1 registers; device 2 is a fresh second login of the same user.
+    let alice1 = harness.register_user("alice").await.unwrap();
+    let alice2 = harness.login_existing("alice").await.unwrap();
+
+    let user_id = alice1.inner().user_id().unwrap().to_owned();
+    let dev1 = alice1.inner().device_id().unwrap().to_owned();
+    let dev2 = alice2.inner().device_id().unwrap().to_owned();
+
+    // Both sync until each knows about the other device.
+    for _ in 0..12 {
+        sync_both(&alice1, &alice2).await;
+        let known = alice1
+            .inner()
+            .encryption()
+            .get_device(&user_id, &dev2)
+            .await
+            .unwrap()
+            .is_some()
+            && alice2
+                .inner()
+                .encryption()
+                .get_device(&user_id, &dev1)
+                .await
+                .unwrap()
+                .is_some();
+        if known {
+            break;
+        }
+    }
+
+    // alice1 requests verification of alice2's device.
+    let device2_from_1 = alice1
+        .inner()
+        .encryption()
+        .get_device(&user_id, &dev2)
+        .await
+        .unwrap()
+        .expect("alice1 should know alice2's device");
+    let req1 = device2_from_1.request_verification().await.unwrap();
+    let flow_id = req1.flow_id().to_owned();
+
+    // alice2 receives the request and accepts it.
+    let mut req2 = None;
+    for _ in 0..24 {
+        sync_both(&alice1, &alice2).await;
+        if let Some(r) = alice2
+            .inner()
+            .encryption()
+            .get_verification_request(&user_id, &flow_id)
+            .await
+        {
+            req2 = Some(r);
+            break;
+        }
+    }
+    let req2 = req2.expect("alice2 should receive the verification request");
+    req2.accept().await.unwrap();
+
+    // alice1 waits until the request is ready, then starts SAS.
+    for _ in 0..24 {
+        sync_both(&alice1, &alice2).await;
+        if req1.is_ready() {
+            break;
+        }
+    }
+    assert!(req1.is_ready(), "verification request should become ready");
+    let sas1 = req1
+        .start_sas()
+        .await
+        .unwrap()
+        .expect("start_sas should yield a SAS verification");
+
+    // alice2 picks up the started SAS and accepts it.
+    let mut sas2 = None;
+    for _ in 0..24 {
+        sync_both(&alice1, &alice2).await;
+        if let Some(Verification::SasV1(s)) = alice2
+            .inner()
+            .encryption()
+            .get_verification(&user_id, &flow_id)
+            .await
+        {
+            sas2 = Some(s);
+            break;
+        }
+    }
+    let sas2 = sas2.expect("alice2 should receive the SAS verification");
+    sas2.accept().await.unwrap();
+
+    // Pump until both sides have exchanged keys (the emoji become available).
+    for _ in 0..24 {
+        sync_both(&alice1, &alice2).await;
+        if sas1.emoji().is_some() && sas2.emoji().is_some() {
+            break;
+        }
+    }
+    assert!(
+        sas1.emoji().is_some() && sas2.emoji().is_some(),
+        "both sides should reach key exchange (emoji available)"
+    );
+
+    // In a real UI the user confirms the emoji match; the SAS is derived from
+    // the same shared secret, so here we trust it and confirm on both sides.
+    sas1.confirm().await.unwrap();
+    sas2.confirm().await.unwrap();
+
+    // Pump until the flow completes on both sides.
+    for _ in 0..24 {
+        sync_both(&alice1, &alice2).await;
+        if sas1.is_done() && sas2.is_done() {
+            break;
+        }
+    }
+    assert!(
+        sas1.is_done() && sas2.is_done(),
+        "SAS should complete on both sides"
+    );
+
+    // Let the resulting device-trust signatures propagate.
+    for _ in 0..8 {
+        sync_both(&alice1, &alice2).await;
+    }
+
+    // Each device now sees the other as verified.
+    assert!(
+        alice1.is_device_verified(dev2.as_str()).await.unwrap(),
+        "alice1 should see alice2's device as verified after SAS"
+    );
+    assert!(
+        alice2.is_device_verified(dev1.as_str()).await.unwrap(),
+        "alice2 should see alice1's device as verified after SAS"
     );
 }
