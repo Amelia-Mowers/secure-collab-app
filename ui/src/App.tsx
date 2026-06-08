@@ -5,6 +5,7 @@ import { useWorkspace } from './hooks/useTable'
 import { LoadingSpinner } from './components/LoadingSpinner'
 import { Sidebar } from './components/Sidebar'
 import { EncryptionWarningBanner } from './components/EncryptionWarningBanner'
+import { RecoveryGate } from './components/RecoveryGate'
 import { TableView } from './views/table/TableView'
 import { EntryView } from './views/entry/EntryView'
 import { CardView } from './views/card/CardView'
@@ -122,27 +123,32 @@ function WorkspaceHome({ syncing }: { syncing?: boolean }) {
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/signin" element={<SignInPage />} />
-      <Route
-        path="/workspaces"
-        element={
-          <RequireAuth>
-            <WorkspacesPage />
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/workspace/:workspaceId/*"
-        element={
-          <RequireAuth>
-            <WorkspaceShell />
-          </RequireAuth>
-        }
-      />
-      {/* Default redirect */}
-      <Route path="*" element={<RootRedirect />} />
-    </Routes>
+    <>
+      {/* Global recovery gate: ensures a signed-in device can reach history
+          (bootstrap on first device, or restore on a returning one). */}
+      <RecoveryGate />
+      <Routes>
+        <Route path="/signin" element={<SignInPage />} />
+        <Route
+          path="/workspaces"
+          element={
+            <RequireAuth>
+              <WorkspacesPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/workspace/:workspaceId/*"
+          element={
+            <RequireAuth>
+              <WorkspaceShell />
+            </RequireAuth>
+          }
+        />
+        {/* Default redirect */}
+        <Route path="*" element={<RootRedirect />} />
+      </Routes>
+    </>
   )
 }
 

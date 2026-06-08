@@ -17,6 +17,14 @@ export interface InvitedRoom {
   inviter: string
 }
 
+/** A prompt the sign-in flow raises so a device is never left signed-in but
+ *  unable to read history (a useless state). `save` = first device just
+ *  bootstrapped backup and must store the generated recovery key; `enter` =
+ *  a returning device must supply its saved key to restore history. */
+export type RecoveryPrompt =
+  | { kind: 'save'; recoveryKey: string }
+  | { kind: 'enter' }
+
 /** Persisted per-account data (shared across tabs via localStorage). */
 export interface AccountSession {
   homeserverUrl: string
@@ -70,6 +78,19 @@ interface AuthState {
 
   /** Nuclear option: clear all stored data and reload the app. */
   resetApp: () => void
+
+  /** Set when the sign-in flow needs the user to either save a freshly
+   *  generated recovery key (`save`) or enter their existing one (`enter`)
+   *  before they have access to encrypted workspace history. Null otherwise.
+   *  See ADR 0001 Phase B / review §4.2. */
+  recoveryPrompt: RecoveryPrompt | null
+  /** Restore history on a returning device using a saved recovery key.
+   *  Resolves once secrets are imported; rejects (with a message) on a bad
+   *  key so the gate can show an error. */
+  submitRecoveryKey: (key: string) => Promise<void>
+  /** Dismiss the recovery prompt — after saving the key, or to deliberately
+   *  continue without history (the encryption banner then warns). */
+  dismissRecoveryPrompt: () => void
 }
 
 // ── Local-storage keys ───────────────────────────────────────────────────────
@@ -205,6 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   })
   const [error, setError] = useState<string | null>(null)
   const [sessionSyncCount, setSessionSyncCount] = useState(0)
+  const [recoveryPrompt, setRecoveryPrompt] = useState<RecoveryPrompt | null>(null)
 
   // Keep a ref so callbacks always see the latest matrixSession
   const matrixSessionRef = useRef<any>(null)
@@ -275,6 +297,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return ms
   }, [])
 
+  // ── Recovery gate ──────────────────────────────────────────────────────────
+  //
+  // A device that's signed in but can't decrypt history is a useless state, so
+  // after every sign-in we steer it into a good one: the FIRST device
+  // bootstraps Secure Backup + Recovery (and we surface the generated key for
+  // the user to save), while a RETURNING device (a backup exists but this
+  // device lacks the keys) is prompted to restore with its saved key. A device
+  // that already has the keys ("ready") sails through. See ADR 0001 Phase B.
+  const ensureHistoryAccess = useCallback(async (ms: any) => {
+    try {
+      // Guard for mocks / older WASM bindings without the recovery surface.
+      if (typeof ms.recoveryStatus !== 'function') return
+      const status: string = await ms.recoveryStatus()
+      if (status === 'needs_bootstrap') {
+        const recoveryKey: string = await ms.enableRecovery()
+        setRecoveryPrompt({ kind: 'save', recoveryKey })
+      } else if (status === 'needs_recovery') {
+        setRecoveryPrompt({ kind: 'enter' })
+      }
+    } catch (err) {
+      // Don't block sign-in if recovery setup transiently fails — the
+      // encryption banner still surfaces any undecryptable history.
+      console.warn('[auth] Recovery check failed:', err)
+    }
+  }, [])
+
+  const submitRecoveryKey = useCallback(async (key: string) => {
+    const ms = matrixSessionRef.current
+    if (!ms) throw new Error('Not signed in')
+    await ms.recoverWithKey(key)
+    // Re-sync so the SDK downloads room keys from backup and history decrypts.
+    try {
+      await ms.initialSync()
+    } catch {
+      // Non-fatal — keys download in the background; the next sync picks up.
+    }
+    setRecoveryPrompt(null)
+  }, [])
+
+  const dismissRecoveryPrompt = useCallback(() => {
+    setRecoveryPrompt(null)
+  }, [])
+
   // ── Auto-restore session on mount ──────────────────────────────────────────
   //
   // Note: We intentionally use an empty dependency array and guard with
@@ -305,6 +370,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('[auth] Session restore complete, setting matrixSession')
         matrixSessionRef.current = ms
         setMatrixSession(ms)
+
+        // Restored device: if a backup exists but this device lacks the keys,
+        // prompt to restore so reload isn't a no-history dead end.
+        await ensureHistoryAccess(ms)
 
         // Refresh workspace list from server.
         // If initialSync timed out, listRooms may return an empty list
@@ -393,6 +462,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const entries = parseWorkspaceRooms(roomsJson)
         setWorkspaces(entries)
         saveWorkspaces(uid, entries)
+
+        // Never land in a signed-in-but-no-history state: bootstrap recovery
+        // on a first device, or prompt to restore on a returning one.
+        await ensureHistoryAccess(ms)
       } catch (err: any) {
         const msg = err?.message ?? String(err)
         setError(msg)
@@ -401,7 +474,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     },
-    [],
+    [ensureHistoryAccess],
   )
 
   // ── signUp: register a new account and log in ────────────────────────────────
@@ -443,6 +516,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const entries = parseWorkspaceRooms(roomsJson)
         setWorkspaces(entries)
         saveWorkspaces(uid, entries)
+
+        // Never land in a signed-in-but-no-history state: bootstrap recovery
+        // on a first device, or prompt to restore on a returning one.
+        await ensureHistoryAccess(ms)
       } catch (err: any) {
         const msg = err?.message ?? String(err)
         setError(msg)
@@ -451,7 +528,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     },
-    [],
+    [ensureHistoryAccess],
   )
 
   // ── signOut: remove the active account from the pool ───────────────────────
@@ -507,6 +584,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         matrixSessionRef.current = ms
         setMatrixSession(ms)
 
+        await ensureHistoryAccess(ms)
+
         // Refresh workspaces from server
         const roomsJson = await ms.listRooms()
         const entries = parseWorkspaceRooms(roomsJson)
@@ -519,7 +598,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     },
-    [accounts, activeAccountId, restoreSession],
+    [accounts, activeAccountId, restoreSession, ensureHistoryAccess],
   )
 
   // ── removeAccount: remove a specific account from the pool ─────────────────
@@ -763,6 +842,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     switchAccount,
     removeAccount,
     resetApp,
+    recoveryPrompt,
+    submitRecoveryKey,
+    dismissRecoveryPrompt,
   }
 
   return createElement(AuthContext.Provider, { value }, children)

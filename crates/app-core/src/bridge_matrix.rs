@@ -142,6 +142,63 @@ impl MatrixSession {
         self.user_id.as_ref().map(|u| u.to_string())
     }
 
+    // ── Secure Backup / Recovery (ADR 0001 Phase B) ─────────────────────────
+    //
+    // A sign-in that can't reach history is a useless state, so the sign-in
+    // flow must leave every device able to read history — either by
+    // *bootstrapping* recovery (first device: history protected going forward)
+    // or by *restoring* from backup (returning device). These are the
+    // primitives the UI drives after `initialSync()` to guarantee that.
+
+    /// Classify this device's access to encrypted history:
+    /// - `"ready"`: recovery is set up and this device already has the keys.
+    /// - `"needs_bootstrap"`: no backup exists yet — the first device should
+    ///   call `enableRecovery()` to protect history and get a key to save.
+    /// - `"needs_recovery"`: a backup exists but this device lacks the keys —
+    ///   call `recoverWithKey()` with the saved recovery key to read history.
+    /// - `"unknown"`: not determined yet; sync first.
+    ///
+    /// Call after `initialSync()` so the SDK has learned the backup state.
+    #[wasm_bindgen(js_name = recoveryStatus)]
+    pub fn recovery_status(&self) -> String {
+        use matrix_sdk::encryption::recovery::RecoveryState;
+        match self.client.encryption().recovery().state() {
+            RecoveryState::Enabled => "ready",
+            RecoveryState::Incomplete => "needs_recovery",
+            RecoveryState::Disabled => "needs_bootstrap",
+            _ => "unknown",
+        }
+        .to_owned()
+    }
+
+    /// Bootstrap Secure Backup + Recovery for the FIRST device and return the
+    /// **recovery key** the user must save. After this, other devices can
+    /// restore history with the key. The returned key must be surfaced
+    /// prominently — it is the only way back into history on a fresh device.
+    #[wasm_bindgen(js_name = enableRecovery)]
+    pub async fn enable_recovery(&self) -> Result<String, JsValue> {
+        self.client
+            .encryption()
+            .recovery()
+            .enable()
+            .wait_for_backups_to_upload()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to enable recovery: {e}")))
+    }
+
+    /// Restore secrets from Secure Backup using a saved recovery key so this
+    /// (returning) device can decrypt history sent before it existed.
+    #[wasm_bindgen(js_name = recoverWithKey)]
+    pub async fn recover_with_key(&self, recovery_key: String) -> Result<(), JsValue> {
+        self.client
+            .encryption()
+            .recovery()
+            .recover(&recovery_key)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to recover from backup: {e}")))?;
+        Ok(())
+    }
+
     /// Create a new room (workspace) and return its room ID.
     /// Tags the room with a custom state event so it can be identified as
     /// a workspace when listing rooms.

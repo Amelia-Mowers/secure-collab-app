@@ -134,8 +134,10 @@ before any implementation:
   encrypted room history and materialize the same workspace. Fails today: with
   no cross-signing/backup, the new device has no keys for events sent before it
   existed, so `extract_cell_update` skips them and the table comes up empty.
-  Lands red now; goes green after Phases A–B (and gains a recovery-key step).
-  *(Added in this change, behind the `red-tests` feature.)*
+  Was red through Phase A; **now green** after Phase B — device 1 enables
+  backup + recovery, device 2 restores with the recovery key and decrypts the
+  history. Promoted out of the `red-tests` gate into the normal `--ignored`
+  integration suite.
 - **Backup exists after setup** (Phase A): once `MatrixClient` exposes backup
   state, assert a backup is created/enabled after login with the new
   `EncryptionSettings`. *(Pending the backup-state accessor.)*
@@ -164,7 +166,15 @@ suite once it passes.
   "backup exists after setup" assertion can be made directly.
 - **B. Recovery-key flow** — enable Recovery, surface/store the recovery key,
   restore on a new login; add a harness test: client A writes, client B logs in
-  fresh on a new device and reconstructs the workspace from backup.
+  fresh on a new device and reconstructs the workspace from backup. **Landed:**
+  `MatrixClient::enable_recovery()` / `recover_with_key()` (+ the now-green
+  multi-device harness test), the `MatrixSession` bridge surface
+  (`recoveryStatus()` / `enableRecovery()` / `recoverWithKey()`), and a
+  **sign-in recovery gate** so a device is never left signed-in-but-no-history:
+  the sign-in flow bootstraps recovery on a first device (and shows the key to
+  save) or prompts a returning device to restore. On Conduit no UIA prompt was
+  needed (auto cross-signing bootstrapped at login) — Phase C remains for
+  servers that require it.
 - **C. UIA callback** — handle the auth interactive flow for cross-signing
   bootstrap.
 - **D. Verification UX + trust policy** — SAS verification UI; warn-on-unverified
