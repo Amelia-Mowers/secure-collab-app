@@ -4,6 +4,7 @@ import {
   useReactTable,
   getCoreRowModel,
   getSortedRowModel,
+  getFilteredRowModel,
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table'
@@ -44,6 +45,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const [deletingRows, setDeletingRows] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<string | null>(null)
   const [sorting, setSorting] = useState<SortingState>([])
+  const [globalFilter, setGlobalFilter] = useState('')
+  const [showFilter, setShowFilter] = useState(false)
 
   const columnsMeta: ColumnMeta[] = React.useMemo(() => {
     const columnSet = new Set<string>()
@@ -166,11 +169,14 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const table = useReactTable({
     data: rows as TableRow[],
     columns,
-    state: { sorting },
+    state: { sorting, globalFilter },
     onSortingChange: setSorting,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: 'includesString',
     getRowId: (row: TableRow) => row._row_id,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
   })
 
   const tableRows = table.getRowModel().rows
@@ -227,12 +233,32 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         title={tableTitle}
         actions={
           <>
-            <ToolbarButton icon={<FilterIcon />} label="Filter" />
+            <ToolbarButton icon={<FilterIcon />} label="Filter" active={showFilter} onClick={() => setShowFilter(s => !s)} />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
             <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}>New entry</ToolbarPrimaryButton>
           </>
         }
       />
+
+      {showFilter && (
+        <div className="table-filter-bar">
+          <input
+            className="table-filter-input"
+            placeholder="Filter rows…"
+            value={globalFilter}
+            autoFocus
+            onChange={e => setGlobalFilter(e.target.value)}
+          />
+          {globalFilter && (
+            <span className="table-filter-count">
+              {tableRows.length} match{tableRows.length === 1 ? '' : 'es'}
+            </span>
+          )}
+          {globalFilter && (
+            <button className="ghost table-filter-clear" onClick={() => setGlobalFilter('')}>Clear</button>
+          )}
+        </div>
+      )}
 
       <div className="table-view__content">
         <div className="table-scroll" ref={scrollRef}>
