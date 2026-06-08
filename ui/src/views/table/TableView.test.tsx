@@ -174,6 +174,22 @@ describe('TableView', () => {
     })
   })
 
+  describe('filtering', () => {
+    it('filters rows via the global filter input', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      await waitFor(() => screen.getByText('Design homepage'))
+      fireEvent.click(screen.getByText('Filter'))
+      const input = await screen.findByPlaceholderText(/Filter rows/)
+      fireEvent.change(input, { target: { value: 'CI/CD' } })
+      await waitFor(() => {
+        expect(screen.getByText('Set up CI/CD')).toBeInTheDocument()
+        expect(screen.queryByText('Design homepage')).not.toBeInTheDocument()
+      })
+    })
+  })
+
   describe('edge cases', () => {
     it('handles tables with a single column', async () => {
       const ws = new MockWorkspace()

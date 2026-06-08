@@ -11,6 +11,47 @@
   overflow: auto;
 }
 
+/* ── Filter bar ─────────────────────────────────────────────── */
+.table-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.table-filter-input {
+  flex: 1;
+  max-width: 320px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated, var(--bg-surface));
+  color: var(--text);
+}
+
+.table-filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-muted);
+}
+
+.table-filter-count {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.table-filter-clear {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.table-filter-clear:hover { color: var(--text); }
+
 /* ── States ─────────────────────────────────────────────────── */
 .state-empty,
 .state-error {

@@ -82,6 +82,12 @@
   border-color: var(--border);
 }
 
+.toolbar__btn--active {
+  background-color: var(--accent-muted);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .toolbar__btn--primary {
   background-color: var(--accent);
   color: #fff;
