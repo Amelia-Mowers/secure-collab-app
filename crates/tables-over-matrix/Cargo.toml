@@ -60,3 +60,7 @@ matrix-wasm = ["matrix", "matrix-sdk/indexeddb", "matrix-sdk/js", "getrandom_03"
 matrix-native = ["matrix", "matrix-sdk/sqlite"]
 # WASM bridge support (always on for our browser-first target)
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "tracing-wasm"]
+# Red/pending integration tests — expected to FAIL until the surface they spec
+# is implemented (see docs/adr/0001-e2e-key-management.md). Excluded from CI;
+# run manually with `--features matrix-native,red-tests`.
+red-tests = []

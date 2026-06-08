@@ -316,6 +316,22 @@ mod matrix_impl {
             })
         }
 
+        /// Whether `event_json` is still an `m.room.encrypted` event — i.e. the
+        /// SDK could not decrypt it (no room key available). Cold start / sync
+        /// use this to *count and surface* undecryptable history rather than
+        /// silently skipping it (which would materialize wrong workspace state).
+        /// See `docs/adr/0001-e2e-key-management.md` / review §4.2.
+        pub fn is_undecryptable_event(event_json: &str) -> bool {
+            serde_json::from_str::<serde_json::Value>(event_json)
+                .ok()
+                .and_then(|v| {
+                    v.get("type")
+                        .and_then(|t| t.as_str())
+                        .map(|s| s == "m.room.encrypted")
+                })
+                .unwrap_or(false)
+        }
+
         /// Run a single sync cycle and return.
         pub async fn sync_once(&self) -> Result<()> {
             let settings = SyncSettings::default();
@@ -496,6 +512,28 @@ mod matrix_impl {
             });
 
             assert!(MatrixClient::extract_cell_update(&event_json.to_string()).is_none());
+        }
+
+        #[test]
+        fn test_is_undecryptable_event() {
+            // An m.room.encrypted event = the SDK couldn't decrypt it.
+            let encrypted = json!({
+                "type": "m.room.encrypted",
+                "event_id": "$enc:example.com",
+                "origin_server_ts": 0,
+                "content": { "algorithm": "m.megolm.v1.aes-sha2", "ciphertext": "…" },
+                "sender": "@alice:example.com"
+            })
+            .to_string();
+            assert!(MatrixClient::is_undecryptable_event(&encrypted));
+
+            // A decrypted cell update is not undecryptable.
+            let cell = json!({ "type": CELL_UPDATE_EVENT_TYPE, "content": {} }).to_string();
+            assert!(!MatrixClient::is_undecryptable_event(&cell));
+
+            // Other event types are not "undecryptable" — just not ours.
+            let other = json!({ "type": "m.room.message", "content": {} }).to_string();
+            assert!(!MatrixClient::is_undecryptable_event(&other));
         }
     }
 }

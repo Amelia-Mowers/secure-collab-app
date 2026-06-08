@@ -157,6 +157,16 @@ log = "warn"
         Ok(client)
     }
 
+    /// Log an *already-registered* user in on a FRESH `MatrixClient` — i.e. a
+    /// new device with its own (empty) crypto store. Used to test multi-device
+    /// key availability (review §4.2 / ADR 0001).
+    pub async fn login_existing(&self, username: &str) -> Result<MatrixClient> {
+        let password = format!("{username}_test_password");
+        let client = MatrixClient::new(&self.homeserver_url).await?;
+        client.login(username, &password).await?;
+        Ok(client)
+    }
+
     /// Create a room owned by the given client and return the room ID string.
     pub async fn create_room(&self, client: &MatrixClient, room_name: &str) -> Result<String> {
         let http = reqwest::Client::new();

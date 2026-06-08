@@ -10,7 +10,7 @@
 //! client. Individual `WasmWorkspace` instances are created *from* it
 //! for each joined room.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -418,6 +418,10 @@ pub struct ConnectedWorkspace {
     client: Client,
     /// The room this workspace is bound to
     room_id: OwnedRoomId,
+    /// Count of room events that could not be decrypted (no key) during cold
+    /// start / sync. Surfaced to the UI instead of being silently dropped —
+    /// see `docs/adr/0001-e2e-key-management.md` / review §4.2.
+    undecryptable: Rc<Cell<u32>>,
 }
 
 #[wasm_bindgen]
@@ -456,6 +460,7 @@ impl ConnectedWorkspace {
         // materializes bare tables and has no notion of system tables. Values
         // are LWW so order-independent; per-cell history is bounded by the
         // order-based bumping wired in at write time (§4.3).
+        let mut undecryptable_count = 0u32;
         let mut from_token: Option<String> = None;
         loop {
             let mut options = MessagesOptions::backward();
@@ -477,6 +482,10 @@ impl ConnectedWorkspace {
                     if let Some(received) = MatrixClient::extract_cell_update(&json_str) {
                         // Attach origin_server_ts as the LWW tiebreaker.
                         let _ = workspace.apply_update(received.into_update());
+                    } else if MatrixClient::is_undecryptable_event(&json_str) {
+                        // History we can't decrypt (no key) — count it so the UI
+                        // can warn instead of silently materializing partial state.
+                        undecryptable_count += 1;
                     }
                 }
             }
@@ -491,6 +500,7 @@ impl ConnectedWorkspace {
             inner: Rc::new(RefCell::new(workspace)),
             client,
             room_id,
+            undecryptable: Rc::new(Cell::new(undecryptable_count)),
         })
     }
 
@@ -503,6 +513,7 @@ impl ConnectedWorkspace {
         let client = self.client.clone();
         let room_id = self.room_id.clone();
         let workspace = Rc::clone(&self.inner);
+        let undecryptable = Rc::clone(&self.undecryptable);
 
         spawn_local(async move {
             let settings = SyncSettings::default();
@@ -510,6 +521,7 @@ impl ConnectedWorkspace {
             let _ = client
                 .sync_with_callback(settings, |response| {
                     let workspace = Rc::clone(&workspace);
+                    let undecryptable = Rc::clone(&undecryptable);
                     let room_id = room_id.clone();
                     let on_change = on_change.clone();
 
@@ -528,6 +540,9 @@ impl ConnectedWorkspace {
                                         let mut ws = workspace.borrow_mut();
                                         // Attach origin_server_ts as the LWW tiebreaker.
                                         let _ = ws.apply_update(received.into_update());
+                                        changed = true;
+                                    } else if MatrixClient::is_undecryptable_event(&json_str) {
+                                        undecryptable.set(undecryptable.get() + 1);
                                         changed = true;
                                     }
                                 }
@@ -682,6 +697,15 @@ impl ConnectedWorkspace {
             .get_room(&self.room_id)
             .map(|room| room.encryption_state().is_encrypted())
             .unwrap_or(false)
+    }
+
+    /// Number of room events that could not be decrypted (no key) during cold
+    /// start / sync. The UI surfaces this as a warning rather than silently
+    /// dropping the data (otherwise the workspace would materialize wrong
+    /// state). See `docs/adr/0001-e2e-key-management.md` / review §4.2.
+    #[wasm_bindgen(js_name = undecryptableCount)]
+    pub fn undecryptable_count(&self) -> u32 {
+        self.undecryptable.get()
     }
 
     /// Create a view from JSON configuration.
