@@ -1,0 +1,20 @@
+.encryption-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--danger, #d9534f);
+  background: var(--danger-muted, rgba(217, 83, 79, 0.1));
+  border-bottom: 1px solid var(--danger, #d9534f);
+}
+
+.encryption-warning__icon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.encryption-warning__text {
+  flex: 1;
+}
