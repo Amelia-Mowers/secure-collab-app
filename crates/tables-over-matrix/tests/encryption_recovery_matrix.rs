@@ -1,18 +1,16 @@
-//! Red (failing) integration tests for E2E key management — review §4.2 and
+//! Integration tests for E2E key management — review §4.2 and
 //! `docs/adr/0001-e2e-key-management.md`.
 //!
-//! These encode the DESIRED behaviour and currently FAIL because cross-signing
-//! and key backup are not wired yet. They are the spec for §4.2: implement
-//! until they go green.
+//! This started as a *red* spec test (ADR 0001 test-first) and is now green:
+//! it exercises the full multi-device recovery path — Secure Backup +
+//! Recovery (Phase B) on top of auto cross-signing/backup (Phase A).
 //!
 //! ```sh
 //! cargo test -p tables-over-matrix --no-default-features \
-//!   --features matrix-native,red-tests --test encryption_recovery_matrix -- --ignored
+//!   --features matrix-native --test encryption_recovery_matrix -- --ignored
 //! ```
 
-// Gated behind `red-tests` so CI's `--ignored` integration run stays green;
-// run with `--features matrix-native,red-tests`. See docs/adr/0001.
-#![cfg(all(feature = "matrix", feature = "red-tests"))]
+#![cfg(feature = "matrix")]
 
 mod harness;
 
@@ -21,14 +19,15 @@ use serde_json::json;
 use tables_over_matrix::{CellUpdate, MatrixClient, Table};
 
 /// The single-user / multiple-devices promise: a SECOND login of the same user
-/// (a fresh device with its own crypto store) must decrypt the encrypted room
-/// history and materialize the same workspace.
+/// (a fresh device with its own crypto store) decrypts the encrypted room
+/// history and materializes the same workspace, after restoring keys from
+/// Secure Backup with the recovery key.
 ///
-/// RED today: with no cross-signing + key backup, device 2 has no Megolm keys
-/// for events sent before it existed, so `extract_cell_update` skips the
-/// (still-encrypted) events and the table comes up empty. Goes green once
-/// `EncryptionSettings` auto-backup + recovery are wired (Phases A–B), at which
-/// point this test also gains a recovery-key restore step for device 2.
+/// Was red before Phases A–B: with no cross-signing + key backup, device 2 had
+/// no Megolm keys for events sent before it existed, so `extract_cell_update`
+/// skipped the (still-encrypted) events and the table came up empty. Now device
+/// 1 enables backup + recovery and device 2 restores with the recovery key, so
+/// the history decrypts (review §4.2 / ADR 0001).
 #[tokio::test]
 #[ignore]
 async fn test_second_device_reconstructs_encrypted_workspace_from_history() {
@@ -47,10 +46,20 @@ async fn test_second_device_reconstructs_encrypted_workspace_from_history() {
     alice1.send_cell_update(&update).await.unwrap();
     harness.wait_for_sync().await;
 
+    // Phase B: enable Secure Backup + Recovery and capture the recovery key.
+    // This uploads device 1's room keys to the backup so another device can
+    // restore them.
+    let recovery_key = alice1.enable_recovery().await.unwrap();
+
     // Device 2: a fresh login of the SAME user (new, empty crypto store).
     let mut alice2 = harness.login_existing("alice").await.unwrap();
     alice2.sync_once().await.unwrap();
+
+    // Phase B: restore secrets from backup with the saved recovery key, then
+    // sync so the SDK downloads room keys and can decrypt history.
+    alice2.recover_with_key(&recovery_key).await.unwrap();
     alice2.sync_once().await.unwrap();
+    harness.wait_for_sync().await;
     alice2.set_room_from_str(&room_id).unwrap();
 
     // Device 2 materializes the workspace from the encrypted room history.
@@ -69,11 +78,11 @@ async fn test_second_device_reconstructs_encrypted_workspace_from_history() {
         }
     }
 
-    // DESIRED end state. Fails today because device 2 cannot decrypt history
-    // without key backup (review §4.2).
+    // Device 2 decrypts the history it never had live keys for, via the backup
+    // restored with the recovery key (review §4.2).
     assert_eq!(
         table.get_value("t1", "title"),
         Some(&json!("Top secret")),
-        "second device should decrypt encrypted history once key backup is wired (§4.2)"
+        "second device should decrypt encrypted history after restoring from backup (§4.2)"
     );
 }

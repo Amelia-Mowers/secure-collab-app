@@ -360,6 +360,44 @@ mod matrix_impl {
         pub fn inner(&self) -> &Client {
             &self.client
         }
+
+        // ── Secure Backup / Recovery (ADR 0001 Phase B) ─────────────────────
+
+        /// Enable Secure Backup + Recovery and return the **recovery key** the
+        /// user must save. Bootstraps secret storage and key backup and waits
+        /// for this device's room keys to finish uploading, so another device
+        /// can later restore encrypted workspace history with the returned key.
+        ///
+        /// Called once on the device that creates a workspace. The recovery key
+        /// is the user's only way back into their history on a fresh device —
+        /// it must be surfaced and saved (review §4.2 / ADR 0001).
+        pub async fn enable_recovery(&self) -> Result<String> {
+            let recovery_key = self
+                .client
+                .encryption()
+                .recovery()
+                .enable()
+                .wait_for_backups_to_upload()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to enable recovery: {e}"))?;
+            info!("Secure backup + recovery enabled");
+            Ok(recovery_key)
+        }
+
+        /// Restore secrets (including the backup decryption key) from Secure
+        /// Backup using a previously-saved recovery key. Afterwards the SDK
+        /// downloads room keys from backup so this device can decrypt history
+        /// that was sent before it existed — the multi-device promise.
+        pub async fn recover_with_key(&self, recovery_key: &str) -> Result<()> {
+            self.client
+                .encryption()
+                .recovery()
+                .recover(recovery_key)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to recover from backup: {e}"))?;
+            info!("Recovered secrets from secure backup");
+            Ok(())
+        }
     }
 
     /// Session information for persistence.
