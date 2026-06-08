@@ -142,8 +142,8 @@ before any implementation:
   state, assert a backup is created/enabled after login with the new
   `EncryptionSettings`. *(Pending the backup-state accessor.)*
 - **Verification** (Phase D): two devices complete SAS and become mutually
-  trusted; a require-verified policy refuses to send to an unverified device.
-  *(Pending verification plumbing in `MatrixClient`.)*
+  trusted (`test_two_devices_self_verify_via_sas` — **green**); a require-verified
+  policy refuses to send to an unverified device *(still pending — D-3)*.
 
 The red tests are the spec: implement each phase until its test is green,
 rather than wiring `EncryptionSettings` blind. They live behind a `red-tests`
@@ -184,10 +184,16 @@ suite once it passes.
   (excluding our own); the bridge exposes
   `ConnectedWorkspace::unverifiedDeviceCount()` and the UI shows an
   `UnverifiedDevicesBanner`, with a green harness test
-  (`test_unverified_member_device_is_surfaced`). **D-2 remaining:** the
-  interactive SAS verification flow (request → accept → start_sas → emoji →
-  confirm → done) to *clear* the warning, and the opt-in require-verified send
-  policy (the SDK can refuse to send to unverified devices; surface the error).
+  (`test_unverified_member_device_is_surfaced`). **D-2 landed (SAS mechanism):**
+  the full interactive SAS handshake (request → accept → start_sas → emoji →
+  confirm → done) is proven to converge headless on Conduit with our
+  `EncryptionSettings` — two devices end mutually verified
+  (`test_two_devices_self_verify_via_sas`, green and fast after bounding the
+  sync long-poll) — plus `MatrixClient::is_device_verified()`. **D-3 remaining:**
+  the interactive SAS *UI* (a stateful bridge surface to show/confirm emoji)
+  that *clears* the warning, and the opt-in require-verified send policy (the
+  SDK can refuse to share keys with unverified devices; surface the error;
+  `Room::contains_only_verified_devices()` complements the existing count).
 - **E. Cold-start decryption UX** — *(detection landed in this change:
   `MatrixClient::is_undecryptable_event` + the cold-start/sync loops now count
   `m.room.encrypted` events and expose `ConnectedWorkspace::undecryptableCount()`,
