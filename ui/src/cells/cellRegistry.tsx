@@ -12,6 +12,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { MarkdownEditor } from '@/views/entry/MarkdownEditor'
+import './cells.css'
 
 export interface CellColumn {
   id: string
@@ -177,32 +178,58 @@ function SelectEditor({ column, value, commit, autoFocus, onDone }: CellEditorPr
   )
 }
 
-function MultiSelectEditor({ value, commit, autoFocus, onDone }: CellEditorProps) {
-  // Simple comma-separated tag editing for now (a real tag picker is a follow-up).
-  const initial = Array.isArray(value) ? value.join(', ') : (value ?? '')
-  const [draft, setDraft] = useDraft(initial)
-  const finish = () => {
-    const next = (draft as string)
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean)
-    commit(next)
-    onDone?.()
+function MultiSelectEditor({ column, value, commit, autoFocus, onDone }: CellEditorProps) {
+  const selected: string[] = Array.isArray(value)
+    ? value.map(String)
+    : value != null && value !== ''
+      ? [String(value)]
+      : []
+  const [draft, setDraft] = useState('')
+
+  const addTag = (raw: string) => {
+    const tag = raw.trim()
+    setDraft('')
+    if (tag && !selected.includes(tag)) commit([...selected, tag])
   }
+  const removeTag = (tag: string) => commit(selected.filter(t => t !== tag))
+
+  const listId = `ms-${column.id}`
+  const remaining = (column.options ?? []).filter(o => !selected.includes(o))
+
   return (
-    <input
-      type="text"
-      className="cell-input"
-      value={draft as string}
-      autoFocus={autoFocus}
-      placeholder="Comma-separated values…"
-      onChange={e => setDraft(e.target.value)}
-      onBlur={finish}
-      onKeyDown={e => {
-        if (e.key === 'Enter') { e.preventDefault(); finish() }
-        if (e.key === 'Escape') onDone?.()
-      }}
-    />
+    <div className="cell-multiselect">
+      {selected.map(tag => (
+        <span key={tag} className="cell-tag cell-tag--editable">
+          <span className="cell-tag__label">{tag}</span>
+          <button
+            type="button"
+            className="cell-tag__remove"
+            aria-label={`Remove ${tag}`}
+            onClick={() => removeTag(tag)}
+          >×</button>
+        </span>
+      ))}
+      <input
+        type="text"
+        className="cell-multiselect__input"
+        value={draft}
+        autoFocus={autoFocus}
+        placeholder="Add…"
+        list={remaining.length ? listId : undefined}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { if (draft.trim()) addTag(draft); onDone?.() }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); addTag(draft) }
+          else if (e.key === 'Backspace' && draft === '' && selected.length) removeTag(selected[selected.length - 1])
+          else if (e.key === 'Escape') onDone?.()
+        }}
+      />
+      {remaining.length > 0 && (
+        <datalist id={listId}>
+          {remaining.map(o => <option key={o} value={o} />)}
+        </datalist>
+      )}
+    </div>
   )
 }
 
