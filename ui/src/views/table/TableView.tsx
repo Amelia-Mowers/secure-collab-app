@@ -101,6 +101,26 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     }
   }
 
+  // Resolve the records of a referenced table (id + a text-column label) so
+  // `reference` cells can pick from / display real rows instead of raw ids.
+  const referenceLookup = React.useCallback((refTableId: string) => {
+    if (!workspace) return []
+    try {
+      const refRows = JSON.parse(workspace.getTableRows(refTableId)) as Array<Record<string, any>>
+      let labelColId: string | undefined
+      try {
+        const refSchema = JSON.parse(workspace.getTableSchema(refTableId))
+        labelColId = (Object.values(refSchema.columns ?? {}) as any[]).find(c => c.column_type === 'text')?.id
+      } catch { /* no schema — fall back to the row id */ }
+      return refRows.map(r => ({
+        id: r._row_id,
+        label: labelColId && r[labelColId] != null ? String(r[labelColId]) : r._row_id,
+      }))
+    } catch {
+      return []
+    }
+  }, [workspace])
+
   // ── TanStack column model (data columns only; add-column + actions are
   //    rendered separately so the grid model stays purely schema-driven) ──
   const columns = useMemo<ColumnDef<TableRow>[]>(() => {
@@ -125,6 +145,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               column={cellColumn}
               value={value}
               autoFocus
+              lookup={referenceLookup}
               commit={v => updateCell(rowId, col.id, v).catch(showCellError)}
               onDone={() => setEditing(null)}
             />
@@ -135,12 +156,12 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             className="cell-click"
             onClick={e => { e.stopPropagation(); setEditing(cellKey) }}
           >
-            <CellDisplay column={cellColumn} value={value} />
+            <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} />
           </div>
         )
       },
     }))
-  }, [columnsMeta, editing, updateCell])
+  }, [columnsMeta, editing, updateCell, referenceLookup])
 
   const table = useReactTable({
     data: rows as TableRow[],

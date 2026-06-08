@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { FieldRenderer } from './FieldRenderer'
 import './EntryView.css'
@@ -134,6 +134,25 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
     }
   }
 
+  // Resolve referenced-table records (id + text-column label) for reference fields.
+  const referenceLookup = useCallback((refTableId: string) => {
+    if (!workspace) return []
+    try {
+      const refRows = JSON.parse(workspace.getTableRows(refTableId)) as Array<Record<string, any>>
+      let labelColId: string | undefined
+      try {
+        const refSchema = JSON.parse(workspace.getTableSchema(refTableId))
+        labelColId = (Object.values(refSchema.columns ?? {}) as any[]).find(c => c.column_type === 'text')?.id
+      } catch { /* no schema — fall back to the row id */ }
+      return refRows.map(r => ({
+        id: r._row_id,
+        label: labelColId && r[labelColId] != null ? String(r[labelColId]) : r._row_id,
+      }))
+    } catch {
+      return []
+    }
+  }, [workspace])
+
   const handleReturn = () => {
     // If we're still on /entry/new and nothing was written, no row exists — just go back.
     // If a real rowId exists and we're in new-entry mode, the first field write already
@@ -218,6 +237,7 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
                   column={column}
                   value={rowData[column.id]}
                   onChange={value => handleFieldChange(column.id, value)}
+                  lookup={referenceLookup}
                 />
               </div>
             ))}

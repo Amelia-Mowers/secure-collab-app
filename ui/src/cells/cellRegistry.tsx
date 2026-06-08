@@ -23,9 +23,14 @@ export interface CellColumn {
   reference_table?: string
 }
 
+/** Resolve the selectable records of a referenced table (id + display label).
+ *  Supplied by the consumer (grid / entry view) since only it has the workspace. */
+export type ReferenceLookup = (tableId: string) => Array<{ id: string; label: string }>
+
 export interface CellDisplayProps {
   column: CellColumn
   value: any
+  lookup?: ReferenceLookup
 }
 
 export interface CellEditorProps {
@@ -37,6 +42,8 @@ export interface CellEditorProps {
   autoFocus?: boolean
   /** Editing finished (commit already fired if the value changed). */
   onDone?: () => void
+  /** Resolve referenced records (used by `reference` columns). */
+  lookup?: ReferenceLookup
 }
 
 // ── Display: compact, read-only rendering for a grid cell ──────────────────
@@ -47,7 +54,7 @@ function defaultText(value: any): string {
   return JSON.stringify(value)
 }
 
-export function CellDisplay({ column, value }: CellDisplayProps) {
+export function CellDisplay({ column, value, lookup }: CellDisplayProps) {
   switch (column.column_type) {
     case 'boolean':
       return <span className="cell-display cell-display--bool">{value ? '✓' : ''}</span>
@@ -67,6 +74,13 @@ export function CellDisplay({ column, value }: CellDisplayProps) {
       return <span className="cell-display cell-display--muted">{defaultText(value).slice(0, 80)}</span>
     case 'json':
       return <span className="cell-display cell-display--mono">{defaultText(value)}</span>
+    case 'reference': {
+      if (value == null || value === '') return <span className="cell-display" />
+      const label = lookup && column.reference_table
+        ? lookup(column.reference_table).find(r => r.id === value)?.label ?? String(value)
+        : String(value)
+      return <span className="cell-display cell-pill">{label}</span>
+    }
     default:
       return <span className="cell-display">{defaultText(value)}</span>
   }
@@ -233,9 +247,29 @@ function MultiSelectEditor({ column, value, commit, autoFocus, onDone }: CellEdi
   )
 }
 
-function ReferenceEditor({ column, value, commit, autoFocus, onDone }: CellEditorProps) {
-  // Plain id entry for now (a real record picker is a follow-up).
+function ReferenceEditor({ column, value, commit, autoFocus, onDone, lookup }: CellEditorProps) {
+  const records = lookup && column.reference_table ? lookup(column.reference_table) : null
+  // Hook must run unconditionally; only the fallback path uses the draft.
   const [draft, setDraft] = useDraft(value ?? '')
+
+  if (records) {
+    return (
+      <select
+        className="cell-input cell-input--select"
+        value={value ?? ''}
+        autoFocus={autoFocus}
+        onChange={e => { commit(e.target.value === '' ? null : e.target.value); onDone?.() }}
+        onBlur={onDone}
+      >
+        <option value="">Select {column.name}...</option>
+        {records.map(r => (
+          <option key={r.id} value={r.id}>{r.label || r.id}</option>
+        ))}
+      </select>
+    )
+  }
+
+  // Fallback: plain id entry when no lookup is supplied.
   const finish = () => {
     if (draft !== (value ?? '')) commit(draft)
     onDone?.()

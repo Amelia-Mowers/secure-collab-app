@@ -1,10 +1,11 @@
-import { CellEditor, type CellColumn } from '@/cells/cellRegistry'
+import { CellEditor, type CellColumn, type ReferenceLookup } from '@/cells/cellRegistry'
 import './FieldRenderer.css'
 
 interface FieldRendererProps {
   column: CellColumn
   value: any
   onChange: (value: any) => void
+  lookup?: ReferenceLookup
 }
 
 /**
@@ -15,7 +16,7 @@ interface FieldRendererProps {
  * exact same editors (commit on blur/Enter) — no more duplicated per-type
  * `<input>` handling. This component only adds the entry-view label/layout.
  */
-export function FieldRenderer({ column, value, onChange }: FieldRendererProps) {
+export function FieldRenderer({ column, value, onChange, lookup }: FieldRendererProps) {
   return (
     <div className="field-renderer">
       {column.column_type !== 'boolean' && (
@@ -24,7 +25,7 @@ export function FieldRenderer({ column, value, onChange }: FieldRendererProps) {
           {column.required && <span className="required-indicator">*</span>}
         </label>
       )}
-      <CellEditor column={column} value={value} commit={onChange} />
+      <CellEditor column={column} value={value} commit={onChange} lookup={lookup} />
     </div>
   )
 }

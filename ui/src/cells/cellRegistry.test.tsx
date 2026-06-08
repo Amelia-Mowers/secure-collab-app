@@ -81,6 +81,28 @@ describe('cellRegistry', () => {
     })
   })
 
+  describe('CellEditor — reference', () => {
+    const refCol = col({ id: 'project', name: 'Project', column_type: 'reference', reference_table: 'projects' })
+    const lookup = () => [
+      { id: 'p1', label: 'Apollo' },
+      { id: 'p2', label: 'Zephyr' },
+    ]
+
+    it('renders a record dropdown from the lookup and commits the chosen id', () => {
+      const commit = vi.fn()
+      render(<CellEditor column={refCol} value="" commit={commit} lookup={lookup} />)
+      expect(screen.getByText('Apollo')).toBeInTheDocument()
+      expect(screen.getByText('Zephyr')).toBeInTheDocument()
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'p2' } })
+      expect(commit).toHaveBeenCalledWith('p2')
+    })
+
+    it('falls back to a text input when no lookup is provided', () => {
+      render(<CellEditor column={refCol} value="p1" commit={vi.fn()} />)
+      expect(screen.getByRole('textbox')).toBeInTheDocument()
+    })
+  })
+
   describe('CellDisplay', () => {
     it('renders a boolean check only when true', () => {
       const { rerender, container } = render(<CellDisplay column={col({ column_type: 'boolean' })} value={true} />)
@@ -93,6 +115,18 @@ describe('cellRegistry', () => {
       render(<CellDisplay column={col({ column_type: 'multiselect' })} value={['a', 'b']} />)
       expect(screen.getByText('a')).toBeInTheDocument()
       expect(screen.getByText('b')).toBeInTheDocument()
+    })
+
+    it('renders a reference label resolved via the lookup', () => {
+      const lookup = () => [{ id: 'p1', label: 'Apollo' }]
+      render(
+        <CellDisplay
+          column={col({ column_type: 'reference', reference_table: 'projects' })}
+          value="p1"
+          lookup={lookup}
+        />,
+      )
+      expect(screen.getByText('Apollo')).toBeInTheDocument()
     })
   })
 })
