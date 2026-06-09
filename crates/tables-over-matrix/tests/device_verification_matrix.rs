@@ -1,11 +1,5 @@
-//! Integration test for device-trust surfacing — review §4.2 and
-//! `docs/adr/0001-e2e-key-management.md` Phase D (warn-on-unverified).
-//!
-//! The SDK shares room keys with *every* device in an encrypted room, verified
-//! or not, so a malicious/compromised homeserver could inject a device and
-//! receive the keys. Before any verification UX exists, the app must at least
-//! *surface* that unverified devices are present, so the user knows their data
-//! is going somewhere unattested.
+//! Integration test for device (SAS) verification — review §4.2 and
+//! `docs/adr/0001-e2e-key-management.md` Phase D.
 //!
 //! ```sh
 //! cargo test -p tables-over-matrix --no-default-features \
@@ -18,49 +12,8 @@ mod harness;
 
 use harness::TestHarness;
 use matrix_sdk::encryption::verification::Verification;
-use serde_json::json;
 use std::time::Duration;
-use tables_over_matrix::{CellUpdate, MatrixClient};
-
-/// A routine unverified collaborator must NOT be surfaced — that's a normal
-/// state, not a catastrophe. The banner only fires for a *verified* identity's
-/// unverified device (a possible injection). Here Alice has never verified Bob,
-/// so even though she has downloaded his (unverified) device, the count is 0
-/// (ADR 0001 Phase D — warnings only for genuine problems).
-#[tokio::test]
-#[ignore]
-async fn test_routine_unverified_collaborator_is_not_surfaced() {
-    let harness = TestHarness::new().await.unwrap();
-
-    // Alice creates an encrypted room; Bob (never verified) joins.
-    let mut alice = harness.register_user("alice").await.unwrap();
-    let bob = harness.register_user("bob").await.unwrap();
-    let room_id = harness
-        .create_encrypted_room(&alice, "workspace")
-        .await
-        .unwrap();
-    alice.sync_once().await.unwrap();
-    alice.set_room_from_str(&room_id).unwrap();
-
-    harness
-        .invite_and_join(&alice, &bob, &room_id)
-        .await
-        .unwrap();
-    alice.sync_once().await.unwrap();
-
-    // Sending an encrypted update forces Alice to download Bob's device keys —
-    // so the device IS known, it's just (correctly) not flagged.
-    let update = CellUpdate::new("tasks", "t1", "title", json!("hello"), 1);
-    alice.send_cell_update(&update).await.unwrap();
-    alice.sync_once().await.unwrap();
-    harness.wait_for_sync().await;
-
-    let count = alice.unverified_device_count().await.unwrap();
-    assert_eq!(
-        count, 0,
-        "a never-verified collaborator's device must not be surfaced, got {count}"
-    );
-}
+use tables_over_matrix::MatrixClient;
 
 /// Sync both clients once and pause so to-device verification events propagate.
 ///

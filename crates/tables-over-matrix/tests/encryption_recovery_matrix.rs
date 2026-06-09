@@ -86,3 +86,21 @@ async fn test_second_device_reconstructs_encrypted_workspace_from_history() {
         "second device should decrypt encrypted history after restoring from backup (§4.2)"
     );
 }
+
+/// A key backup is enabled after the device enables recovery — the ADR 0001
+/// Phase A "backup exists after setup" assertion, now directly checkable via
+/// `MatrixClient::backup_exists()`.
+#[tokio::test]
+#[ignore]
+async fn test_backup_exists_after_enabling_recovery() {
+    let harness = TestHarness::new().await.unwrap();
+    let alice = harness.register_user("alice").await.unwrap();
+
+    let recovery_key = alice.enable_recovery().await.unwrap();
+    assert!(!recovery_key.is_empty(), "recovery key should be returned");
+
+    assert!(
+        alice.backup_exists(),
+        "a key backup should be enabled after enabling recovery"
+    );
+}

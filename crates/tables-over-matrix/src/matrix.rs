@@ -22,7 +22,7 @@ mod matrix_impl {
             events::macros::EventContent, MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedEventId,
             OwnedRoomId, UInt,
         },
-        Client, RoomMemberships,
+        Client,
     };
     use serde::{Deserialize, Serialize};
     use tracing::{debug, info};
@@ -399,16 +399,6 @@ mod matrix_impl {
             Ok(())
         }
 
-        /// Count devices of the workspace room's members that this device has
-        /// not verified (excluding our own current device). The SDK shares room
-        /// keys with *every* device in an encrypted room, verified or not, so
-        /// surfacing this lets the user see that data is going to devices whose
-        /// identity hasn't been attested. See ADR 0001 Phase D / review §4.2.
-        pub async fn unverified_device_count(&self) -> Result<usize> {
-            let room = self.get_room()?;
-            count_unverified_devices(&self.client, &room).await
-        }
-
         /// Whether the given device of *our own* user is verified from this
         /// device's perspective (via SAS or cross-signing). Used to confirm a
         /// verification flow took effect and to drive trust UI. ADR 0001 Phase D.
@@ -427,63 +417,17 @@ mod matrix_impl {
                 .ok_or_else(|| anyhow::anyhow!("Device not found"))?;
             Ok(device.is_verified())
         }
-    }
 
-    /// Count the **anomalous** unverified devices among this room's members:
-    /// devices that are *not* verified but belong to **another user whose
-    /// identity we have verified**. That combination is the catastrophic case —
-    /// a collaborator we've attested suddenly has a device we haven't, which
-    /// looks like a device injection. Two kinds of device are deliberately *not*
-    /// counted so the warning only fires when something is genuinely wrong
-    /// (ADR 0001 Phase D):
-    ///
-    /// - devices of users we've never verified (a routine unverified peer is
-    ///   normal, not catastrophic), and
-    /// - our own devices — a fresh/unverified device of ours is handled up front
-    ///   by the sign-in verify gate and the incoming-verification prompt, not by
-    ///   a passive workspace banner.
-    pub async fn count_unverified_devices(client: &Client, room: &Room) -> Result<usize> {
-        let own_user_id = client.user_id();
-        let mut count = 0usize;
-
-        let members = room
-            .members(RoomMemberships::JOIN)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to list room members: {e}"))?;
-
-        for member in members {
-            let user_id = member.user_id();
-
-            // Own devices are the verify gate's job, not this banner's.
-            if Some(user_id) == own_user_id {
-                continue;
-            }
-
-            // Only a *verified* collaborator's unverified device is an anomaly.
-            let identity_verified = client
-                .encryption()
-                .get_user_identity(user_id)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to fetch user identity: {e}"))?
-                .map(|identity| identity.is_verified())
-                .unwrap_or(false);
-            if !identity_verified {
-                continue;
-            }
-
-            let devices = client
-                .encryption()
-                .get_user_devices(user_id)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to fetch user devices: {e}"))?;
-            for device in devices.devices() {
-                if !device.is_verified() {
-                    count += 1;
-                }
-            }
+        /// Whether a key backup is enabled for this client (ADR 0001 Phase A).
+        /// True once recovery/backup setup has completed — lets callers confirm
+        /// "backup on" directly rather than inferring it from a restore working.
+        pub fn backup_exists(&self) -> bool {
+            use matrix_sdk::encryption::backups::BackupState;
+            matches!(
+                self.client.encryption().backups().state(),
+                BackupState::Enabled
+            )
         }
-
-        Ok(count)
     }
 
     /// Session information for persistence.

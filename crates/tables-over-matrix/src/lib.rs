@@ -46,8 +46,8 @@ pub use table::Table;
 // Re-export Matrix types only when the matrix feature is enabled
 #[cfg(feature = "matrix")]
 pub use matrix::{
-    count_unverified_devices, default_encryption_settings, CellUpdateEventContent, MatrixClient,
-    ReceivedCellUpdate, SessionInfo, CELL_UPDATE_EVENT_TYPE,
+    default_encryption_settings, CellUpdateEventContent, MatrixClient, ReceivedCellUpdate,
+    SessionInfo, CELL_UPDATE_EVENT_TYPE,
 };
 
 /// Error types for the library.
