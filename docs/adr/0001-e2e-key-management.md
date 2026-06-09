@@ -183,23 +183,34 @@ suite once it passes.
   the room's member devices and count those this device hasn't verified
   (excluding our own); the bridge exposes
   `ConnectedWorkspace::unverifiedDeviceCount()` and the UI shows an
-  `UnverifiedDevicesBanner`, with a green harness test
-  (`test_unverified_member_device_is_surfaced`). **D-2 landed (SAS mechanism):**
+  `UnverifiedDevicesBanner`. **D-2 landed (SAS mechanism):**
   the full interactive SAS handshake (request → accept → start_sas → emoji →
   confirm → done) is proven to converge headless on Conduit with our
   `EncryptionSettings` — two devices end mutually verified
   (`test_two_devices_self_verify_via_sas`, green and fast after bounding the
-  sync long-poll) — plus `MatrixClient::is_device_verified()`. **D-3 remaining:**
-  the interactive SAS *UI* (a stateful bridge surface to show/confirm emoji)
-  that *clears* the warning, and the opt-in require-verified send policy (the
-  SDK can refuse to share keys with unverified devices; surface the error;
-  `Room::contains_only_verified_devices()` complements the existing count).
-- **E. Cold-start decryption UX** — *(detection landed in this change:
-  `MatrixClient::is_undecryptable_event` + the cold-start/sync loops now count
-  `m.room.encrypted` events and expose `ConnectedWorkspace::undecryptableCount()`,
-  so the gap is no longer silent at the data layer.)* Remaining: the UI warning
-  banner ("N items couldn't be decrypted — restore from backup / verify this
-  device") and the restore affordance.
+  sync long-poll) — plus `MatrixClient::is_device_verified()`. **D-3 landed
+  (verify screen + warning re-gating):** a new device now hits a standard
+  `VerifyDeviceScreen` (not a warning) offering SAS verify-with-another-device
+  **or** the master key, with **no bypass**; the bridge exposes
+  `DeviceVerification` (`advance`/`emoji`/`confirm`/`cancel`) driven sync-free by
+  the UI, plus `requestSelfVerification` (new device), `startVerificationListener`
+  / `pendingVerificationFlow` / `verificationForFlow` (existing device's incoming
+  prompt), and `pumpSync`. Per "warnings only for catastrophe,"
+  `count_unverified_devices` now counts only a **verified** identity's unverified
+  device (a possible injection); routine unverified peers and our own devices are
+  not flagged (`test_routine_unverified_collaborator_is_not_surfaced`).
+  **Remaining (D-4):** the opt-in require-verified send policy (the SDK can
+  refuse to share keys with unverified devices; surface the error;
+  `Room::contains_only_verified_devices()` complements the count). *Caveat: the
+  interactive two-sided SAS UI is verified by compile + the D-2 mechanism test +
+  mocked React tests, not end-to-end (no two-browser harness).*
+- **E. Cold-start decryption UX** — **landed.** Detection
+  (`MatrixClient::is_undecryptable_event` + cold-start/sync counting exposed via
+  `ConnectedWorkspace::undecryptableCount()`), the `EncryptionWarningBanner`, and
+  the restore affordance (the master-key path in `VerifyDeviceScreen`, plus
+  verifying a device, both unlock history). With the up-front verify gate, the
+  undecryptable banner only appears post-setup — i.e. for genuinely stuck items —
+  matching "warnings only for catastrophe."
 
 Phase A is independently shippable and de-risks the rest; B is the one that
 actually makes multi-device + history-recovery work and should be gated behind

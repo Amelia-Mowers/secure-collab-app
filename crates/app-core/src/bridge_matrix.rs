@@ -17,6 +17,7 @@ use wasm_bindgen_futures::spawn_local;
 
 use matrix_sdk::{
     config::SyncSettings,
+    encryption::verification::{SasVerification, Verification},
     room::MessagesOptions,
     ruma::{
         api::client::room::create_room::v3::Request as CreateRoomRequest,
@@ -26,6 +27,7 @@ use matrix_sdk::{
     Client, LoopCtrl, RoomMemberships,
 };
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Custom state event type string to tag rooms as workspaces.
 const WORKSPACE_STATE_TYPE: &str = "com.securecollab.workspace";
@@ -459,6 +461,266 @@ impl MatrixSession {
                 })
                 .await;
         });
+    }
+
+    // ── Device verification (ADR 0001 Phase D-3) ────────────────────────
+
+    /// Start verifying THIS device against another of the user's signed-in
+    /// devices (the new device's "verify with another device"). Sends an SAS
+    /// verification request to the user's other devices and returns a handle to
+    /// drive the emoji flow. Errors if the account has no cross-signing identity
+    /// yet (the user should use their master key instead).
+    #[wasm_bindgen(js_name = requestSelfVerification)]
+    pub async fn request_self_verification(&self) -> Result<DeviceVerification, JsValue> {
+        let user_id = self
+            .client
+            .user_id()
+            .ok_or_else(|| JsValue::from_str("Not logged in"))?
+            .to_owned();
+        let identity = self
+            .client
+            .encryption()
+            .get_user_identity(&user_id)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Identity lookup failed: {e}")))?
+            .ok_or_else(|| {
+                JsValue::from_str("No cross-signing identity yet — use your master key instead")
+            })?;
+        let request = identity
+            .request_verification()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Verification request failed: {e}")))?;
+        Ok(DeviceVerification {
+            client: self.client.clone(),
+            user_id,
+            flow_id: request.flow_id().to_owned(),
+            we_started: true,
+            sas: Rc::new(RefCell::new(None)),
+        })
+    }
+
+    /// Build a handle for an INCOMING verification request (receiver side),
+    /// identified by its flow id (surfaced by `startVerificationListener`).
+    /// Returns null if no such in-flight request exists.
+    #[wasm_bindgen(js_name = verificationForFlow)]
+    pub async fn verification_for_flow(&self, flow_id: String) -> Option<DeviceVerification> {
+        let user_id = self.client.user_id()?.to_owned();
+        self.client
+            .encryption()
+            .get_verification_request(&user_id, &flow_id)
+            .await?;
+        Some(DeviceVerification {
+            client: self.client.clone(),
+            user_id,
+            flow_id,
+            we_started: false,
+            sas: Rc::new(RefCell::new(None)),
+        })
+    }
+
+    /// Register a listener that records INCOMING self-verification requests
+    /// (e.g. a new device asking to verify) while a sync is running. The UI
+    /// polls `pendingVerificationFlow()` to pick them up. Call once per session.
+    #[wasm_bindgen(js_name = startVerificationListener)]
+    pub fn start_verification_listener(&self) {
+        use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
+        let handle =
+            self.client
+                .add_event_handler(|ev: ToDeviceKeyVerificationRequestEvent| async move {
+                    let flow_id = ev.content.transaction_id.to_string();
+                    PENDING_VERIFICATION.with(|p| *p.borrow_mut() = Some(flow_id));
+                });
+        // Listener lives for the session.
+        std::mem::forget(handle);
+    }
+
+    /// Take the flow id of a pending incoming verification request, if any
+    /// (clears it). The UI polls this to know when to show the verify prompt.
+    #[wasm_bindgen(js_name = pendingVerificationFlow)]
+    pub fn pending_verification_flow(&self) -> Option<String> {
+        PENDING_VERIFICATION.with(|p| p.borrow_mut().take())
+    }
+
+    /// A single short-timeout sync, for driving an interactive flow (e.g. the
+    /// verify screen) on a device that has no continuous sync running yet.
+    /// Bounded so it returns promptly instead of long-polling for ~30s.
+    #[wasm_bindgen(js_name = pumpSync)]
+    pub async fn pump_sync(&self) -> Result<(), JsValue> {
+        let settings = SyncSettings::default().timeout(Duration::from_millis(500));
+        self.client
+            .sync_once(settings)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Sync failed: {e}")))?;
+        Ok(())
+    }
+}
+
+thread_local! {
+    /// Flow id of the most recent incoming verification request, recorded by the
+    /// `startVerificationListener` handler and drained by the UI. wasm is
+    /// single-threaded, so a thread-local avoids threading state through every
+    /// `MatrixSession` constructor.
+    static PENDING_VERIFICATION: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+// ── Device verification handle ──────────────────────────────────────
+
+/// An in-progress SAS (emoji) device verification, exposed to JS.
+///
+/// Drive it with `run(onChange)`, which advances the protocol plumbing on each
+/// sync and reports the state (`"pending"` → `"started"` → `"emoji"` → `"done"`
+/// / `"cancelled"`). Once state is `"emoji"`, read `emoji()`, have the user
+/// confirm the two devices show the same symbols, then call `confirm()`.
+#[wasm_bindgen]
+pub struct DeviceVerification {
+    client: Client,
+    user_id: OwnedUserId,
+    flow_id: String,
+    /// Did we initiate (new device) vs. receive the request (existing device)?
+    we_started: bool,
+    sas: Rc<RefCell<Option<SasVerification>>>,
+}
+
+#[wasm_bindgen]
+impl DeviceVerification {
+    #[wasm_bindgen(js_name = flowId)]
+    pub fn flow_id(&self) -> String {
+        self.flow_id.clone()
+    }
+
+    /// Accept the incoming request (receiver side). No-op once SAS has started.
+    #[wasm_bindgen]
+    pub async fn accept(&self) -> Result<(), JsValue> {
+        if let Some(req) = self
+            .client
+            .encryption()
+            .get_verification_request(&self.user_id, &self.flow_id)
+            .await
+        {
+            req.accept()
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Accept failed: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// The seven SAS emoji once key exchange completes, as a JSON array of
+    /// `{symbol, description}`. Empty array until the `"emoji"` state.
+    #[wasm_bindgen]
+    pub fn emoji(&self) -> String {
+        let guard = self.sas.borrow();
+        let Some(sas) = guard.as_ref() else {
+            return "[]".to_string();
+        };
+        match sas.emoji() {
+            Some(emojis) => {
+                let arr: Vec<serde_json::Value> = emojis
+                    .iter()
+                    .map(
+                        |e| serde_json::json!({ "symbol": e.symbol, "description": e.description }),
+                    )
+                    .collect();
+                serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string())
+            }
+            None => "[]".to_string(),
+        }
+    }
+
+    /// Confirm the emoji match (both sides call this after the user compares).
+    #[wasm_bindgen]
+    pub async fn confirm(&self) -> Result<(), JsValue> {
+        let sas = self.sas.borrow().clone();
+        if let Some(sas) = sas {
+            sas.confirm()
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Confirm failed: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Cancel the verification (e.g., the emoji don't match).
+    #[wasm_bindgen]
+    pub async fn cancel(&self) -> Result<(), JsValue> {
+        let sas = self.sas.borrow().clone();
+        if let Some(sas) = sas {
+            let _ = sas.cancel().await;
+        } else if let Some(req) = self
+            .client
+            .encryption()
+            .get_verification_request(&self.user_id, &self.flow_id)
+            .await
+        {
+            let _ = req.cancel().await;
+        }
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = isDone)]
+    pub fn is_done(&self) -> bool {
+        self.sas
+            .borrow()
+            .as_ref()
+            .map(|s| s.is_done())
+            .unwrap_or(false)
+    }
+
+    /// Advance the flow by ONE protocol step (start/accept the SAS as the state
+    /// allows) and return the current state: `"pending"` → `"started"` →
+    /// `"emoji"` → `"done"` / `"cancelled"`. Does NOT sync — the caller is
+    /// responsible for syncing first (the new device pumps its own bounded sync;
+    /// an existing device relies on the sync already running in the app), which
+    /// keeps this off the single-sync-loop critical path.
+    #[wasm_bindgen]
+    pub async fn advance(&self) -> String {
+        let have_sas = self.sas.borrow().is_some();
+        if !have_sas {
+            if let Some(req) = self
+                .client
+                .encryption()
+                .get_verification_request(&self.user_id, &self.flow_id)
+                .await
+            {
+                if req.is_cancelled() {
+                    return "cancelled".to_string();
+                }
+                if self.we_started {
+                    if req.is_ready() {
+                        if let Ok(Some(s)) = req.start_sas().await {
+                            *self.sas.borrow_mut() = Some(s);
+                        }
+                    }
+                } else if let Some(Verification::SasV1(s)) = self
+                    .client
+                    .encryption()
+                    .get_verification(&self.user_id, &self.flow_id)
+                    .await
+                {
+                    let _ = s.accept().await;
+                    *self.sas.borrow_mut() = Some(s);
+                }
+            }
+        }
+        self.state_string()
+    }
+
+    /// Current state without advancing.
+    #[wasm_bindgen]
+    pub fn state(&self) -> String {
+        self.state_string()
+    }
+}
+
+impl DeviceVerification {
+    fn state_string(&self) -> String {
+        let guard = self.sas.borrow();
+        match guard.as_ref() {
+            Some(sas) if sas.is_done() => "done",
+            Some(sas) if sas.is_cancelled() => "cancelled",
+            Some(sas) if sas.emoji().is_some() => "emoji",
+            Some(_) => "started",
+            None => "pending",
+        }
+        .to_string()
     }
 }
 

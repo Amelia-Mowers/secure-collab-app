@@ -6,7 +6,7 @@ import { LoadingSpinner } from './components/LoadingSpinner'
 import { Sidebar } from './components/Sidebar'
 import { EncryptionWarningBanner } from './components/EncryptionWarningBanner'
 import { UnverifiedDevicesBanner } from './components/UnverifiedDevicesBanner'
-import { RecoveryGate } from './components/RecoveryGate'
+import { VerifyDeviceScreen } from './components/VerifyDeviceScreen'
 import { TableView } from './views/table/TableView'
 import { EntryView } from './views/entry/EntryView'
 import { CardView } from './views/card/CardView'
@@ -126,9 +126,10 @@ function WorkspaceHome({ syncing }: { syncing?: boolean }) {
 export default function App() {
   return (
     <>
-      {/* Global recovery gate: ensures a signed-in device can reach history
-          (bootstrap on first device, or restore on a returning one). */}
-      <RecoveryGate />
+      {/* Global device-security screen: gates a new device into verifying or
+          restoring before it can read history, and renders verification
+          prompts (emoji compare / incoming requests). */}
+      <VerifyDeviceScreen />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
         <Route
