@@ -413,7 +413,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (status === 'done') {
           stopped = true
-          verificationRef.current = null
           setRecoveryPrompt(null)
           // Pull the secrets/keys that verification just unlocked.
           try {
@@ -421,6 +420,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } catch {
             /* keys arrive on the next sync */
           }
+          // Show the "verified" confirmation briefly, then close the screen.
+          setTimeout(() => {
+            verificationRef.current = null
+            setVerification(null)
+          }, 1500)
           return
         }
         if (status === 'cancelled') {

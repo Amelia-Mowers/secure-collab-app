@@ -1,0 +1,6 @@
+# Shell-sensitive files must use LF, even on Windows checkouts. CRLF in
+# flake.nix breaks the Nix dev-shell hook (`fi\r` doesn't close `if`, and
+# get-env.sh then fails to produce an environment).
+*.nix    text eol=lf
+*.sh     text eol=lf
+Makefile text eol=lf

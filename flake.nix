@@ -64,6 +64,12 @@
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath buildInputs;
           RUST_BACKTRACE = "1";
 
+          # Playwright (browser E2E): use the Nix-provided browsers so they run
+          # in this shell without system libs. The npm `@playwright/test`
+          # version must match `playwright-driver` (pin both together).
+          PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";
+          PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
+
           shellHook = ''
             echo "🔐 Secure Collaborative Workspace Development Environment"
             echo ""
