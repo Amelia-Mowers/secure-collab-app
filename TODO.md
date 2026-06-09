@@ -47,7 +47,38 @@ Priority bands:
 - [~] **Add a true end-to-end sync test** — `[§4.5]` — _harness runnable via Nix/WSL (`scripts/run-integration-tests.sh`) and green: tables-over-matrix integration tests + app-core `workspace_matrix` 17/17._
   - [x] Drive a real send → server → sync → fetch-timeline → extract → materialize round-trip (`test_two_client_sync_via_real_timeline`): Bob converges on Alice's value from his OWN synced timeline, not a re-applied in-memory update.
   - [x] **Encrypted** round-trip (overlaps `[§4.2]`): `test_two_client_encrypted_round_trip` — Megolm send/decrypt across two clients via the `create_encrypted_room` harness helper.
-  - [ ] Add at least one UI test against compiled WASM (not just `MockWorkspace`).
+  - [x] Add at least one UI test against compiled WASM (not just `MockWorkspace`) — _done: the two-browser Playwright harness (`ui/e2e/`) drives the real compiled WASM against a live Conduit. See the **E2E** section below._
+
+---
+
+## E2E — End-to-end browser coverage
+
+The **two-browser Playwright harness** (`ui/e2e/`) is in place: a throwaway
+Conduit + two isolated browser contexts (two devices of one user) exercising the
+**real compiled WASM**. Covered so far — `smoke` (register + recovery bootstrap),
+`recovery` (a second device restores with the **master key**), and `verification`
+(**SAS emoji** between two devices). Run with
+`nix develop --command bash -c "cd ui && npm run e2e"`; also a CI `e2e` job.
+Expand to the rest of core product behaviour:
+
+- [ ] **Core behaviour** (single device) — create a workspace → create a table →
+  add and edit cells across the column types (text, number, select, multiselect,
+  reference, date, checkbox, …) → add a column → delete a row → switch views
+  (table / entry / card / kanban) → header sort & global filter. Assert state
+  **persists across reload** (cold-start materialization, `[§4.4]`).
+- [ ] **Collaboration** (two *different* users) — A invites B, B accepts; both
+  edit and assert real-time propagation **A→B and B→A**, the member list, and
+  that **concurrent edits to the same cell converge** (LWW, `[§4.1]`) with no
+  flash-then-revert.
+- [ ] **Workflows** — common multi-step journeys end to end: onboarding (sign up
+  → save master key → first workspace), invite/accept, kanban drag between
+  columns persisting, view creation/switching, and a **sign-out → sign-in**
+  round-trip that restores state from the session/account pool.
+- [ ] **Multi-tab editing** (same account, two tabs — shared crypto store) —
+  edits in tab 1 appear in tab 2 via sync; interleaved edits converge with no
+  loss (exercises the HLC `[§4.1]` + the per-tab active-account / shared-
+  workspace state in `useAuth`); one tab holding the sync stream must not stall
+  the other (the `initialSync` timeout race).
 
 ---
 
