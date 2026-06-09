@@ -19,11 +19,28 @@ export interface InvitedRoom {
 
 /** A prompt the sign-in flow raises so a device is never left signed-in but
  *  unable to read history (a useless state). `save` = first device just
- *  bootstrapped backup and must store the generated recovery key; `enter` =
- *  a returning device must supply its saved key to restore history. */
+ *  bootstrapped backup and must store the generated recovery key; `verify` =
+ *  a new device must establish trust before it can read history — by verifying
+ *  with another device (SAS) or entering its master key. There is deliberately
+ *  no bypass (ADR 0001 Phase D-3). */
 export type RecoveryPrompt =
   | { kind: 'save'; recoveryKey: string }
-  | { kind: 'enter' }
+  | { kind: 'verify' }
+
+/** One of the seven SAS comparison emoji. */
+export interface SasEmoji {
+  symbol: string
+  description: string
+}
+
+/** State of an in-progress device (SAS) verification.
+ *  `role` is `self` when we asked to verify this device against another, or
+ *  `incoming` when another device asked to verify with us. */
+export interface VerificationState {
+  role: 'self' | 'incoming'
+  status: 'pending' | 'started' | 'emoji' | 'done' | 'cancelled'
+  emoji: SasEmoji[]
+}
 
 /** Persisted per-account data (shared across tabs via localStorage). */
 export interface AccountSession {
@@ -84,13 +101,27 @@ interface AuthState {
    *  before they have access to encrypted workspace history. Null otherwise.
    *  See ADR 0001 Phase B / review §4.2. */
   recoveryPrompt: RecoveryPrompt | null
-  /** Restore history on a returning device using a saved recovery key.
+  /** Restore history on a new device using its saved master/recovery key.
    *  Resolves once secrets are imported; rejects (with a message) on a bad
    *  key so the gate can show an error. */
   submitRecoveryKey: (key: string) => Promise<void>
-  /** Dismiss the recovery prompt — after saving the key, or to deliberately
-   *  continue without history (the encryption banner then warns). */
+  /** Dismiss the prompt. Only meaningful for the `save` step (after the user
+   *  has stored their recovery key) — the `verify` step has no bypass. */
   dismissRecoveryPrompt: () => void
+
+  /** An in-progress device verification, or null. Drives the verify screen's
+   *  emoji-compare step and the incoming-request prompt. */
+  verification: VerificationState | null
+  /** New device: ask to verify this device against another signed-in one
+   *  (starts the SAS flow). */
+  startVerification: () => Promise<void>
+  /** Existing device: accept an incoming verification request and begin the
+   *  emoji comparison. */
+  acceptIncomingVerification: () => Promise<void>
+  /** Confirm the two devices show the same emoji (both sides call this). */
+  confirmVerification: () => Promise<void>
+  /** Abandon the current verification (e.g. the emoji don't match). */
+  cancelVerification: () => Promise<void>
 }
 
 // ── Local-storage keys ───────────────────────────────────────────────────────
@@ -227,6 +258,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [sessionSyncCount, setSessionSyncCount] = useState(0)
   const [recoveryPrompt, setRecoveryPrompt] = useState<RecoveryPrompt | null>(null)
+  const [verification, setVerification] = useState<VerificationState | null>(null)
+  // The active DeviceVerification handle (WASM) and a stopper for its loop.
+  const verificationRef = useRef<any>(null)
+  const verificationStopRef = useRef<(() => void) | null>(null)
 
   // Keep a ref so callbacks always see the latest matrixSession
   const matrixSessionRef = useRef<any>(null)
@@ -314,7 +349,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const recoveryKey: string = await ms.enableRecovery()
         setRecoveryPrompt({ kind: 'save', recoveryKey })
       } else if (status === 'needs_recovery') {
-        setRecoveryPrompt({ kind: 'enter' })
+        // New device: must verify (or use its master key) before it can read
+        // history. No bypass — only verifying or signing out moves forward.
+        setRecoveryPrompt({ kind: 'verify' })
       }
     } catch (err) {
       // Don't block sign-in if recovery setup transiently fails — the
@@ -339,6 +376,126 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const dismissRecoveryPrompt = useCallback(() => {
     setRecoveryPrompt(null)
   }, [])
+
+  // ── Device verification (SAS) driver ───────────────────────────────────────
+  //
+  // Drives a DeviceVerification handle to completion by repeatedly advancing it
+  // (one protocol step) and mirroring its state into React. A `self` flow (this
+  // new device asked to verify) pumps its own bounded sync, since no continuous
+  // sync runs on the gated verify screen; an `incoming` flow relies on the sync
+  // already running in the app. On `done`, the device is trusted and gets its
+  // keys, so we clear the gate and re-sync. (ADR 0001 Phase D-3.)
+  const runVerificationLoop = useCallback((handle: any, role: 'self' | 'incoming') => {
+    verificationStopRef.current?.()
+    let stopped = false
+    verificationStopRef.current = () => {
+      stopped = true
+    }
+
+    const tick = async () => {
+      if (stopped) return
+      try {
+        if (role === 'self') {
+          try {
+            await matrixSessionRef.current?.pumpSync()
+          } catch {
+            /* a missed sync just means another iteration */
+          }
+        }
+        const status: string = await handle.advance()
+        let emoji: SasEmoji[] = []
+        try {
+          emoji = JSON.parse(handle.emoji() || '[]')
+        } catch {
+          /* emoji not ready */
+        }
+        setVerification({ role, status: status as VerificationState['status'], emoji })
+
+        if (status === 'done') {
+          stopped = true
+          verificationRef.current = null
+          setRecoveryPrompt(null)
+          // Pull the secrets/keys that verification just unlocked.
+          try {
+            await matrixSessionRef.current?.initialSync()
+          } catch {
+            /* keys arrive on the next sync */
+          }
+          return
+        }
+        if (status === 'cancelled') {
+          stopped = true
+          verificationRef.current = null
+          setVerification(null)
+          return
+        }
+      } catch (err) {
+        console.warn('[verify] loop error:', err)
+      }
+      if (!stopped) setTimeout(tick, 800)
+    }
+
+    tick()
+  }, [])
+
+  const startVerification = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms || typeof ms.requestSelfVerification !== 'function') {
+      throw new Error('Verification is not available')
+    }
+    const handle = await ms.requestSelfVerification()
+    verificationRef.current = handle
+    setVerification({ role: 'self', status: 'pending', emoji: [] })
+    runVerificationLoop(handle, 'self')
+  }, [runVerificationLoop])
+
+  const acceptIncomingVerification = useCallback(async () => {
+    const handle = verificationRef.current
+    if (!handle) return
+    await handle.accept()
+    runVerificationLoop(handle, 'incoming')
+  }, [runVerificationLoop])
+
+  const confirmVerification = useCallback(async () => {
+    await verificationRef.current?.confirm()
+  }, [])
+
+  const cancelVerification = useCallback(async () => {
+    const handle = verificationRef.current
+    verificationStopRef.current?.()
+    verificationRef.current = null
+    setVerification(null)
+    try {
+      await handle?.cancel()
+    } catch {
+      /* best effort */
+    }
+  }, [])
+
+  // Detect INCOMING verification requests (e.g. another of our devices asking
+  // to verify). The listener records requests while a sync runs in the app; we
+  // poll the drained flow id and surface the accept prompt.
+  useEffect(() => {
+    const ms = matrixSession
+    if (!ms || typeof ms.startVerificationListener !== 'function') return
+    ms.startVerificationListener()
+    const id = setInterval(async () => {
+      if (verificationRef.current) return
+      try {
+        const flow: string | undefined = ms.pendingVerificationFlow?.()
+        if (flow) {
+          const handle = await ms.verificationForFlow(flow)
+          if (handle) {
+            verificationRef.current = handle
+            setVerification({ role: 'incoming', status: 'pending', emoji: [] })
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 2500)
+    return () => clearInterval(id)
+  }, [matrixSession])
 
   // ── Auto-restore session on mount ──────────────────────────────────────────
   //
@@ -845,6 +1002,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     recoveryPrompt,
     submitRecoveryKey,
     dismissRecoveryPrompt,
+    verification,
+    startVerification,
+    acceptIncomingVerification,
+    confirmVerification,
+    cancelVerification,
   }
 
   return createElement(AuthContext.Provider, { value }, children)

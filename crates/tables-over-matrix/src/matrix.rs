@@ -429,12 +429,21 @@ mod matrix_impl {
         }
     }
 
-    /// Shared implementation of "how many devices among this room's members are
-    /// unverified", excluding our own current device. Used by both
-    /// `MatrixClient` (native) and the WASM bridge so the warn-on-unverified
-    /// logic lives in one place (ADR 0001 Phase D).
+    /// Count the **anomalous** unverified devices among this room's members:
+    /// devices that are *not* verified but belong to **another user whose
+    /// identity we have verified**. That combination is the catastrophic case —
+    /// a collaborator we've attested suddenly has a device we haven't, which
+    /// looks like a device injection. Two kinds of device are deliberately *not*
+    /// counted so the warning only fires when something is genuinely wrong
+    /// (ADR 0001 Phase D):
+    ///
+    /// - devices of users we've never verified (a routine unverified peer is
+    ///   normal, not catastrophic), and
+    /// - our own devices — a fresh/unverified device of ours is handled up front
+    ///   by the sign-in verify gate and the incoming-verification prompt, not by
+    ///   a passive workspace banner.
     pub async fn count_unverified_devices(client: &Client, room: &Room) -> Result<usize> {
-        let own_device_id = client.device_id();
+        let own_user_id = client.user_id();
         let mut count = 0usize;
 
         let members = room
@@ -443,16 +452,31 @@ mod matrix_impl {
             .map_err(|e| anyhow::anyhow!("Failed to list room members: {e}"))?;
 
         for member in members {
+            let user_id = member.user_id();
+
+            // Own devices are the verify gate's job, not this banner's.
+            if Some(user_id) == own_user_id {
+                continue;
+            }
+
+            // Only a *verified* collaborator's unverified device is an anomaly.
+            let identity_verified = client
+                .encryption()
+                .get_user_identity(user_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to fetch user identity: {e}"))?
+                .map(|identity| identity.is_verified())
+                .unwrap_or(false);
+            if !identity_verified {
+                continue;
+            }
+
             let devices = client
                 .encryption()
-                .get_user_devices(member.user_id())
+                .get_user_devices(user_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to fetch user devices: {e}"))?;
             for device in devices.devices() {
-                // Our own current device is implicitly trusted; skip it.
-                if Some(device.device_id()) == own_device_id {
-                    continue;
-                }
                 if !device.is_verified() {
                     count += 1;
                 }

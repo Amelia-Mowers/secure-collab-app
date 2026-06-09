@@ -22,15 +22,17 @@ use serde_json::json;
 use std::time::Duration;
 use tables_over_matrix::{CellUpdate, MatrixClient};
 
-/// With a collaborator (a second user) in the encrypted room, that user's
-/// device is unverified from our perspective and must be counted, so the UI can
-/// warn that data is being shared with an unattested device (review §4.2).
+/// A routine unverified collaborator must NOT be surfaced — that's a normal
+/// state, not a catastrophe. The banner only fires for a *verified* identity's
+/// unverified device (a possible injection). Here Alice has never verified Bob,
+/// so even though she has downloaded his (unverified) device, the count is 0
+/// (ADR 0001 Phase D — warnings only for genuine problems).
 #[tokio::test]
 #[ignore]
-async fn test_unverified_member_device_is_surfaced() {
+async fn test_routine_unverified_collaborator_is_not_surfaced() {
     let harness = TestHarness::new().await.unwrap();
 
-    // Alice creates an encrypted room; Bob (a second user) joins it.
+    // Alice creates an encrypted room; Bob (never verified) joins.
     let mut alice = harness.register_user("alice").await.unwrap();
     let bob = harness.register_user("bob").await.unwrap();
     let room_id = harness
@@ -44,21 +46,19 @@ async fn test_unverified_member_device_is_surfaced() {
         .invite_and_join(&alice, &bob, &room_id)
         .await
         .unwrap();
-    // Alice syncs so she sees Bob's membership before sending.
     alice.sync_once().await.unwrap();
 
-    // Sending an encrypted update forces Alice to download Bob's device keys
-    // (she must encrypt the Megolm session for each of Bob's devices).
+    // Sending an encrypted update forces Alice to download Bob's device keys —
+    // so the device IS known, it's just (correctly) not flagged.
     let update = CellUpdate::new("tasks", "t1", "title", json!("hello"), 1);
     alice.send_cell_update(&update).await.unwrap();
     alice.sync_once().await.unwrap();
     harness.wait_for_sync().await;
 
-    // Bob's device is unverified from Alice's perspective → surfaced.
     let count = alice.unverified_device_count().await.unwrap();
-    assert!(
-        count >= 1,
-        "alice should see at least bob's unverified device, got {count}"
+    assert_eq!(
+        count, 0,
+        "a never-verified collaborator's device must not be surfaced, got {count}"
     );
 }
 
