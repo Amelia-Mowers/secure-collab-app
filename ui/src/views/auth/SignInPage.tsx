@@ -1,7 +1,8 @@
-import { useState, FormEvent } from 'react'
+import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import type { AccountSession } from '@/hooks/useAuth'
+import { openOauthPopup } from '@/auth/oauthPopup'
 import './SignInPage.css'
 
 // ── Suggested homeservers ────────────────────────────────────────────────────
@@ -33,7 +34,8 @@ const SUGGESTED_SERVERS: HomeserverOption[] = [
 type AuthMode = 'signin' | 'signup'
 
 export function SignInPage() {
-  const { signIn, signUp, switchAccount, loading, error, accounts } = useAuth()
+  const { signIn, signUp, signInWithOauth, checkOauthSupport, switchAccount, loading, error, accounts } =
+    useAuth()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isAddAccount = searchParams.get('addAccount') === '1'
@@ -47,6 +49,46 @@ export function SignInPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(isAddAccount || accounts.length === 0)
+  /** True when the selected homeserver delegates auth to OAuth/MAS (MSC3861):
+   *  password login doesn't exist there, so the credentials form is replaced
+   *  by the secure sign-in (popup) flow. */
+  const [oauthServer, setOauthServer] = useState(false)
+
+  // Probe the selected homeserver for next-gen auth, debounced so typing a
+  // custom URL doesn't spam requests. Unknown/unreachable ⇒ password form.
+  useEffect(() => {
+    const hs = homeserver.trim()
+    setOauthServer(false)
+    if (!hs || !/^https?:\/\//.test(hs)) return
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      const supported = await checkOauthSupport(hs)
+      if (!cancelled) setOauthServer(supported)
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [homeserver, checkOauthSupport])
+
+  const handleOauthSignIn = async () => {
+    setLocalError(null)
+    // Must open synchronously inside the click handler — popup blockers only
+    // allow window.open during user activation.
+    const popup = openOauthPopup()
+    if (!popup) {
+      setLocalError(
+        'Your browser blocked the sign-in window — allow popups for this site and try again.',
+      )
+      return
+    }
+    try {
+      await signInWithOauth(homeserver.trim(), popup)
+      navigate('/workspaces')
+    } catch (err: any) {
+      setLocalError(err?.message ?? 'Sign-in failed')
+    }
+  }
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -247,6 +289,28 @@ export function SignInPage() {
           )}
         </fieldset>
 
+        {oauthServer ? (
+          /* ── Next-gen auth: the server owns sign-in/registration ────── */
+          <div className="signin__form" data-testid="oauth-signin">
+            <p className="signin__hint">
+              This server uses secure single sign-on. You&apos;ll sign in — or create
+              your account — in a popup on your server&apos;s own page.
+            </p>
+            {displayError && (
+              <div className="signin__error" role="alert">
+                {displayError}
+              </div>
+            )}
+            <button
+              className="primary signin__btn"
+              type="button"
+              onClick={handleOauthSignIn}
+              disabled={loading || !homeserver.trim()}
+            >
+              {loading ? 'Waiting for sign-in…' : 'Continue with secure sign-in'}
+            </button>
+          </div>
+        ) : (
         <form className="signin__form" onSubmit={handleSubmit}>
           <div>
             <label className="signin__label" htmlFor="username">Username</label>
@@ -306,6 +370,7 @@ export function SignInPage() {
             }
           </button>
         </form>
+        )}
 
         <p className="signin__hint">
           {mode === 'signup'

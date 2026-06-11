@@ -519,6 +519,20 @@ impl MatrixSession {
 
     // ── OAuth 2.0 / next-gen auth login (ADR 0002 phase A) ───────────────
 
+    /// Whether `homeserver_url` delegates auth to an OAuth 2.0 authorization
+    /// server (MSC3861 / next-gen auth, e.g. Synapse+MAS). Drives the sign-in
+    /// page's branching: SSO flow when true, classic password form otherwise.
+    /// Uses a throwaway in-memory client — this is only a metadata probe.
+    #[wasm_bindgen(js_name = homeserverSupportsOauth)]
+    pub async fn homeserver_supports_oauth(homeserver_url: String) -> Result<bool, JsValue> {
+        let client = Client::builder()
+            .homeserver_url(&homeserver_url)
+            .build()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
+        Ok(client.oauth().server_metadata().await.is_ok())
+    }
+
     /// Begin an OAuth 2.0 login against a homeserver that delegates auth to
     /// MAS (MSC3861): builds a client bound to a fresh per-device store,
     /// dynamically registers this app with the authorization server, and

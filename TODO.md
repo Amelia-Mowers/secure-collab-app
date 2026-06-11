@@ -162,9 +162,20 @@ Ordered phases; **A gates everything**:
   with `.well-known` auth-metadata detection + the popup/callback page.
 - [ ] **B. Hosted stack** — Synapse + Postgres + MAS (ansible playbook), closed
   registration, `.well-known` discovery on the brand domain, backups/monitoring.
-- [ ] **C. Client: default homeserver + auth branching** — default to our
-  server (keep the "Custom server" override); detect next-gen auth via
-  `.well-known`/auth metadata → OAuth, else the existing password path.
+- [~] **C. Client: default homeserver + auth branching** — _auth branching
+  done 2026-06-11:_ the sign-in page probes the selected homeserver
+  (`checkOauthSupport` → bridge `homeserverSupportsOauth`) and swaps the
+  password form for the secure-sign-in popup flow when it delegates auth
+  (`signInWithOauth` → shared `completeSignIn`, so OAuth gets multi-account,
+  the verify gate, and recovery bootstrap for free; `/oauth/callback` posts
+  the redirect back to the opener). Validated end-to-end through the real UI
+  (`ui/e2e/oauth.spec.ts`: detect → popup → MAS → recovery key → workspaces →
+  reload-restore). _Remaining:_ default the homeserver picker to our hosted
+  server once **B** exists (+ `.well-known` on the brand domain).
+  _Fixed along the way:_ `ensureHistoryAccess` treated the SDK's "unknown"
+  recovery state as "nothing to do" — a fresh device could silently skip the
+  recovery prompt when the state settled slowly (observed on the OAuth path);
+  it now polls until the state settles.
 - [ ] **D. Billing service + enforcement** — Stripe Checkout + webhooks →
   provision/gate registration on checkout; **lock on lapse, unlock on renewal,
   never deactivate**; grace period + lapsed-export policy as config.
