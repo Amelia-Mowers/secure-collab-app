@@ -113,6 +113,18 @@ Concretely:
   gates registration on a checkout-issued credential) → user lands in the
   normal first-device crypto onboarding (recovery key bootstrap), which is
   unchanged.
+- **Demo mode feeds the funnel, fully client-side.** The codebase already
+  ships a local-only WASM bridge (`WasmWorkspace` in `bridge.rs`) alongside
+  the Matrix-backed one, and the UI views tolerate non-Matrix workspaces. A
+  `/demo` route instantiates it with seeded example data — no registration,
+  no crypto onboarding, no homeserver round-trips — so the try-before-you-buy
+  surface is static CDN assets that survive any traffic spike; the homeserver
+  only ever sees paying converts, with checkout as the inherent rate limiter.
+  **Conversion falls out of "everything is tables":** workspace state is just
+  a stream of `CellUpdate`s, so "keep this workspace" on subscribe = create
+  the real encrypted room and replay the demo workspace's updates through
+  `ConnectedWorkspace`. Users keep what they just built — the strongest
+  moment in the funnel.
 - **Entitlement enforcement:** billing service consumes Stripe webhooks and
   drives MAS/Synapse admin APIs — **lock on lapse, unlock on renewal, never
   deactivate**. Grace period and an export affordance for lapsed accounts are
@@ -157,6 +169,16 @@ Concretely:
   need a concrete design pass — policy engine vs. provisioning via admin API.
 - Policy knobs to decide before launch: trial/free tier, grace-period length,
   lapsed-account export window, hosting jurisdiction/provider.
+- **Demo-mode scope:** a local-only demo shows the product surface (tables,
+  views, kanban) but not the differentiators (real-time collaboration,
+  multi-device sync, real E2EE). Decide whether that's acceptable or whether
+  a client-side *simulated* collaborator making edits is worth the flavor.
+- **Scale-out is workers, not federation.** If onboarding spikes ever strain
+  the homeserver, the answer is Synapse **workers** (sync workers, event
+  persisters, federation senders over a tuned Postgres) scaling one logical
+  homeserver — *not* sharding users across homeserver names. Server names are
+  baked into MXIDs forever, so shard assignment would become irreversible
+  identity. Federation is for cross-server collaboration, not load balancing.
 - matrix-sdk OAuth API stability across SDK upgrades (next-gen auth is still
   stabilizing ecosystem-wide).
 

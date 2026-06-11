@@ -169,6 +169,23 @@ Ordered phases; **A gates everything**:
 - [ ] **F. By config later** — consumer social login (Google/Apple upstream of
   MAS); enterprise corporate IdPs (the SSO story from `architecture.md`).
 
+Independent of A–F (client-only — can ship before any infra exists):
+
+- [ ] **Demo mode** — a `/demo` route that instantiates the existing
+  **local-only bridge** (`WasmWorkspace`, `bridge.rs`) with seeded example
+  data: no auth, no crypto onboarding, no homeserver — pure static-CDN assets,
+  so a launch-day spike never touches infrastructure. Sub-decisions:
+  - [ ] Seed dataset + which views to showcase (table / kanban / entry / card).
+  - [ ] **Demo→paid conversion**: on subscribe, create the real encrypted room
+    and **replay the demo workspace's `CellUpdate` stream** through
+    `ConnectedWorkspace` so users keep what they built ("everything is
+    tables" makes this nearly free — see ADR 0002).
+  - [ ] Decide: product-surface-only demo, or add a client-side *simulated*
+    collaborator for real-time flavor (the differentiators — collab, sync,
+    E2EE — can't be shown locally).
+  - [ ] Make sure demo state is visibly ephemeral (banner + "subscribe to
+    keep this") so nobody mistakes it for a real encrypted workspace.
+
 ---
 
 ## FE — Frontend / Table UX
@@ -195,9 +212,19 @@ Ordered phases; **A gates everything**:
 
 ## P2 — Housekeeping
 
-- [ ] **Separate generated WASM output from hand-written code** — `[§5]`
-  `wasm-pack` clobbers `ui/src/wasm/`, forcing CI to `git checkout -- ui/src/wasm/loader.ts` (`ci.yml:133`). Output to `ui/src/wasm/generated/`.
-- [ ] **Remove dead/duplicated logic** — `[§5]` `CompactionManager::last_bump`; `calculate_lookback_window` vs `estimate_lookback_window`; `next_timestamp_pub` leak (should disappear with the §4.1 clock fix).
+- [x] **Separate generated WASM output from hand-written code** — `[§5]` —
+  _done 2026-06-11._ `wasm-pack` now outputs to `ui/src/wasm/generated/`
+  (gitignored); `loader.ts` lives outside the blast radius, and the
+  `git checkout -- loader.ts` hacks are gone from CI, the Makefile, and the
+  docs (`make clean` also no longer deletes the loader).
+- [x] **Remove dead/duplicated logic** — `[§5]` — _done 2026-06-11._
+  `CompactionManager::last_bump` was already removed with §4.3;
+  `estimate_lookback_window` (zero callers) deleted in favour of the tested
+  `CompactionManager::calculate_lookback_window`. `next_timestamp_pub` did
+  **not** disappear with the §4.1 fix as predicted — the integration tests
+  legitimately need workspace-consistent timestamps to hand-construct
+  `CellUpdate`s — so it is now `#[doc(hidden)]` and documented as test
+  support (the bridges don't use it).
 - [ ] **Delete the per-device IndexedDB store on sign-out** — login/register now
   create one store per device identity (`sc-{user}-{ts}`); signing out leaves it
   orphaned. Expose the name (it's in the session blob) and
