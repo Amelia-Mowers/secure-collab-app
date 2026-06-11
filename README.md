@@ -131,14 +131,12 @@ cargo test --release
 ### 3. Build WASM Modules
 
 ```bash
-# Build the app-core crate for WebAssembly (and restore the hand-written
-# loader.ts that wasm-pack clobbers):
+# Build the app-core crate for WebAssembly:
 make wasm
 
 # Equivalent manual command:
-cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm \
+cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm/generated \
   --no-default-features --features wasm,matrix-wasm
-git checkout -- ui/src/wasm/loader.ts
 ```
 
 ### 4. Run the UI

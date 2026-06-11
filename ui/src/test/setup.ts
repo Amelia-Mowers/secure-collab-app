@@ -28,4 +28,4 @@ Object.defineProperty(window, 'matchMedia', {
 // NOTE: We do NOT globally mock the WASM module here so that
 // workspace.integration.test.ts can import and use the real WasmWorkspace.
 // Files that render the full <App> (e.g. App.test.tsx) should mock
-// @/wasm/app_core.js locally using vi.mock() at the file level.
+// @/wasm/generated/app_core.js locally using vi.mock() at the file level.

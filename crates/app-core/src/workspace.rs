@@ -99,7 +99,13 @@ impl Workspace {
         self.timestamp_counter = self.timestamp_counter.max(ts);
     }
 
-    /// Public version of next_timestamp for the connected bridge.
+    /// Test support: draw a workspace-consistent HLC timestamp.
+    ///
+    /// Not used by the bridges (they go through `update_cell_with_bump` /
+    /// `apply_update`, which manage the clock internally) — the integration
+    /// tests use this to hand-construct `CellUpdate`s whose timestamps
+    /// participate in the same clock as the workspace's own writes.
+    #[doc(hidden)]
     pub fn next_timestamp_pub(&mut self) -> u64 {
         self.next_timestamp()
     }

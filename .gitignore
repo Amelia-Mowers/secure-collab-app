@@ -3,10 +3,11 @@
 **/*.rs.bk
 *.pdb
 
-# WASM (wasm-pack output — loader.ts is hand-written and force-tracked)
+# WASM (wasm-pack output — the hand-written loader.ts lives one level up,
+# outside the generated dir, so nothing clobbers or ignores it)
 /pkg
 /wasm-pack.log
-ui/src/wasm/
+ui/src/wasm/generated/
 
 # Node
 node_modules/

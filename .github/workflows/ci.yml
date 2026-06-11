@@ -128,10 +128,7 @@ jobs:
 
       - name: Build WASM
         working-directory: crates/app-core
-        run: wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm
-
-      - name: Restore hand-written loader
-        run: git checkout -- ui/src/wasm/loader.ts
+        run: wasm-pack build --target web --out-dir ../../ui/src/wasm/generated --no-default-features --features wasm,matrix-wasm
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -202,11 +199,10 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@main
 
       # Build the WASM bindings the dev server serves (the same artifacts the
-      # `ui` job builds), then restore the hand-written loader wasm-pack clobbers.
+      # `ui` job builds).
       - name: Build WASM bindings
         run: |
-          nix develop --command bash -c "cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm"
-          git checkout -- ui/src/wasm/loader.ts
+          nix develop --command bash -c "cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm/generated --no-default-features --features wasm,matrix-wasm"
 
       # Nix provides the Playwright browsers (PLAYWRIGHT_BROWSERS_PATH), so skip
       # the npm postinstall download.
@@ -260,10 +256,7 @@ jobs:
 
       - name: Build WASM
         working-directory: crates/app-core
-        run: wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm
-
-      - name: Restore hand-written loader
-        run: git checkout -- ui/src/wasm/loader.ts
+        run: wasm-pack build --target web --out-dir ../../ui/src/wasm/generated --no-default-features --features wasm,matrix-wasm
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

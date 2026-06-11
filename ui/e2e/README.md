@@ -22,12 +22,12 @@ UI — that the unit/integration tests can't cover end to end.
 
 Run inside the Nix dev shell so `conduit` is on `PATH` and Playwright uses the
 Nix-provided browsers (`PLAYWRIGHT_BROWSERS_PATH`, set by `flake.nix`). Build the
-WASM bindings first (the dev server serves them from `src/wasm/`):
+WASM bindings first (the dev server serves them from `src/wasm/generated/`):
 
 ```sh
 nix develop --command bash -c '
-  (cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm \
-     --no-default-features --features wasm,matrix-wasm) && git checkout -- ui/src/wasm/loader.ts
+  (cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm/generated \
+     --no-default-features --features wasm,matrix-wasm)
   cd ui && npm install && npm run e2e
 '
 ```

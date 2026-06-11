@@ -12,7 +12,7 @@ let wasmModulePromise: Promise<any> | null = null
 export async function getWasmModule() {
   if (!wasmModulePromise) {
     wasmModulePromise = (async () => {
-      const mod = await import('./app_core.js')
+      const mod = await import('./generated/app_core.js')
       await mod.default()
       mod.init_panic_hook()
       return mod

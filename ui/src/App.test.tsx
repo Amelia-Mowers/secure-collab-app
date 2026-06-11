@@ -14,7 +14,7 @@ function makeMockMatrixSession() {
 }
 
 // Mock the WASM module so tests don't need the binary
-vi.mock('@/wasm/app_core.js', () => ({
+vi.mock('@/wasm/generated/app_core.js', () => ({
   default: vi.fn().mockResolvedValue(undefined),
   init_panic_hook: vi.fn(),
   WasmWorkspace: vi.fn().mockImplementation(() => ({
