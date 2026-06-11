@@ -21,6 +21,8 @@ export function VerifyDeviceScreen() {
     recoveryPrompt,
     submitRecoveryKey,
     dismissRecoveryPrompt,
+    retryRecoverySetup,
+    signOut,
     verification,
     startVerification,
     acceptIncomingVerification,
@@ -48,7 +50,64 @@ export function VerifyDeviceScreen() {
     return <VerifyThisDevice onVerify={startVerification} onMasterKey={submitRecoveryKey} />
   }
 
+  if (recoveryPrompt?.kind === 'error') {
+    return (
+      <RecoverySetupFailed
+        message={recoveryPrompt.message}
+        onRetry={retryRecoverySetup}
+        onSignOut={signOut}
+      />
+    )
+  }
+
   return null
+}
+
+// ── First device: recovery bootstrap failed — blocking, never silent ────────
+
+function RecoverySetupFailed({
+  message,
+  onRetry,
+  onSignOut,
+}: {
+  message: string
+  onRetry: () => Promise<void>
+  onSignOut: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+
+  const handleRetry = async () => {
+    setBusy(true)
+    try {
+      await onRetry()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Overlay labelledBy="verify-title">
+      <h2 id="verify-title" className="verify__title">
+        Couldn&apos;t set up recovery
+      </h2>
+      <p className="verify__body">
+        You&apos;re signed in, but your <strong>recovery key could not be created</strong>. Without
+        it, your encrypted history cannot be restored on a new device — if you lose this one, that
+        data is gone. Please retry; if it keeps failing, sign out and try again later.
+      </p>
+      <p className="verify__error" role="alert">
+        {message}
+      </p>
+      <div className="verify__actions">
+        <button type="button" className="verify__primary" onClick={handleRetry} disabled={busy}>
+          {busy ? 'Retrying…' : 'Retry'}
+        </button>
+        <button type="button" className="verify__link" onClick={onSignOut} disabled={busy}>
+          Sign out
+        </button>
+      </div>
+    </Overlay>
+  )
 }
 
 // ── First device: save the generated recovery (master) key ──────────────────

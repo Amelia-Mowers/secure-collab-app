@@ -6,6 +6,8 @@ const h = vi.hoisted(() => ({
   verification: null as any,
   submitRecoveryKey: vi.fn(),
   dismissRecoveryPrompt: vi.fn(),
+  retryRecoverySetup: vi.fn(async () => undefined),
+  signOut: vi.fn(),
   startVerification: vi.fn(),
   acceptIncomingVerification: vi.fn(),
   confirmVerification: vi.fn(),
@@ -18,6 +20,8 @@ vi.mock('../hooks/useAuth', () => ({
     verification: h.verification,
     submitRecoveryKey: h.submitRecoveryKey,
     dismissRecoveryPrompt: h.dismissRecoveryPrompt,
+    retryRecoverySetup: h.retryRecoverySetup,
+    signOut: h.signOut,
     startVerification: h.startVerification,
     acceptIncomingVerification: h.acceptIncomingVerification,
     confirmVerification: h.confirmVerification,
@@ -45,6 +49,32 @@ describe('VerifyDeviceScreen', () => {
     expect(screen.getByText('ABCD-EFGH-IJKL')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /saved it/i }))
     expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  describe('recovery setup failed (blocking, never silent)', () => {
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'error', message: 'Backup upload failed' }
+    })
+
+    it('blocks with the failure and its consequence spelled out', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByRole('heading', { name: /couldn.t set up recovery/i })).toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('Backup upload failed')
+      // No dismiss affordance — only retry or sign out.
+      expect(screen.queryByRole('button', { name: /saved it|dismiss|close/i })).toBeNull()
+    })
+
+    it('retries the bootstrap', async () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /^retry$/i }))
+      await waitFor(() => expect(h.retryRecoverySetup).toHaveBeenCalledTimes(1))
+    })
+
+    it('offers sign-out as the way out', () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
+      expect(h.signOut).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('verify gate (new device)', () => {

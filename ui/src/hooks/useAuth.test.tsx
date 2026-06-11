@@ -428,3 +428,117 @@ describe('AuthProvider', () => {
     })
   })
 })
+
+// ── Recovery bootstrap: blocking on failure, never silent ────────────────────
+
+describe('recovery bootstrap (first device)', () => {
+  // This describe lives outside the AuthProvider block, so it needs its own
+  // cleanup — otherwise accounts persisted by earlier tests make the provider
+  // auto-restore a stale session concurrently with these flows.
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    mockLogin.mockClear()
+    mockRestore.mockClear()
+  })
+
+  function makeRecoverySession(enableRecovery: () => Promise<string>) {
+    return {
+      ...makeMockSession('@carol:localhost'),
+      recoveryStatus: vi.fn().mockResolvedValue('needs_bootstrap'),
+      enableRecovery: vi.fn().mockImplementation(enableRecovery),
+    }
+  }
+
+  it('shows the save prompt when bootstrap succeeds', async () => {
+    const session = makeRecoverySession(async () => 'KEY-ABCD')
+    mockLogin.mockResolvedValueOnce(session)
+
+    const { getState } = renderAuth()
+    await act(async () => {
+      await getState().signIn('http://hs', 'carol', 'pw')
+    })
+
+    expect(getState().recoveryPrompt).toEqual({ kind: 'save', recoveryKey: 'KEY-ABCD' })
+  })
+
+  it('retries transient failures, then succeeds', async () => {
+    vi.useFakeTimers()
+    try {
+      let calls = 0
+      const session = makeRecoverySession(async () => {
+        calls += 1
+        if (calls < 2) throw new Error('transient network blip')
+        return 'KEY-EFGH'
+      })
+      mockLogin.mockResolvedValueOnce(session)
+
+      const { getState } = renderAuth()
+      await act(async () => {
+        const p = getState().signIn('http://hs', 'carol', 'pw')
+        await vi.advanceTimersByTimeAsync(8000)
+        await p
+      })
+
+      expect(session.enableRecovery).toHaveBeenCalledTimes(2)
+      expect(getState().recoveryPrompt).toEqual({ kind: 'save', recoveryKey: 'KEY-EFGH' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('raises a BLOCKING error prompt when every attempt fails (no silent fail-open)', async () => {
+    vi.useFakeTimers()
+    try {
+      const session = makeRecoverySession(async () => {
+        throw new Error('Backup upload failed')
+      })
+      mockLogin.mockResolvedValueOnce(session)
+
+      const { getState } = renderAuth()
+      await act(async () => {
+        const p = getState().signIn('http://hs', 'carol', 'pw')
+        await vi.advanceTimersByTimeAsync(10_000)
+        await p
+      })
+
+      expect(session.enableRecovery).toHaveBeenCalledTimes(3)
+      expect(getState().recoveryPrompt).toEqual({
+        kind: 'error',
+        message: 'Backup upload failed',
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retryRecoverySetup re-runs the bootstrap from the error state', async () => {
+    let fail = true
+    const session = makeRecoverySession(async () => {
+      if (fail) throw new Error('still down')
+      return 'KEY-IJKL'
+    })
+    mockLogin.mockResolvedValueOnce(session)
+
+    // Phase 1 (all attempts fail) needs fake timers to skip the backoff...
+    vi.useFakeTimers()
+    const { getState } = renderAuth()
+    try {
+      await act(async () => {
+        const p = getState().signIn('http://hs', 'carol', 'pw')
+        await vi.advanceTimersByTimeAsync(10_000)
+        await p
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(getState().recoveryPrompt?.kind).toBe('error')
+
+    // ...phase 2 (retry succeeds on the first, zero-delay attempt) doesn't.
+    fail = false
+    await act(async () => {
+      await getState().retryRecoverySetup()
+    })
+    expect(getState().recoveryPrompt).toEqual({ kind: 'save', recoveryKey: 'KEY-IJKL' })
+  })
+})
