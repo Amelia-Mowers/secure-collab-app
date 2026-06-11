@@ -11,6 +11,7 @@ import { EntryView } from './views/entry/EntryView'
 import { CardView } from './views/card/CardView'
 import { ViewRouter } from './views/ViewRouter'
 import { SignInPage } from './views/auth/SignInPage'
+import { OauthCallbackPage } from './views/auth/OauthCallbackPage'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
 import './App.css'
 
@@ -130,6 +131,10 @@ export default function App() {
       <VerifyDeviceScreen />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
+        {/* OAuth popup redirect target — posts the callback URL to the opener
+            (which holds the WASM client mid-flow) and closes. No auth guard:
+            it runs while the user is still signing in. */}
+        <Route path="/oauth/callback" element={<OauthCallbackPage />} />
         <Route
           path="/workspaces"
           element={

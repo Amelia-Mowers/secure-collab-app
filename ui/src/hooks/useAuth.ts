@@ -2,6 +2,7 @@ import { useState, useCallback, useContext, createContext, useRef, useEffect } f
 import type { ReactNode } from 'react'
 import { createElement } from 'react'
 import { getWasmModule } from '../wasm/loader'
+import type { OauthPopup } from '../auth/oauthPopup'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,13 @@ interface AuthState {
   // Actions
   signIn: (homeserver: string, user: string, password: string) => Promise<void>
   signUp: (homeserver: string, user: string, password: string) => Promise<void>
+  /** Next-gen auth (MAS) sign-in via the popup flow (ADR 0002). The popup is
+   *  injected: the caller must open it synchronously in its click handler —
+   *  popup blockers only allow window.open during user activation. */
+  signInWithOauth: (homeserver: string, popup: OauthPopup) => Promise<void>
+  /** Whether the homeserver delegates auth to an OAuth authorization server
+   *  (MSC3861/MAS) — drives the sign-in page's SSO-vs-password branching. */
+  checkOauthSupport: (homeserver: string) => Promise<boolean>
   signOut: () => void
   createWorkspace: (name: string) => Promise<WorkspaceEntry>
   joinWorkspace: (roomId: string) => Promise<WorkspaceEntry>
@@ -344,7 +352,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       // Guard for mocks / older WASM bindings without the recovery surface.
       if (typeof ms.recoveryStatus !== 'function') return
-      const status: string = await ms.recoveryStatus()
+      // The SDK reports "unknown" until its backup/recovery subsystem settles
+      // after sync — treat that as "not yet", not "nothing to do". Without
+      // this, a slow-settling flow (observed with OAuth's extra round-trips)
+      // silently skips the recovery bootstrap on a first device.
+      let status = 'unknown'
+      for (let attempt = 0; attempt < 30 && status === 'unknown'; attempt++) {
+        status = await ms.recoveryStatus()
+        if (status === 'unknown') await new Promise(r => setTimeout(r, 500))
+      }
+      if (status === 'unknown') {
+        console.warn('[auth] Recovery state never settled — no recovery prompt shown')
+      }
       if (status === 'needs_bootstrap') {
         const recoveryKey: string = await ms.enableRecovery()
         setRecoveryPrompt({ kind: 'save', recoveryKey })
@@ -580,6 +599,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // ── Shared sign-in completion ──────────────────────────────────────────────
+  // Everything after "we have a logged-in MatrixSession", identical across
+  // password sign-in, registration, and OAuth: persist the account (the
+  // session blob is opaque — it carries its own kind + store name), activate
+  // it, load workspaces, and steer the device into a history-capable state.
+  const completeSignIn = useCallback(
+    async (ms: any, homeserver: string, usernameHint: string) => {
+      const uid = ms.userId() ?? `@${usernameHint}:unknown`
+
+      // Persist full session data including tokens
+      const matrixSessionData: string = ms.sessionData()
+
+      const account: AccountSession = {
+        homeserverUrl: homeserver,
+        userId: uid,
+        username: usernameHint,
+        matrixSessionData,
+      }
+
+      // Add or update in the account pool
+      setAccounts(prev => {
+        const updated = prev.filter(a => a.userId !== uid)
+        updated.push(account)
+        saveAccounts(updated)
+        return updated
+      })
+
+      // Set as active for this window
+      setActiveAccountId(uid)
+      saveActiveAccountId(uid)
+
+      matrixSessionRef.current = ms
+      setMatrixSession(ms)
+
+      // Populate workspace list from joined rooms (filtered)
+      const roomsJson = await ms.listRooms()
+      const entries = parseWorkspaceRooms(roomsJson)
+      setWorkspaces(entries)
+      saveWorkspaces(uid, entries)
+
+      // Never land in a signed-in-but-no-history state: bootstrap recovery
+      // on a first device, or prompt to restore on a returning one.
+      await ensureHistoryAccess(ms)
+    },
+    [ensureHistoryAccess],
+  )
+
   // ── signIn: add or update an account in the pool ───────────────────────────
   const signIn = useCallback(
     async (homeserver: string, user: string, password: string) => {
@@ -590,43 +656,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const wasm = await getWasmModule()
         const ms = await wasm.MatrixSession.login(homeserver, user, password)
         await ms.initialSync()
-
-        const uid = ms.userId() ?? `@${user}:unknown`
-
-        // Persist full session data including tokens
-        const matrixSessionData: string = ms.sessionData()
-
-        const account: AccountSession = {
-          homeserverUrl: homeserver,
-          userId: uid,
-          username: user,
-          matrixSessionData,
-        }
-
-        // Add or update in the account pool
-        setAccounts(prev => {
-          const updated = prev.filter(a => a.userId !== uid)
-          updated.push(account)
-          saveAccounts(updated)
-          return updated
-        })
-
-        // Set as active for this window
-        setActiveAccountId(uid)
-        saveActiveAccountId(uid)
-
-        matrixSessionRef.current = ms
-        setMatrixSession(ms)
-
-        // Populate workspace list from joined rooms (filtered)
-        const roomsJson = await ms.listRooms()
-        const entries = parseWorkspaceRooms(roomsJson)
-        setWorkspaces(entries)
-        saveWorkspaces(uid, entries)
-
-        // Never land in a signed-in-but-no-history state: bootstrap recovery
-        // on a first device, or prompt to restore on a returning one.
-        await ensureHistoryAccess(ms)
+        await completeSignIn(ms, homeserver, user)
       } catch (err: any) {
         const msg = err?.message ?? String(err)
         setError(msg)
@@ -635,8 +665,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     },
-    [ensureHistoryAccess],
+    [completeSignIn],
   )
+
+  // ── signInWithOauth: next-gen auth (MAS) via the popup flow ────────────────
+  const signInWithOauth = useCallback(
+    async (homeserver: string, popup: OauthPopup) => {
+      setLoading(true)
+      setError(null)
+
+      try {
+        const wasm = await getWasmModule()
+        // Dynamic client registration + authorization URL; the PKCE verifier
+        // stays in this page's WASM client, which is why the popup (not a
+        // full-page redirect) carries the user through MAS.
+        const authUrl: string = await wasm.MatrixSession.startOauthLogin(
+          homeserver,
+          `${window.location.origin}/oauth/callback`,
+        )
+        popup.navigate(authUrl)
+        const redirectedUrl = await popup.waitForCallback()
+
+        const ms = await wasm.MatrixSession.finishOauthLogin(redirectedUrl)
+        await ms.initialSync()
+
+        const uid: string = ms.userId() ?? ''
+        const usernameHint = uid.startsWith('@') ? uid.slice(1).split(':')[0] : uid
+        await completeSignIn(ms, homeserver, usernameHint)
+      } catch (err: any) {
+        popup.close()
+        const msg = err?.message ?? String(err)
+        setError(msg)
+        throw new Error(msg)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [completeSignIn],
+  )
+
+  // ── checkOauthSupport: does this homeserver use next-gen auth? ─────────────
+  const checkOauthSupport = useCallback(async (homeserver: string): Promise<boolean> => {
+    try {
+      const wasm = await getWasmModule()
+      return await wasm.MatrixSession.homeserverSupportsOauth(homeserver)
+    } catch {
+      // Unreachable server / no WASM — the password form is the safe default.
+      return false
+    }
+  }, [])
 
   // ── signUp: register a new account and log in ────────────────────────────────
   const signUp = useCallback(
@@ -648,39 +725,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const wasm = await getWasmModule()
         const ms = await wasm.MatrixSession.register(homeserver, user, password)
         await ms.initialSync()
-
-        const uid = ms.userId() ?? `@${user}:unknown`
-
-        const matrixSessionData: string = ms.sessionData()
-
-        const account: AccountSession = {
-          homeserverUrl: homeserver,
-          userId: uid,
-          username: user,
-          matrixSessionData,
-        }
-
-        setAccounts(prev => {
-          const updated = prev.filter(a => a.userId !== uid)
-          updated.push(account)
-          saveAccounts(updated)
-          return updated
-        })
-
-        setActiveAccountId(uid)
-        saveActiveAccountId(uid)
-
-        matrixSessionRef.current = ms
-        setMatrixSession(ms)
-
-        const roomsJson = await ms.listRooms()
-        const entries = parseWorkspaceRooms(roomsJson)
-        setWorkspaces(entries)
-        saveWorkspaces(uid, entries)
-
-        // Never land in a signed-in-but-no-history state: bootstrap recovery
-        // on a first device, or prompt to restore on a returning one.
-        await ensureHistoryAccess(ms)
+        await completeSignIn(ms, homeserver, user)
       } catch (err: any) {
         const msg = err?.message ?? String(err)
         setError(msg)
@@ -689,7 +734,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
       }
     },
-    [ensureHistoryAccess],
+    [completeSignIn],
   )
 
   // ── signOut: remove the active account from the pool ───────────────────────
@@ -991,6 +1036,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     activeAccountId,
     signIn,
     signUp,
+    signInWithOauth,
+    checkOauthSupport,
     signOut,
     createWorkspace,
     joinWorkspace,
