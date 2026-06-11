@@ -19,9 +19,7 @@ build: ## Build all crates
 
 wasm: ## Build WASM modules
 	@echo "Building WASM modules..."
-	cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm --no-default-features --features wasm,matrix-wasm
-	@# Restore hand-written loader.ts if wasm-pack overwrote it
-	@git checkout -- ui/src/wasm/loader.ts 2>/dev/null || true
+	cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm/generated --no-default-features --features wasm,matrix-wasm
 	@echo "✓ WASM build complete"
 
 ui: wasm ## Build the UI (requires WASM)
@@ -71,7 +69,7 @@ clean: ## Clean build artifacts
 	@echo "Cleaning UI build artifacts..."
 	cd ui && rm -rf dist node_modules
 	@echo "Cleaning WASM artifacts..."
-	rm -rf ui/src/wasm
+	rm -rf ui/src/wasm/generated
 	@echo "✓ Cleaned"
 
 doc: ## Generate and open documentation

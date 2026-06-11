@@ -33,14 +33,6 @@ pub fn materialize_from_timeline(events: Vec<CellUpdate>) -> ColdStartResult {
     paginator.finalize()
 }
 
-/// Estimates the required lookback window for a table.
-/// With proper bumping, this should be approximately equal to the number of cells.
-pub fn estimate_lookback_window(table: &Table) -> usize {
-    // With perfect bumping, lookback = cell count
-    // Add a small buffer for concurrent writes
-    (table.cell_count() as f64 * 1.2).ceil() as usize
-}
-
 /// Represents a paginated timeline fetch for incremental cold start.
 pub struct TimelinePaginator {
     /// Cells we've already seen (to detect when we can stop)

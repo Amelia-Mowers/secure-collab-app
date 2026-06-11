@@ -41,7 +41,7 @@ const mockRestore = vi.fn().mockImplementation((_hs: string, json: string) => {
   return Promise.resolve(makeMockSession(data.userId))
 })
 
-vi.mock('@/wasm/app_core.js', () => ({
+vi.mock('@/wasm/generated/app_core.js', () => ({
   default: vi.fn().mockResolvedValue(undefined),
   init_panic_hook: vi.fn(),
   MatrixSession: {

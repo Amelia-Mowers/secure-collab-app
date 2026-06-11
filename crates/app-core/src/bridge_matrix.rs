@@ -227,13 +227,11 @@ impl MatrixSession {
     /// prominently — it is the only way back into history on a fresh device.
     #[wasm_bindgen(js_name = enableRecovery)]
     pub async fn enable_recovery(&self) -> Result<String, JsValue> {
-        self.client
-            .encryption()
-            .recovery()
-            .enable()
-            .wait_for_backups_to_upload()
+        // Delegates to the shared implementation so the auto-backup race
+        // handling (see tables_over_matrix::enable_recovery) isn't duplicated.
+        tables_over_matrix::enable_recovery(&self.client)
             .await
-            .map_err(|e| JsValue::from_str(&format!("Failed to enable recovery: {e}")))
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
     /// Restore secrets from Secure Backup using a saved recovery key so this

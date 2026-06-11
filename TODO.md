@@ -142,6 +142,52 @@ Expand to the rest of core product behaviour:
 
 ---
 
+## Hosted offering — ADR 0002 (proposed)
+
+Hosted Synapse + **MAS** homeserver, OAuth-first client auth (password stays
+as the permanent fallback for custom servers + the Conduit harness), and
+subscription enforcement via lock/unlock — see
+**[docs/adr/0002-hosted-homeserver-mas-auth-and-subscriptions.md](./docs/adr/0002-hosted-homeserver-mas-auth-and-subscriptions.md)**
+for the full rationale (authentication ≠ entitlement; lock, never deactivate).
+Ordered phases; **A gates everything**:
+
+- [ ] **A. Spike: OAuth login from the WASM client** against a throwaway
+  Synapse+MAS (matrix-sdk 0.14 `client.oauth()` + redirect handling + session
+  restore through the bridge). Output: proceed, or ship the hosted stack on
+  MAS's password-compat layer first.
+- [ ] **B. Hosted stack** — Synapse + Postgres + MAS (ansible playbook), closed
+  registration, `.well-known` discovery on the brand domain, backups/monitoring.
+- [ ] **C. Client: default homeserver + auth branching** — default to our
+  server (keep the "Custom server" override); detect next-gen auth via
+  `.well-known`/auth metadata → OAuth, else the existing password path.
+- [ ] **D. Billing service + enforcement** — Stripe Checkout + webhooks →
+  provision/gate registration on checkout; **lock on lapse, unlock on renewal,
+  never deactivate**; grace period + lapsed-export policy as config.
+- [ ] **E. Auth-flow e2e** — throwaway Synapse+MAS CI job (separate from the
+  Conduit harness): subscribe → register → onboard → lapse → lock → renew →
+  unlock.
+- [ ] **F. By config later** — consumer social login (Google/Apple upstream of
+  MAS); enterprise corporate IdPs (the SSO story from `architecture.md`).
+
+Independent of A–F (client-only — can ship before any infra exists):
+
+- [ ] **Demo mode** — a `/demo` route that instantiates the existing
+  **local-only bridge** (`WasmWorkspace`, `bridge.rs`) with seeded example
+  data: no auth, no crypto onboarding, no homeserver — pure static-CDN assets,
+  so a launch-day spike never touches infrastructure. Sub-decisions:
+  - [ ] Seed dataset + which views to showcase (table / kanban / entry / card).
+  - [ ] **Demo→paid conversion**: on subscribe, create the real encrypted room
+    and **replay the demo workspace's `CellUpdate` stream** through
+    `ConnectedWorkspace` so users keep what they built ("everything is
+    tables" makes this nearly free — see ADR 0002).
+  - [ ] Decide: product-surface-only demo, or add a client-side *simulated*
+    collaborator for real-time flavor (the differentiators — collab, sync,
+    E2EE — can't be shown locally).
+  - [ ] Make sure demo state is visibly ephemeral (banner + "subscribe to
+    keep this") so nobody mistakes it for a real encrypted workspace.
+
+---
+
 ## FE — Frontend / Table UX
 
 - [~] **Migrate the table view to TanStack Table v8 + TanStack Virtual** — _grid done & verified 2026-06-07 (type-check + lint + 215 vitest + production build); branch `fe/tanstack-table`._
@@ -166,9 +212,19 @@ Expand to the rest of core product behaviour:
 
 ## P2 — Housekeeping
 
-- [ ] **Separate generated WASM output from hand-written code** — `[§5]`
-  `wasm-pack` clobbers `ui/src/wasm/`, forcing CI to `git checkout -- ui/src/wasm/loader.ts` (`ci.yml:133`). Output to `ui/src/wasm/generated/`.
-- [ ] **Remove dead/duplicated logic** — `[§5]` `CompactionManager::last_bump`; `calculate_lookback_window` vs `estimate_lookback_window`; `next_timestamp_pub` leak (should disappear with the §4.1 clock fix).
+- [x] **Separate generated WASM output from hand-written code** — `[§5]` —
+  _done 2026-06-11._ `wasm-pack` now outputs to `ui/src/wasm/generated/`
+  (gitignored); `loader.ts` lives outside the blast radius, and the
+  `git checkout -- loader.ts` hacks are gone from CI, the Makefile, and the
+  docs (`make clean` also no longer deletes the loader).
+- [x] **Remove dead/duplicated logic** — `[§5]` — _done 2026-06-11._
+  `CompactionManager::last_bump` was already removed with §4.3;
+  `estimate_lookback_window` (zero callers) deleted in favour of the tested
+  `CompactionManager::calculate_lookback_window`. `next_timestamp_pub` did
+  **not** disappear with the §4.1 fix as predicted — the integration tests
+  legitimately need workspace-consistent timestamps to hand-construct
+  `CellUpdate`s — so it is now `#[doc(hidden)]` and documented as test
+  support (the bridges don't use it).
 - [ ] **Delete the per-device IndexedDB store on sign-out** — login/register now
   create one store per device identity (`sc-{user}-{ts}`); signing out leaves it
   orphaned. Expose the name (it's in the session blob) and
@@ -179,8 +235,14 @@ Expand to the rest of core product behaviour:
   (Rust enum / bridge / UI registry / mock) — that drift hid the missing `card`
   variant. Consider `view_type` as an open string validated structurally, with
   renderability decided by the UI registry (`ViewRouter` already has a fallback).
-- [ ] **Re-baseline the docs** — `[§6]`
-  Collapse `BUILD_STATUS.md` + `docs/SESSION_SUMMARY.md` into one dated STATUS doc; fix `README.md`'s internal contradiction on encryption; correct the `architecture.md` test-layout diagram (no top-level `tests/`).
+- [x] **Re-baseline the docs** — `[§6]` — _done 2026-06-11._
+  `BUILD_STATUS.md` + `docs/SESSION_SUMMARY.md` collapsed into a dated
+  `STATUS.md` (snapshot-style: replace wholesale, don't append); `README.md`
+  fixed (stale roadmap → pointers to STATUS/TODO/ADRs, "scaffolded" footer,
+  mocked-integration claims, broken `wasm-pack` out-dir, license now matches
+  the Apache-2.0 `LICENSE`); `architecture.md` test-layout diagram corrected
+  (per-crate `tests/` + `ui/e2e/`, no top-level `tests/`) and the "no E2E
+  browser tests" stance updated to reflect the Playwright harness.
 
 ---
 

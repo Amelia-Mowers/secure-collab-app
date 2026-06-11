@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 
 // The path alias resolver in vitest.config.ts maps '@/' → 'src/', so we can
 // use the normal import path.  vite-plugin-wasm handles the .wasm transform.
-import { initSync, WasmWorkspace } from '@/wasm/app_core.js'
+import { initSync, WasmWorkspace } from '@/wasm/generated/app_core.js'
 
 // ──────────────────────────────────────────────────────────────────────────────
 // One-time WASM initialisation
@@ -26,7 +26,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname  = dirname(__filename)
 
 beforeAll(() => {
-  const wasmBytes = readFileSync(resolve(__dirname, './wasm/app_core_bg.wasm'))
+  const wasmBytes = readFileSync(resolve(__dirname, './wasm/generated/app_core_bg.wasm'))
   initSync({ module: wasmBytes })
 })
 

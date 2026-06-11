@@ -230,7 +230,13 @@ The UI layer is a thin projection over materialized tables. Test with standard f
 
 - **Unit tests** for view projection logic: given a table and a kanban view config, assert correct column grouping. Given a table and a calendar view config, assert correct date indexing.
 - **Component tests** for interactive behavior: dragging a kanban card dispatches the correct `cell.update` call to the WASM bridge. Inline editing commits the correct value.
-- **No E2E browser tests initially.** These are expensive to maintain for a solo developer. Rely on strong unit/integration coverage at the Rust and projection layers, and manual testing for visual/interactive behavior.
+- **E2E browser tests for what only a browser can prove.** *(Updated from the
+  original "none initially" stance.)* A two-browser Playwright harness
+  (`ui/e2e/`) drives the real compiled WASM against a throwaway Conduit for the
+  flows unit tests structurally cannot cover: crypto onboarding (recovery, SAS
+  verification), the core product journey, and reload persistence. Unit tests
+  still carry the volume; the harness carries the integration truth — it has
+  repeatedly caught real bugs that the mock-based unit suite passed.
 
 ### Integration and Matrix-Level Testing
 
@@ -259,44 +265,43 @@ project-root/
 │   │   │   ├── coldstart.rs     # Timeline traversal for cold start
 │   │   │   ├── matrix.rs        # Matrix SDK adapter (thin)
 │   │   │   └── lib.rs
-│   │   └── tests/
+│   │   └── tests/               # Unit + Conduit integration (harness.rs
+│   │       │                    #   spins up a throwaway homeserver)
 │   │       ├── lww_properties.rs
 │   │       ├── compaction.rs
-│   │       └── coldstart.rs
+│   │       ├── coldstart.rs
+│   │       └── two_client_sync.rs
 │   │
 │   └── app-core/                # Application semantics
 │       ├── src/
 │       │   ├── workspace.rs     # Workspace lifecycle
 │       │   ├── schema.rs        # System table conventions
 │       │   ├── views.rs         # View config interpretation
-│       │   ├── bridge.rs        # wasm-bindgen API surface
+│       │   ├── bridge.rs        # wasm-bindgen surface (local-only)
+│       │   ├── bridge_matrix.rs # wasm-bindgen surface (Matrix-connected)
 │       │   └── lib.rs
 │       └── tests/
-│           ├── workspace.rs
-│           └── views.rs
+│           └── workspace_matrix.rs  # Conduit integration
 │
 ├── ui/                          # JS/TS frontend
 │   ├── src/
 │   │   ├── hooks/
 │   │   │   └── useTable.ts      # Reactive bridge to WASM core
+│   │   ├── cells/               # Typed cell registry (grid + entry editors)
 │   │   ├── views/
-│   │   │   ├── kanban/
-│   │   │   ├── calendar/
 │   │   │   ├── table/
-│   │   │   └── tasklist/
-│   │   └── App.tsx
-│   └── tests/
-│       ├── projections/
-│       └── components/
-│
-├── tests/                       # Integration tests (require homeserver)
-│   ├── harness.rs               # Conduit spinup, client helpers
-│   ├── two_client_sync.rs
-│   ├── conflict_resolution.rs
-│   └── cold_start.rs
+│   │   │   ├── kanban/
+│   │   │   ├── card/
+│   │   │   └── entry/
+│   │   └── App.tsx              # (component tests live alongside sources)
+│   └── e2e/                     # Two-browser Playwright harness (real WASM
+│                                #   + live Conduit)
 │
 └── Cargo.toml                   # Workspace manifest
 ```
+
+*(Integration tests live under each crate's `tests/` directory, not a
+top-level `tests/`; browser E2E lives in `ui/e2e/`.)*
 
 ### CI Pipeline
 
