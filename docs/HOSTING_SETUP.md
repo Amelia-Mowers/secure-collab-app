@@ -34,9 +34,24 @@ matrix.tidework.io    → DO droplet: proxy → Synapse + MAS  ← managed PG  [
       so the zone exists and is active (dash.cloudflare.com → tidework.io).
       Bonus: at-cost renewals, automatic WHOIS redaction; note the 60-day
       ICANN transfer-out lock from purchase.
-- [ ] Create an **API token** scoped to *this zone only* (DNS edit + Pages
-      deploy). Don't use the global API key. → goes to **GitHub Actions
-      secrets** later (tier 1 — see "Secrets" below).
+- [ ] Create the **API tokens** (My Profile → API Tokens → Custom token;
+      never the Global API Key). Two, because the scopes differ — both go to
+      **GitHub Actions secrets** later (tier 1 — see "Secrets" below):
+      - **`tidework-dns`** (create now): Zone→DNS→Edit + Zone→Zone→Read,
+        zone resources = *specific zone: tidework.io* (Zone:Read is needed by
+        tooling to resolve the zone ID).
+      - **`tidework-deploy`** (when the Pages/Worker deploys are built):
+        Account→Cloudflare Pages→Edit; add Account→Workers Scripts→Edit at
+        phase D, and Zone→Workers Routes→Edit (tidework.io) only if the
+        billing Worker gets a zone route. Pages/Workers permissions are
+        account-scoped by Cloudflare's model — which is exactly why they
+        don't share a token with DNS edit.
+      - Leave off: anything "All zones", Zone Settings, billing/membership.
+        Skip IP filtering (GitHub runners rotate IPs); note both tokens in
+        the password manager for an annual rotation pass.
+      - TLS on the droplet needs **no Cloudflare token**: matrix.tidework.io
+        is grey-cloud, so plain certbot HTTP-01 works — no DNS credential
+        ever lives on the server.
 - [ ] Nothing else yet — Pages project, Worker, and DNS records get created
       during the deploy work.
 
