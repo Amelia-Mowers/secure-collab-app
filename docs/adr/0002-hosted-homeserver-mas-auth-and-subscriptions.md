@@ -197,6 +197,27 @@ Concretely:
   Synapse+MAS. Proves the gating risk; output is either "proceed" or "ship
   hosted stack on the MAS compat layer first." *(Do this before any infra
   spend.)*
+  **Done 2026-06-11 — verdict: proceed.** The full flow runs from the real
+  compiled WASM against Synapse 1.148 + MAS 1.12 (`ui/e2e/oauth.spec.ts`,
+  driven by `scripts/spike-synapse-mas.sh --e2e`): dynamic client
+  registration → MAS hosted login → consent → code exchange →
+  `kind:"oauth"` session blob → restore. Findings that bind later phases:
+  - matrix-sdk 0.14's OAuth API works on wasm32 **unmodified** — no SDK
+    patching needed.
+  - The **popup architecture is load-bearing**, not a preference: the PKCE
+    verifier lives in the in-memory client, so `finishOauthLogin` must run in
+    the page that called `startOauthLogin` — a full-page redirect destroys
+    the WASM instance mid-flow. (Bridge: `MatrixSession.startOauthLogin` /
+    `finishOauthLogin`; pending client parked in a thread-local.)
+  - The session blob now carries a `kind` discriminator ("password"/"oauth");
+    `restore()` rebuilds either variant. OAuth blobs add `refreshToken` +
+    `clientId` (needed to restore the dynamically-registered client).
+  - MAS's registration policy requires **https** client/redirect URIs:
+    dev/test stacks need `policy.data.client_registration.allow_insecure_uris`
+    (the spike script sets it); production just needs the real https origin.
+  - The throwaway stack is Conduit-idiom (no docker): nix-provided Synapse
+    (with the `oidc` extra via the flake's `synapse-oidc` package), MAS, and
+    a unix-socket Postgres — reusable as the phase E CI harness.
 - **B. Hosted stack** — Synapse + Postgres + MAS via ansible; closed
   registration; `.well-known` on the brand domain; backups/monitoring.
 - **C. Client: default server + discovery + auth branching** — default

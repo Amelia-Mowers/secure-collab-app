@@ -16,15 +16,20 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use matrix_sdk::{
+    authentication::oauth::{
+        registration::ClientMetadata, ClientId, ClientRegistrationData,
+        OAuthSession as SdkOAuthSession, UserSession,
+    },
     config::SyncSettings,
     encryption::verification::{SasVerification, Verification},
     room::MessagesOptions,
     ruma::{
         api::client::room::create_room::v3::Request as CreateRoomRequest,
         events::{macros::EventContent, StateEventType},
+        serde::Raw,
         OwnedDeviceId, OwnedRoomId, OwnedUserId,
     },
-    Client, LoopCtrl, RoomMemberships,
+    AuthSession, Client, LoopCtrl, RoomMemberships, SessionMeta, SessionTokens,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -383,20 +388,30 @@ impl MatrixSession {
             .session()
             .ok_or_else(|| JsValue::from_str("No active session"))?;
 
-        // Extract the Matrix session variant
-        let matrix_session = match session {
-            matrix_sdk::AuthSession::Matrix(ms) => ms,
+        // `storeName`: the IndexedDB store backing this device's state +
+        // crypto stores; restore() must reopen the same one to keep the
+        // device identity.
+        let data = match session {
+            AuthSession::Matrix(ms) => serde_json::json!({
+                "kind": "password",
+                "userId": ms.meta.user_id.to_string(),
+                "deviceId": ms.meta.device_id.to_string(),
+                "accessToken": ms.tokens.access_token,
+                "storeName": self.store_name,
+            }),
+            AuthSession::OAuth(os) => serde_json::json!({
+                "kind": "oauth",
+                "userId": os.user.meta.user_id.to_string(),
+                "deviceId": os.user.meta.device_id.to_string(),
+                "accessToken": os.user.tokens.access_token,
+                "refreshToken": os.user.tokens.refresh_token,
+                // The dynamically-registered OAuth client id — needed to
+                // restore the registered client alongside the session.
+                "clientId": os.client_id.as_str(),
+                "storeName": self.store_name,
+            }),
             _ => return Err(JsValue::from_str("Unsupported auth session type")),
         };
-
-        let data = serde_json::json!({
-            "userId": matrix_session.meta.user_id.to_string(),
-            "deviceId": matrix_session.meta.device_id.to_string(),
-            "accessToken": matrix_session.tokens.access_token,
-            // The IndexedDB store backing this device's state + crypto stores;
-            // restore() must reopen the same one to keep the device identity.
-            "storeName": self.store_name,
-        });
 
         serde_json::to_string(&data)
             .map_err(|e| JsValue::from_str(&format!("Serialization failed: {e}")))
@@ -423,6 +438,14 @@ impl MatrixSession {
             /// Absent in sessions saved before stores were persisted.
             #[serde(rename = "storeName", default)]
             store_name: Option<String>,
+            /// "password" (default when absent — legacy blobs) or "oauth".
+            #[serde(default)]
+            kind: Option<String>,
+            /// OAuth only: refresh token + the dynamically-registered client id.
+            #[serde(rename = "refreshToken", default)]
+            refresh_token: Option<String>,
+            #[serde(rename = "clientId", default)]
+            client_id: Option<String>,
         }
 
         let saved: SavedSession = serde_json::from_str(&session_json)
@@ -453,16 +476,33 @@ impl MatrixSession {
             .try_into()
             .map_err(|_| JsValue::from_str("Invalid user ID in session"))?;
         let device_id: OwnedDeviceId = saved.device_id.into();
+        let meta = SessionMeta {
+            user_id: user_id.clone(),
+            device_id,
+        };
 
-        let sdk_session = matrix_sdk::authentication::matrix::MatrixSession {
-            meta: matrix_sdk::SessionMeta {
-                user_id: user_id.clone(),
-                device_id,
-            },
-            tokens: matrix_sdk::SessionTokens {
-                access_token: saved.access_token,
-                refresh_token: None,
-            },
+        let sdk_session: AuthSession = if saved.kind.as_deref() == Some("oauth") {
+            let client_id = saved
+                .client_id
+                .ok_or_else(|| JsValue::from_str("OAuth session blob missing clientId"))?;
+            AuthSession::OAuth(Box::new(SdkOAuthSession {
+                client_id: ClientId::new(client_id),
+                user: UserSession {
+                    meta,
+                    tokens: SessionTokens {
+                        access_token: saved.access_token,
+                        refresh_token: saved.refresh_token,
+                    },
+                },
+            }))
+        } else {
+            AuthSession::Matrix(matrix_sdk::authentication::matrix::MatrixSession {
+                meta,
+                tokens: SessionTokens {
+                    access_token: saved.access_token,
+                    refresh_token: None,
+                },
+            })
         };
 
         client
@@ -473,6 +513,96 @@ impl MatrixSession {
         Ok(MatrixSession {
             client,
             user_id: Some(user_id),
+            store_name: Some(store_name),
+        })
+    }
+
+    // ── OAuth 2.0 / next-gen auth login (ADR 0002 phase A) ───────────────
+
+    /// Begin an OAuth 2.0 login against a homeserver that delegates auth to
+    /// MAS (MSC3861): builds a client bound to a fresh per-device store,
+    /// dynamically registers this app with the authorization server, and
+    /// returns the authorization URL.
+    ///
+    /// The pending client is held in memory — the PKCE verifier lives inside
+    /// it — so `finishOauthLogin` must run in the **same page**. Open the URL
+    /// in a popup (not a full-page redirect, which would destroy the WASM
+    /// instance mid-flow) and post the final redirect URL back.
+    #[wasm_bindgen(js_name = startOauthLogin)]
+    pub async fn start_oauth_login(
+        homeserver_url: String,
+        redirect_uri: String,
+    ) -> Result<String, JsValue> {
+        let store_name = new_store_name("oauth");
+        let client = Client::builder()
+            .homeserver_url(&homeserver_url)
+            .indexeddb_store(&store_name, None)
+            .with_encryption_settings(default_encryption_settings())
+            .build()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
+
+        let redirect: url::Url = redirect_uri
+            .parse()
+            .map_err(|e| JsValue::from_str(&format!("Invalid redirect URI: {e}")))?;
+
+        // OIDC dynamic client registration: a public web client (no secret —
+        // PKCE carries the proof), rooted at the redirect URI's origin.
+        let client_uri = {
+            let mut u = redirect.clone();
+            u.set_path("/");
+            u.set_query(None);
+            u.set_fragment(None);
+            u
+        };
+        let metadata_json = serde_json::json!({
+            "client_name": "Secure Collab",
+            "client_uri": client_uri,
+            "application_type": "web",
+            "redirect_uris": [redirect],
+            "token_endpoint_auth_method": "none",
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+        });
+        let metadata: Raw<ClientMetadata> = Raw::from_json_string(metadata_json.to_string())
+            .map_err(|e| JsValue::from_str(&format!("Invalid client metadata: {e}")))?;
+        let registration_data: ClientRegistrationData = metadata.into();
+
+        let auth_data = client
+            .oauth()
+            .login(redirect, None, Some(registration_data), None)
+            .build()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to start OAuth login: {e}")))?;
+
+        PENDING_OAUTH.with(|p| *p.borrow_mut() = Some((client, store_name)));
+        Ok(auth_data.url.to_string())
+    }
+
+    /// Complete an OAuth login with the URL the popup was finally redirected
+    /// to (it carries the authorization code + state). Exchanges the code for
+    /// tokens on the client started by `startOauthLogin` and returns the
+    /// logged-in session.
+    #[wasm_bindgen(js_name = finishOauthLogin)]
+    pub async fn finish_oauth_login(redirected_url: String) -> Result<MatrixSession, JsValue> {
+        let (client, store_name) = PENDING_OAUTH
+            .with(|p| p.borrow_mut().take())
+            .ok_or_else(|| JsValue::from_str("No OAuth login in progress"))?;
+
+        let url: url::Url = redirected_url
+            .parse()
+            .map_err(|e| JsValue::from_str(&format!("Invalid redirect URL: {e}")))?;
+
+        client
+            .oauth()
+            .finish_login(url.into())
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to finish OAuth login: {e}")))?;
+
+        let user_id = client.user_id().map(|u| u.to_owned());
+        Ok(MatrixSession {
+            client,
+            user_id,
             store_name: Some(store_name),
         })
     }
@@ -626,6 +756,12 @@ thread_local! {
     /// single-threaded, so a thread-local avoids threading state through every
     /// `MatrixSession` constructor.
     static PENDING_VERIFICATION: RefCell<Option<String>> = const { RefCell::new(None) };
+
+    /// The client (+ its store name) of an OAuth login in progress, parked
+    /// between `startOauthLogin` and `finishOauthLogin`. The PKCE verifier
+    /// lives inside this client's memory, so the finish call must reuse the
+    /// exact instance that built the authorization URL.
+    static PENDING_OAUTH: RefCell<Option<(Client, String)>> = const { RefCell::new(None) };
 }
 
 // ── Device verification handle ──────────────────────────────────────

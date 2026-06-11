@@ -151,10 +151,15 @@ subscription enforcement via lock/unlock — see
 for the full rationale (authentication ≠ entitlement; lock, never deactivate).
 Ordered phases; **A gates everything**:
 
-- [ ] **A. Spike: OAuth login from the WASM client** against a throwaway
-  Synapse+MAS (matrix-sdk 0.14 `client.oauth()` + redirect handling + session
-  restore through the bridge). Output: proceed, or ship the hosted stack on
-  MAS's password-compat layer first.
+- [x] **A. Spike: OAuth login from the WASM client** — _done 2026-06-11,
+  verdict **proceed** (see ADR 0002 phase A result)._ Full flow green from the
+  real WASM against throwaway Synapse+MAS (`ui/e2e/oauth.spec.ts` via
+  `scripts/spike-synapse-mas.sh --e2e`): dynamic registration → MAS hosted
+  login → code exchange → `kind:"oauth"` session blob → restore. Bridge:
+  `startOauthLogin`/`finishOauthLogin` (popup architecture is load-bearing —
+  PKCE verifier is in-memory); `sessionData()`/`restore()` handle both
+  session kinds. The C-phase remainder: wire this into `SignInPage`/`useAuth`
+  with `.well-known` auth-metadata detection + the popup/callback page.
 - [ ] **B. Hosted stack** — Synapse + Postgres + MAS (ansible playbook), closed
   registration, `.well-known` discovery on the brand domain, backups/monitoring.
 - [ ] **C. Client: default homeserver + auth branching** — default to our
