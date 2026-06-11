@@ -119,6 +119,26 @@ Concretely:
     there is nothing sensitive to see; MAS's hosted pages live on the droplet
     side so the auth flow's sensitive leg also stays off the proxy. Revisit
     only under real DDoS pressure, eyes open.
+- **Secrets, two tiers (recorded 2026-06-11): GitHub holds the keys to
+  *deploy*; the repo + server hold the keys to *run*.**
+  - *Tier 1 — deploy credentials → GitHub Actions secrets:* the scoped
+    DigitalOcean API token, zone-scoped Cloudflare token, wrangler token for
+    Pages/Worker deploys, and the droplet's SSH deploy key. Least-privilege
+    scoping is the point — zone-/project-limited tokens, never account-wide.
+  - *Tier 2 — runtime/application secrets → never plaintext in GitHub:* the
+    MAS↔Synapse shared secrets (`admin_token`, the Synapse OAuth client
+    secret), MAS's encryption secret + signing keys, the Postgres password,
+    and the Stripe API/webhook signing secrets. These live **encrypted in the
+    repo** (sops/age — sops-nix if the droplet runs NixOS), decryptable only
+    by the server's host key and a personal key. CI pushes config but never
+    sees plaintext; rotation history comes free as ciphertext in git.
+  - *Why the split:* a compromised GitHub account must yield deploy ability
+    (bad, recoverable, auditable) — not the homeserver's crypto-adjacent
+    material. For a security-positioned product, "GitHub compromise = full
+    production compromise" is the wrong blast radius.
+  - *Pragmatic exception:* the billing Worker's Stripe webhook signing secret
+    flows as `wrangler secret put` from a GitHub secret — Cloudflare is that
+    component's runtime anyway.
 - **Client auth = capability-detected, two branches:**
   - Homeserver advertises next-gen auth (`.well-known` / auth metadata) →
     OAuth flow via matrix-sdk's OAuth API against MAS's hosted pages
