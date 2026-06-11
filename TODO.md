@@ -53,6 +53,26 @@ Priority bands:
   - [x] Newest-first assumption made explicit (documented on `process_batch`: it governs only the dedup counters + early-stop); old order-dependent accounting removed; added an order-independence test.
   - [x] Bridge cold-start documented as the deliberately-separate **workspace** layer (routes schema/views via `apply_update`) — not a duplicate of the raw-table engine.
 
+- [ ] **Encrypt the persisted session + stores at rest** — today the session
+  blob in `localStorage` (containing the **access token**) and the per-device
+  IndexedDB state/crypto stores (`indexeddb_store(name, None)` — the SDK
+  supports a passphrase, we pass `None`) are plaintext under same-origin
+  protection only. architecture.md already promises "optional passphrase
+  encryption" for the crypto store. Threat addressed: filesystem-level access
+  (other OS users, backups, stolen machine without FDE) — *not* runtime XSS,
+  which can read whatever the running app can.
+  Design tension to resolve first: a key derived from the login password (the
+  ideal) conflicts with silent `restore()` — the password isn't available on
+  reload. Options, roughly in descending security:
+  1. Re-prompt for the password once per browser session to unlock the store
+     (defensible UX for a security product; sessions still outlive tabs).
+  2. **WebAuthn PRF/`largeBlob`** — wrap a random store key with a passkey;
+     unlock is a biometric/security-key gesture, key material never stored.
+  3. Element-style random "pickle key" kept in `localStorage` — mostly
+     obfuscation (same-origin attacker reads both), but cheap and standard.
+  Whatever is chosen: also send `/logout` on sign-out so the access token is
+  invalidated server-side, not just forgotten client-side.
+
 - [~] **Add a true end-to-end sync test** — `[§4.5]` — _harness runnable via Nix/WSL (`scripts/run-integration-tests.sh`) and green: tables-over-matrix integration tests + app-core `workspace_matrix` 17/17._
   - [x] Drive a real send → server → sync → fetch-timeline → extract → materialize round-trip (`test_two_client_sync_via_real_timeline`): Bob converges on Alice's value from his OWN synced timeline, not a re-applied in-memory update.
   - [x] **Encrypted** round-trip (overlaps `[§4.2]`): `test_two_client_encrypted_round_trip` — Megolm send/decrypt across two clients via the `create_encrypted_room` harness helper.
