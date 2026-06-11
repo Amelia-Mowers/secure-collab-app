@@ -97,6 +97,28 @@ Concretely:
   subscribe flow. Federation **on** (subscription gating applies only to
   accounts on our server; federated collaborators and self-hosters are
   unaffected).
+- **Hosting (decided 2026-06-11): DigitalOcean + Cloudflare, split by
+  statefulness.**
+  - *Cloudflare* serves the edge/static half: the app + demo mode on
+    Cloudflare Pages (upgrade over GitHub Pages — real **CSP headers** via
+    `_headers`, which Pages-on-GitHub cannot set), DNS, the
+    `.well-known/matrix/*` discovery documents, and the **billing service as
+    a Worker** (Stripe webhook → MAS admin API; keeps the one non-open-core
+    component serverless and tiny).
+  - *DigitalOcean* runs the stateful half: a droplet for Synapse + MAS behind
+    our own reverse proxy (~4GB to start), with **managed Postgres** so the
+    component holding MAS accounts and Synapse state has backups/failover we
+    don't operate. Region choice doubles as the jurisdiction statement
+    (AMS/FRA for an EU posture).
+  - **The homeserver stays DNS-only (grey-cloud) — deliberately.** Proxying
+    `matrix.*` through Cloudflare would terminate TLS at a third party that
+    then sees every bearer token (impersonation-capable) and all the traffic
+    metadata the single-room design exists to minimize. E2EE content would
+    stay ciphertext, but "we minimized who can see what" doesn't survive an
+    interposed TLS terminator. The orange cloud is for the static app, where
+    there is nothing sensitive to see; MAS's hosted pages live on the droplet
+    side so the auth flow's sensitive leg also stays off the proxy. Revisit
+    only under real DDoS pressure, eyes open.
 - **Client auth = capability-detected, two branches:**
   - Homeserver advertises next-gen auth (`.well-known` / auth metadata) →
     OAuth flow via matrix-sdk's OAuth API against MAS's hosted pages
@@ -220,6 +242,9 @@ Concretely:
     a unix-socket Postgres — reusable as the phase E CI harness.
 - **B. Hosted stack** — Synapse + Postgres + MAS via ansible; closed
   registration; `.well-known` on the brand domain; backups/monitoring.
+  *Hosting vendors decided 2026-06-11 (see Decision): DigitalOcean droplet +
+  managed Postgres for the homeserver (grey-cloud DNS), Cloudflare
+  Pages/DNS/Worker for app, discovery, and billing.*
 - **C. Client: default server + discovery + auth branching** — default
   homeserver with the existing custom override; detect next-gen auth and route
   to OAuth or password accordingly. Password path and Conduit harness stay

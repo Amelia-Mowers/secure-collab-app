@@ -8,19 +8,19 @@
 #   - MAS on http://127.0.0.1:8090 (next-gen auth: OIDC issuer + hosted pages)
 #   - Synapse on http://127.0.0.1:8008 with MSC3861 delegating auth to MAS
 #
-# Run inside the Nix dev shell with the extra packages:
-#   nix shell --inputs-from . nixpkgs#matrix-authentication-service \
-#     nixpkgs#matrix-synapse nixpkgs#postgresql \
-#     --command bash scripts/spike-synapse-mas.sh
+# Run with the bundled tools (Synapse w/ oidc extra, MAS, Postgres, curl,
+# python3+pyyaml) layered onto the dev shell:
+#   nix shell .#oauth-stack-tools --command \
+#     nix develop --command bash scripts/spike-synapse-mas.sh
 #
 # The stack runs until killed (Ctrl-C); state lives in a temp dir printed at
 # startup. Modes:
 #   --check  bring the stack up, verify the OIDC wiring, tear down
 #   --e2e    bring the stack up, register a test user, run the OAuth e2e spec
-#            (ui/e2e/oauth.spec.ts), tear down — needs the dev shell on top:
-#            nix shell .#synapse-oidc --inputs-from . \
-#              nixpkgs#matrix-authentication-service nixpkgs#postgresql \
-#              --command nix develop --command bash scripts/spike-synapse-mas.sh --e2e
+#            (ui/e2e/oauth.spec.ts), tear down — also what the `e2e-oauth`
+#            CI job runs:
+#            nix shell .#oauth-stack-tools --command \
+#              nix develop --command bash scripts/spike-synapse-mas.sh --e2e
 set -euo pipefail
 
 SYNAPSE_PORT=8008

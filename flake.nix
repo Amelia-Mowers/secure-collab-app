@@ -66,6 +66,23 @@
         # alongside nixpkgs#matrix-authentication-service + nixpkgs#postgresql.
         packages.synapse-oidc = synapseWithOidc;
 
+        # Everything the throwaway Synapse+MAS stack needs, in one installable
+        # (used by the `e2e-oauth` CI job and local runs):
+        #   nix shell .#oauth-stack-tools --command nix develop \
+        #     --command bash scripts/spike-synapse-mas.sh --e2e
+        # python3+pyyaml is included so the config-patching steps don't depend
+        # on whatever python the host happens to have.
+        packages.oauth-stack-tools = pkgs.buildEnv {
+          name = "oauth-stack-tools";
+          paths = [
+            synapseWithOidc
+            pkgs.matrix-authentication-service
+            pkgs.postgresql
+            pkgs.curl
+            (pkgs.python3.withPackages (ps: [ ps.pyyaml ]))
+          ];
+        };
+
         devShells.default = pkgs.mkShell {
           inherit buildInputs nativeBuildInputs;
 
