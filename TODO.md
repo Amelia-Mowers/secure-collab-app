@@ -30,6 +30,15 @@ Priority bands:
   - [x] **Device verification + cross-signing + key backup** — implemented per **`docs/adr/0001-e2e-key-management.md`** (test-first): `EncryptionSettings` auto cross-signing + backup, the recovery-key flow + sign-in verify gate, SAS device verification (mechanism + interactive UI, e2e-validated), `backup_exists()`, and undecryptable-history detection + banner. Phase C (UIA) deferred; warn-on-unverified + require-verified dropped (see ADR). _Remaining (carried to the **E2E** section): broader two-browser coverage of collaboration / multi-tab._
   - [ ] Decide policy for **legacy unencrypted rooms** (created before this change): the guard makes them read-only. Offer a migrate/recreate path or a clear UI state.
 
+- [ ] **Persist row deletion** — `deleteRow` only mutates local state; the bridge
+  never emits anything to Matrix (`bridge_matrix.rs` `delete_row`), so a deleted
+  row resurrects from the timeline on the next cold start and other devices
+  never learn of the deletion. The architecture's deletion-as-decay story covers
+  cells of schema-deleted rows/columns, but nothing records a *user row*
+  deletion — it needs a design decision (row tombstone cell? membership in a
+  system table?). Red test ready: un-`fixme` `'a deleted row stays deleted after
+  reload'` in `ui/e2e/core.spec.ts`.
+
 ---
 
 ## P1 — Should-fix (deliver the architecture's promises)
@@ -61,11 +70,23 @@ Conduit + two isolated browser contexts (two devices of one user) exercising the
 `nix develop --command bash -c "cd ui && npm run e2e"`; also a CI `e2e` job.
 Expand to the rest of core product behaviour:
 
-- [ ] **Core behaviour** (single device) — create a workspace → create a table →
-  add and edit cells across the column types (text, number, select, multiselect,
-  reference, date, checkbox, …) → add a column → delete a row → switch views
-  (table / entry / card / kanban) → header sort & global filter. Assert state
-  **persists across reload** (cold-start materialization, `[§4.4]`).
+- [x] **Core behaviour** (single device) — _done 2026-06-11 (`ui/e2e/core.spec.ts`):
+  workspace → table → a column of each type → entries (all editors) → inline
+  grid edit → header sort → global filter → kanban/card views → view switching
+  → **persists across reload** (cold-start materialization, `[§4.4]`)._
+  The spec immediately earned its keep — it caught three real defects the
+  MockWorkspace-based unit tests could not:
+  1. **Sessions had no persistent store at all** (fixed): `login`/`register`/
+     `restore` built the SDK client with in-memory stores, so every page reload
+     was an unverified "new device" that couldn't decrypt its own history.
+     Now all three configure a per-device IndexedDB store (named in the
+     session blob's `storeName`; Olm state is born in the persistent store
+     since device keys are immutable after first upload).
+  2. **`ViewType` had no `Card` variant** (fixed): the UI offered card views
+     but the bridge rejected them ("Invalid view config") — and the New-view
+     modal swallowed the string-JsValue error (also fixed). `MockWorkspace`
+     now validates view types like the real bridge to prevent re-drift.
+  3. **Row deletion is local-only** (open — see the new P0 item below).
 - [ ] **Collaboration** (two *different* users) — A invites B, B accepts; both
   edit and assert real-time propagation **A→B and B→A**, the member list, and
   that **concurrent edits to the same cell converge** (LWW, `[§4.1]`) with no
@@ -109,6 +130,16 @@ Expand to the rest of core product behaviour:
 - [ ] **Separate generated WASM output from hand-written code** — `[§5]`
   `wasm-pack` clobbers `ui/src/wasm/`, forcing CI to `git checkout -- ui/src/wasm/loader.ts` (`ci.yml:133`). Output to `ui/src/wasm/generated/`.
 - [ ] **Remove dead/duplicated logic** — `[§5]` `CompactionManager::last_bump`; `calculate_lookback_window` vs `estimate_lookback_window`; `next_timestamp_pub` leak (should disappear with the §4.1 clock fix).
+- [ ] **Delete the per-device IndexedDB store on sign-out** — login/register now
+  create one store per device identity (`sc-{user}-{ts}`); signing out leaves it
+  orphaned. Expose the name (it's in the session blob) and
+  `indexedDB.deleteDatabase` it when the account is removed.
+- [ ] **ADR: open up the view-type taxonomy** — the closed `ViewType` enum makes
+  the local write path stricter than the federated read path (which already
+  skips unknown view configs) and turns every new view into a four-layer change
+  (Rust enum / bridge / UI registry / mock) — that drift hid the missing `card`
+  variant. Consider `view_type` as an open string validated structurally, with
+  renderability decided by the UI registry (`ViewRouter` already has a fallback).
 - [ ] **Re-baseline the docs** — `[§6]`
   Collapse `BUILD_STATUS.md` + `docs/SESSION_SUMMARY.md` into one dated STATUS doc; fix `README.md`'s internal contradiction on encryption; correct the `architecture.md` test-layout diagram (no top-level `tests/`).
 
