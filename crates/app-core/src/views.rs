@@ -13,6 +13,8 @@ pub enum ViewType {
     Table,
     /// Kanban board grouped by a column
     Kanban,
+    /// Gallery of card tiles
+    Card,
     /// Calendar indexed by a date column
     Calendar,
     /// Task list with checkboxes
@@ -578,6 +580,7 @@ mod tests {
         let types = [
             ViewType::Table,
             ViewType::Kanban,
+            ViewType::Card,
             ViewType::Calendar,
             ViewType::TaskList,
             ViewType::Custom,

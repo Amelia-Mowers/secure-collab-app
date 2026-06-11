@@ -289,7 +289,8 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
 
       onCreated(viewId, viewType, selectedTableId)
     } catch (err) {
-      setError((err as Error).message)
+      // The WASM bridge rejects with plain-string JsValues, not Error objects.
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setCreating(false)
     }

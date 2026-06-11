@@ -30,7 +30,7 @@ export interface ViewConfig {
   id: string
   name: string
   table_id: string
-  view_type: 'table' | 'kanban' | 'calendar' | 'tasklist' | 'custom'
+  view_type: 'table' | 'kanban' | 'card' | 'calendar' | 'tasklist' | 'custom'
   sort: any[]
   filters: any[]
   kanban_config?: {
@@ -127,13 +127,29 @@ export class MockWorkspace {
 
   // ── View operations ───────────────────────────────────────────────────────
 
+  // Must mirror app-core's `ViewType` enum (views.rs): the real bridge rejects
+  // unknown view types ("Invalid view config"), and the mock has to match or
+  // unit tests pass for view types the WASM core doesn't accept — this drift
+  // hid the missing `card` variant (caught by e2e/core.spec.ts).
+  private static readonly VIEW_TYPES = ['table', 'kanban', 'card', 'calendar', 'tasklist', 'custom']
+
   createView(configJson: string): string {
     const config: ViewConfig = JSON.parse(configJson)
+    if (!MockWorkspace.VIEW_TYPES.includes(config.view_type)) {
+      throw new Error('Invalid view config')
+    }
     if (!this.cellStore.has(config.table_id)) {
       throw new Error('Table not found')
     }
     this.views.set(config.id, config)
     return JSON.stringify({ success: true })
+  }
+
+  /** Test seam: store a view as if it arrived via sync — the read path keeps
+   *  whatever materializes from the timeline (e.g. a view type from a newer
+   *  client), even though local createView would reject it. */
+  seedView(config: Omit<ViewConfig, 'view_type'> & { view_type: string }): void {
+    this.views.set(config.id, config as ViewConfig)
   }
 
   getView(viewId: string): string {
