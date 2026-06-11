@@ -39,6 +39,64 @@ mod matrix_impl {
         }
     }
 
+    /// Enable Secure Backup + Recovery on `client` and return the **recovery
+    /// key** the user must save. Bootstraps secret storage and key backup and
+    /// waits for this device's room keys to finish uploading, so another
+    /// device can later restore encrypted workspace history with the key.
+    ///
+    /// Shared by [`MatrixClient::enable_recovery`] (native/tests) and the WASM
+    /// bridge so the race handling below exists in exactly one place: with
+    /// [`default_encryption_settings`]'s `auto_enable_backups`, a background
+    /// task may create the server-side backup between login and this call. If
+    /// it wins the race, `Recovery::enable()` fails with
+    /// `BackupExistsOnServer` (the client hasn't connected to the new backup
+    /// locally yet) — in that case wait for the auto-enable to settle and
+    /// retry; the retry skips backup creation and only bootstraps secret
+    /// storage around the existing backup.
+    pub async fn enable_recovery(client: &Client) -> Result<String> {
+        use matrix_sdk::encryption::recovery::RecoveryError;
+
+        match client
+            .encryption()
+            .recovery()
+            .enable()
+            .wait_for_backups_to_upload()
+            .await
+        {
+            Ok(recovery_key) => {
+                info!("Secure backup + recovery enabled");
+                Ok(recovery_key)
+            }
+            Err(RecoveryError::BackupExistsOnServer) => {
+                wait_until_backups_enabled(client, 40).await?;
+                let recovery_key = client
+                    .encryption()
+                    .recovery()
+                    .enable()
+                    .wait_for_backups_to_upload()
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to enable recovery after auto-backup settled: {e}")
+                    })?;
+                info!("Secure backup + recovery enabled (after auto-backup race)");
+                Ok(recovery_key)
+            }
+            Err(e) => Err(anyhow::anyhow!("Failed to enable recovery: {e}")),
+        }
+    }
+
+    /// Wait (bounded: `max_polls` × 250ms) for the SDK's `auto_enable_backups`
+    /// background task to finish connecting this client to its key backup.
+    async fn wait_until_backups_enabled(client: &Client, max_polls: u32) -> Result<()> {
+        for _ in 0..max_polls {
+            if client.encryption().backups().are_enabled().await {
+                return Ok(());
+            }
+            matrix_sdk::sleep::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        anyhow::bail!("Key backup did not finish enabling in time (auto_enable_backups race)")
+    }
+
     // ── Custom Matrix Event ─────────────────────────────────────────────
 
     /// The Matrix event type string for cell updates.
@@ -372,16 +430,7 @@ mod matrix_impl {
         /// is the user's only way back into their history on a fresh device —
         /// it must be surfaced and saved (review §4.2 / ADR 0001).
         pub async fn enable_recovery(&self) -> Result<String> {
-            let recovery_key = self
-                .client
-                .encryption()
-                .recovery()
-                .enable()
-                .wait_for_backups_to_upload()
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to enable recovery: {e}"))?;
-            info!("Secure backup + recovery enabled");
-            Ok(recovery_key)
+            enable_recovery(&self.client).await
         }
 
         /// Restore secrets (including the backup decryption key) from Secure
