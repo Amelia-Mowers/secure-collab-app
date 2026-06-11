@@ -142,6 +142,35 @@ Expand to the rest of core product behaviour:
 
 ---
 
+## Hosted offering — ADR 0002 (proposed)
+
+Hosted Synapse + **MAS** homeserver, OAuth-first client auth (password stays
+as the permanent fallback for custom servers + the Conduit harness), and
+subscription enforcement via lock/unlock — see
+**[docs/adr/0002-hosted-homeserver-mas-auth-and-subscriptions.md](./docs/adr/0002-hosted-homeserver-mas-auth-and-subscriptions.md)**
+for the full rationale (authentication ≠ entitlement; lock, never deactivate).
+Ordered phases; **A gates everything**:
+
+- [ ] **A. Spike: OAuth login from the WASM client** against a throwaway
+  Synapse+MAS (matrix-sdk 0.14 `client.oauth()` + redirect handling + session
+  restore through the bridge). Output: proceed, or ship the hosted stack on
+  MAS's password-compat layer first.
+- [ ] **B. Hosted stack** — Synapse + Postgres + MAS (ansible playbook), closed
+  registration, `.well-known` discovery on the brand domain, backups/monitoring.
+- [ ] **C. Client: default homeserver + auth branching** — default to our
+  server (keep the "Custom server" override); detect next-gen auth via
+  `.well-known`/auth metadata → OAuth, else the existing password path.
+- [ ] **D. Billing service + enforcement** — Stripe Checkout + webhooks →
+  provision/gate registration on checkout; **lock on lapse, unlock on renewal,
+  never deactivate**; grace period + lapsed-export policy as config.
+- [ ] **E. Auth-flow e2e** — throwaway Synapse+MAS CI job (separate from the
+  Conduit harness): subscribe → register → onboard → lapse → lock → renew →
+  unlock.
+- [ ] **F. By config later** — consumer social login (Google/Apple upstream of
+  MAS); enterprise corporate IdPs (the SSO story from `architecture.md`).
+
+---
+
 ## FE — Frontend / Table UX
 
 - [~] **Migrate the table view to TanStack Table v8 + TanStack Virtual** — _grid done & verified 2026-06-07 (type-check + lint + 215 vitest + production build); branch `fe/tanstack-table`._
