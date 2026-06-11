@@ -61,17 +61,36 @@ Priority bands:
   encryption" for the crypto store. Threat addressed: filesystem-level access
   (other OS users, backups, stolen machine without FDE) — *not* runtime XSS,
   which can read whatever the running app can.
-  Design tension to resolve first: a key derived from the login password (the
-  ideal) conflicts with silent `restore()` — the password isn't available on
-  reload. Options, roughly in descending security:
-  1. Re-prompt for the password once per browser session to unlock the store
-     (defensible UX for a security product; sessions still outlive tabs).
+  Design tension to resolve first: a key derived from the login password
+  conflicts with silent `restore()` — the password isn't available on reload.
+  Offer **password and WebAuthn as parallel unlock options** (not either/or):
+  1. Password unlock: re-prompt once per browser session to derive the store
+     key (defensible UX for a security product; sessions still outlive tabs).
+     Local-only use of the password is fine here — unlike SSSS (below), the
+     derived key never leaves the device, so a malicious server gains nothing.
   2. **WebAuthn PRF/`largeBlob`** — wrap a random store key with a passkey;
      unlock is a biometric/security-key gesture, key material never stored.
-  3. Element-style random "pickle key" kept in `localStorage` — mostly
-     obfuscation (same-origin attacker reads both), but cheap and standard.
+  3. Fallback (no credential configured): Element-style random "pickle key" in
+     `localStorage` — mostly obfuscation (same-origin attacker reads both),
+     but cheap, standard, and better than `None`.
   Whatever is chosen: also send `/logout` on sign-out so the access token is
   invalidated server-side, not just forgotten client-side.
+
+- [ ] **Memorable new-device verification: SSSS security phrase (+ passkey
+  PRF)** — the recovery flow already fetches the encrypted master/backup keys
+  from **server-side secret storage** and decrypts them locally with the
+  recovery key; SSSS also supports a **PBKDF2 passphrase** as the secret-storage
+  key (Element's "Security Phrase"), so a new device could verify with a
+  memorized phrase — no backend needed, it's standard account data.
+  Constraints:
+  - The phrase **must not be the login password**: with `m.login.password` the
+    homeserver sees the password at login and could brute it against the SSSS
+    blob, collapsing zero-knowledge against the exact adversary E2EE targets.
+    Enforce/warn in UX; this also keeps the design OIDC-ready (no password
+    exists client-side under SSO).
+  - Stretch: wrap the SSSS key with a **synced passkey (WebAuthn PRF)** so a
+    new device in the same passkey ecosystem verifies with a biometric gesture;
+    keep phrase + recovery key as the portable fallbacks.
 
 - [~] **Add a true end-to-end sync test** — `[§4.5]` — _harness runnable via Nix/WSL (`scripts/run-integration-tests.sh`) and green: tables-over-matrix integration tests + app-core `workspace_matrix` 17/17._
   - [x] Drive a real send → server → sync → fetch-timeline → extract → materialize round-trip (`test_two_client_sync_via_real_timeline`): Bob converges on Alice's value from his OWN synced timeline, not a re-applied in-memory update.
