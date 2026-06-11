@@ -17,6 +17,12 @@ UI — that the unit/integration tests can't cover end to end.
   filter → kanban/card views → view switching → **persists across reload**
   (cold-start materialization). Also carries a `test.fixme` documenting that
   row deletion is local-only and does not survive a reload yet.
+- `oauth.spec.ts` — **SSO sign-in via MAS** through the real UI (ADR 0002):
+  next-gen-auth detection swaps the password form for the popup flow → MAS
+  hosted login → recovery bootstrap → workspaces → reload-restore. Needs the
+  throwaway Synapse+MAS stack, so it self-skips in the normal run; execute it
+  with `nix shell .#oauth-stack-tools --command nix develop --command bash
+  scripts/spike-synapse-mas.sh --e2e` (the `e2e-oauth` CI job does the same).
 
 ## Running
 

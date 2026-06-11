@@ -179,8 +179,11 @@ Ordered phases; **A gates everything**:
 - [ ] **D. Billing service + enforcement** — Stripe Checkout + webhooks →
   provision/gate registration on checkout; **lock on lapse, unlock on renewal,
   never deactivate**; grace period + lapsed-export policy as config.
-- [ ] **E. Auth-flow e2e** — throwaway Synapse+MAS CI job (separate from the
-  Conduit harness): subscribe → register → onboard → lapse → lock → renew →
+- [~] **E. Auth-flow e2e** — _CI job landed 2026-06-11:_ `e2e-oauth` runs the
+  throwaway Synapse+MAS stack (`nix shell .#oauth-stack-tools` →
+  `scripts/spike-synapse-mas.sh --e2e`) and drives the SSO sign-in flow
+  through the real UI on every PR. _Remaining (needs **D**):_ extend to the
+  full lifecycle — subscribe → register → onboard → lapse → lock → renew →
   unlock.
 - [ ] **F. By config later** — consumer social login (Google/Apple upstream of
   MAS); enterprise corporate IdPs (the SSO story from `architecture.md`).
