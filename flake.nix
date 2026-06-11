@@ -45,6 +45,12 @@
           matrix-conduit
         ];
 
+        # Synapse with the `oidc` extra (authlib) so MSC3861 — delegating auth
+        # to MAS — works. Used by the throwaway Synapse+MAS stack for the
+        # ADR 0002 OAuth work (scripts/spike-synapse-mas.sh). Synapse itself
+        # runs on stdlib sqlite there, so no other extras are needed.
+        synapseWithOidc = pkgs.matrix-synapse.override { extras = [ "oidc" ]; };
+
         # Runtime libraries
         buildInputs = with pkgs; [
           openssl
@@ -56,6 +62,10 @@
 
       in
       {
+        # `nix shell .#synapse-oidc` — consumed by scripts/spike-synapse-mas.sh
+        # alongside nixpkgs#matrix-authentication-service + nixpkgs#postgresql.
+        packages.synapse-oidc = synapseWithOidc;
+
         devShells.default = pkgs.mkShell {
           inherit buildInputs nativeBuildInputs;
 
