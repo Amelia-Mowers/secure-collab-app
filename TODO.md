@@ -179,8 +179,14 @@ Expand to the rest of core product behaviour:
   (Rust enum / bridge / UI registry / mock) — that drift hid the missing `card`
   variant. Consider `view_type` as an open string validated structurally, with
   renderability decided by the UI registry (`ViewRouter` already has a fallback).
-- [ ] **Re-baseline the docs** — `[§6]`
-  Collapse `BUILD_STATUS.md` + `docs/SESSION_SUMMARY.md` into one dated STATUS doc; fix `README.md`'s internal contradiction on encryption; correct the `architecture.md` test-layout diagram (no top-level `tests/`).
+- [x] **Re-baseline the docs** — `[§6]` — _done 2026-06-11._
+  `BUILD_STATUS.md` + `docs/SESSION_SUMMARY.md` collapsed into a dated
+  `STATUS.md` (snapshot-style: replace wholesale, don't append); `README.md`
+  fixed (stale roadmap → pointers to STATUS/TODO/ADRs, "scaffolded" footer,
+  mocked-integration claims, broken `wasm-pack` out-dir, license now matches
+  the Apache-2.0 `LICENSE`); `architecture.md` test-layout diagram corrected
+  (per-crate `tests/` + `ui/e2e/`, no top-level `tests/`) and the "no E2E
+  browser tests" stance updated to reflect the Playwright harness.
 
 ---
 

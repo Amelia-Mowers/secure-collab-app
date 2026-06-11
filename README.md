@@ -88,9 +88,13 @@ If not using Nix, you'll need:
 secure-collab-app/
 ├── crates/
 │   ├── tables-over-matrix/    # Core library for LWW tables over Matrix
+│   │   └── tests/             # Unit + Conduit integration tests
 │   └── app-core/              # Application logic and WASM bridge
+│       └── tests/             # Workspace + Matrix integration tests
 ├── ui/                        # React/TypeScript frontend
-├── tests/                     # Integration tests
+│   └── e2e/                   # Two-browser Playwright tests (real WASM + Conduit)
+├── docs/adr/                  # Architecture decision records
+├── scripts/                   # Integration-test runner, build helpers
 ├── flake.nix                  # Nix development environment
 └── Cargo.toml                 # Rust workspace manifest
 ```
@@ -127,11 +131,14 @@ cargo test --release
 ### 3. Build WASM Modules
 
 ```bash
-# Build the app-core crate for WebAssembly
-wasm-pack build crates/app-core --target web --out-dir ui/src/wasm
-
-# Or using make:
+# Build the app-core crate for WebAssembly (and restore the hand-written
+# loader.ts that wasm-pack clobbers):
 make wasm
+
+# Equivalent manual command:
+cd crates/app-core && wasm-pack build --target web --out-dir ../../ui/src/wasm \
+  --no-default-features --features wasm,matrix-wasm
+git checkout -- ui/src/wasm/loader.ts
 ```
 
 ### 4. Run the UI
@@ -175,14 +182,12 @@ cargo test --release -- --nocapture
 
 #### Integration Tests
 
-Integration tests require a Matrix homeserver (Conduit recommended for testing).
+Integration tests run against a real, throwaway Conduit homeserver (provided by
+the Nix dev shell) and cover two-client sync, encrypted round-trips, cold start,
+key backup/recovery, and SAS verification:
 
 ```bash
-# Run integration tests (currently mocked)
-cargo test --test two_client_sync --ignored
-cargo test --test cold_start --ignored
-
-# Note: Full integration tests require a homeserver setup
+nix develop --command bash scripts/run-integration-tests.sh
 ```
 
 #### UI Tests
@@ -198,6 +203,17 @@ npm run type-check
 
 # Linting
 npm run lint
+```
+
+#### End-to-end browser tests
+
+A two-browser Playwright harness drives the **real compiled WASM** against a
+live Conduit — covering registration, recovery, SAS verification, and the core
+single-device product journey (including reload persistence). See
+[`ui/e2e/README.md`](./ui/e2e/README.md):
+
+```bash
+nix develop --command bash -c "cd ui && npm run e2e"
 ```
 
 ### Code Quality
@@ -446,41 +462,13 @@ This is currently an early-stage project. Contributions are welcome!
 
 ## License
 
-MIT OR Apache-2.0 (choose your preference)
+Apache-2.0 (see [LICENSE](./LICENSE))
 
-## Roadmap
+## Status & Roadmap
 
-### V1 - Core Features (In Progress)
-- [x] Entry view with field rendering
-- [x] Document cell type with Markdown support
-- [x] Field types: Text, Number, Boolean, Date, Select, MultiSelect, Reference, JSON
-- [x] Routing and navigation
-- [ ] Table view with inline editing
-- [ ] Complete WASM bridge integration
-- [ ] Rapid entry creation workflow
-- [ ] Complete Matrix SDK integration
-- [ ] Implement actual E2E encryption flow
-- [ ] Authentication flow (SSO + password)
-
-### V2 - Extended Features
-- [ ] Kanban board view
-- [ ] Calendar view
-- [ ] Task list view
-- [ ] Typst integration for templates and PDF generation
-- [ ] Global search and filtering
-- [ ] Personal views (stored in Matrix account data)
-- [ ] Entry comments via Matrix messages
-- [ ] Session persistence
-
-### V3 - Production Ready
-- [ ] Full integration tests with Conduit
-- [ ] Electron desktop app
-- [ ] Progressive Web App (PWA)
-- [ ] Offline support
-- [ ] Permissions and access control
-- [ ] Forms for external data collection
-- [ ] CLI tool
-- [ ] REST API
+Current state lives in **[STATUS.md](./STATUS.md)**; the prioritized backlog is
+**[TODO.md](./TODO.md)** (the single source of truth for outstanding work).
+Non-obvious design decisions are recorded in **[docs/adr/](./docs/adr/)**.
 
 ## Resources
 
@@ -500,6 +488,11 @@ Built on the shoulders of giants:
 
 ---
 
-**Status**: Early development / Proof of Concept
+**Status**: Working prototype — see [STATUS.md](./STATUS.md)
 
-This is a working proof of concept implementing the core architecture. The Matrix integration layer is scaffolded but not fully implemented. See the roadmap for current status and planned features.
+The core architecture is implemented end to end: encrypted Matrix sync with
+full key management (cross-signing, key backup, recovery, device
+verification), LWW convergence on a hybrid logical clock, order-based
+compaction, and a multi-view UI — validated by unit, property, Conduit
+integration, and two-browser end-to-end tests. Not yet production-ready; see
+[TODO.md](./TODO.md) for what stands between here and real data.
