@@ -53,6 +53,19 @@ Priority bands:
   - [x] Newest-first assumption made explicit (documented on `process_batch`: it governs only the dedup counters + early-stop); old order-dependent accounting removed; added an order-independence test.
   - [x] Bridge cold-start documented as the deliberately-separate **workspace** layer (routes schema/views via `apply_update`) — not a duplicate of the raw-table engine.
 
+- [x] **Recovery bootstrap must not fail open on first sign-up** — _fixed
+  2026-06-11._ `ensureHistoryAccess` used to swallow `enableRecovery()`
+  failures with a `console.warn` and let sign-in proceed — observed three
+  times in practice (the auto-backup race, the OAuth duplicate-bridge miss,
+  the "unknown"-state skip): a first device landed on /workspaces having
+  **never been shown its recovery key**. `bootstrapRecovery` (`useAuth.ts`)
+  now retries with backoff (3 attempts) and, if every attempt fails, raises a
+  **blocking** `kind: 'error'` recovery prompt ("Couldn't set up recovery" in
+  `VerifyDeviceScreen` — retry or sign out, no dismiss). Only the status
+  *probe* still fails open (a returning device is covered by the verify gate
+  + undecryptable banner; documented inline). Unit-tested: retry-then-succeed,
+  all-fail → blocking prompt, `retryRecoverySetup` from the error state.
+
 - [ ] **Encrypt the persisted session + stores at rest** — today the session
   blob in `localStorage` (containing the **access token**) and the per-device
   IndexedDB state/crypto stores (`indexeddb_store(name, None)` — the SDK

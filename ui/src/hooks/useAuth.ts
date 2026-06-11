@@ -27,6 +27,11 @@ export interface InvitedRoom {
 export type RecoveryPrompt =
   | { kind: 'save'; recoveryKey: string }
   | { kind: 'verify' }
+  /** Recovery bootstrap failed on a first device even after retries. This is
+   *  a blocking state (not a silent warn): the account works but NO recovery
+   *  key exists, so a lost device would mean unrecoverable history — the user
+   *  must know. Ways forward: retry, or sign out. */
+  | { kind: 'error'; message: string }
 
 /** One of the seven SAS comparison emoji. */
 export interface SasEmoji {
@@ -116,6 +121,8 @@ interface AuthState {
   /** Dismiss the prompt. Only meaningful for the `save` step (after the user
    *  has stored their recovery key) — the `verify` step has no bypass. */
   dismissRecoveryPrompt: () => void
+  /** Retry the recovery bootstrap after a `kind: 'error'` prompt. */
+  retryRecoverySetup: () => Promise<void>
 
   /** An in-progress device verification, or null. Drives the verify screen's
    *  emoji-compare step and the incoming-request prompt. */
@@ -348,36 +355,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the user to save), while a RETURNING device (a backup exists but this
   // device lacks the keys) is prompted to restore with its saved key. A device
   // that already has the keys ("ready") sails through. See ADR 0001 Phase B.
-  const ensureHistoryAccess = useCallback(async (ms: any) => {
-    try {
-      // Guard for mocks / older WASM bindings without the recovery surface.
-      if (typeof ms.recoveryStatus !== 'function') return
-      // The SDK reports "unknown" until its backup/recovery subsystem settles
-      // after sync — treat that as "not yet", not "nothing to do". Without
-      // this, a slow-settling flow (observed with OAuth's extra round-trips)
-      // silently skips the recovery bootstrap on a first device.
-      let status = 'unknown'
-      for (let attempt = 0; attempt < 30 && status === 'unknown'; attempt++) {
-        status = await ms.recoveryStatus()
-        if (status === 'unknown') await new Promise(r => setTimeout(r, 500))
-      }
-      if (status === 'unknown') {
-        console.warn('[auth] Recovery state never settled — no recovery prompt shown')
-      }
-      if (status === 'needs_bootstrap') {
+  // Bootstrap recovery on a FIRST device, retrying transient failures with
+  // backoff. If every attempt fails, raise a **blocking** error prompt — never
+  // silence: the account works but no recovery key exists, so the user must
+  // know (the old console.warn fail-open silently produced devices whose
+  // history could never be restored).
+  const bootstrapRecovery = useCallback(async (ms: any) => {
+    const retryDelaysMs = [0, 2000, 5000]
+    let lastErr: unknown
+    for (const delay of retryDelaysMs) {
+      if (delay > 0) await new Promise(r => setTimeout(r, delay))
+      try {
         const recoveryKey: string = await ms.enableRecovery()
         setRecoveryPrompt({ kind: 'save', recoveryKey })
-      } else if (status === 'needs_recovery') {
-        // New device: must verify (or use its master key) before it can read
-        // history. No bypass — only verifying or signing out moves forward.
-        setRecoveryPrompt({ kind: 'verify' })
+        return
+      } catch (err) {
+        lastErr = err
+        console.warn('[auth] Recovery bootstrap attempt failed:', err)
       }
-    } catch (err) {
-      // Don't block sign-in if recovery setup transiently fails — the
-      // encryption banner still surfaces any undecryptable history.
-      console.warn('[auth] Recovery check failed:', err)
     }
+    setRecoveryPrompt({
+      kind: 'error',
+      message: (lastErr as Error)?.message ?? String(lastErr ?? 'Unknown error'),
+    })
   }, [])
+
+  /** Retry the recovery bootstrap from the `kind: 'error'` screen. */
+  const retryRecoverySetup = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms) return
+    setRecoveryPrompt(null)
+    await bootstrapRecovery(ms)
+  }, [bootstrapRecovery])
+
+  const ensureHistoryAccess = useCallback(
+    async (ms: any) => {
+      try {
+        // Guard for mocks / older WASM bindings without the recovery surface.
+        if (typeof ms.recoveryStatus !== 'function') return
+        // The SDK reports "unknown" until its backup/recovery subsystem settles
+        // after sync — treat that as "not yet", not "nothing to do". Without
+        // this, a slow-settling flow (observed with OAuth's extra round-trips)
+        // silently skips the recovery bootstrap on a first device.
+        let status = 'unknown'
+        for (let attempt = 0; attempt < 30 && status === 'unknown'; attempt++) {
+          status = await ms.recoveryStatus()
+          if (status === 'unknown') await new Promise(r => setTimeout(r, 500))
+        }
+        if (status === 'unknown') {
+          console.warn('[auth] Recovery state never settled — no recovery prompt shown')
+        }
+        if (status === 'needs_bootstrap') {
+          await bootstrapRecovery(ms)
+        } else if (status === 'needs_recovery') {
+          // New device: must verify (or use its master key) before it can read
+          // history. No bypass — only verifying or signing out moves forward.
+          setRecoveryPrompt({ kind: 'verify' })
+        }
+      } catch (err) {
+        // Only the status *probe* fails open (we can't tell a first device
+        // from a returning one here, and a returning device is covered by the
+        // verify gate + undecryptable-history banner). Bootstrap failures are
+        // handled above and always surface.
+        console.warn('[auth] Recovery check failed:', err)
+      }
+    },
+    [bootstrapRecovery],
+  )
 
   const submitRecoveryKey = useCallback(async (key: string) => {
     const ms = matrixSessionRef.current
@@ -1053,6 +1097,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     recoveryPrompt,
     submitRecoveryKey,
     dismissRecoveryPrompt,
+    retryRecoverySetup,
     verification,
     startVerification,
     acceptIncomingVerification,
