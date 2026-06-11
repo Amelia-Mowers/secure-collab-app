@@ -69,7 +69,7 @@ describe('App shell', () => {
 
   it('redirects unauthenticated users to /signin from /', () => {
     renderAt('/')
-    expect(screen.getByText('Secure Collab')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'TideWork' })).toBeInTheDocument()
   })
 
   it('shows the sign-in page at /signin', () => {

@@ -35,11 +35,11 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Custom state event type string to tag rooms as workspaces.
-const WORKSPACE_STATE_TYPE: &str = "com.securecollab.workspace";
+const WORKSPACE_STATE_TYPE: &str = "io.tidework.workspace";
 
 /// Content for the workspace marker state event.
 #[derive(Clone, Debug, Deserialize, Serialize, EventContent)]
-#[ruma_event(type = "com.securecollab.workspace", kind = State, state_key_type = String)]
+#[ruma_event(type = "io.tidework.workspace", kind = State, state_key_type = String)]
 pub struct WorkspaceMarkerEventContent {
     /// Always true — the presence of this event marks the room as a workspace.
     pub workspace: bool,
@@ -71,7 +71,7 @@ fn sanitize_store_key(s: &str) -> String {
 /// `restore()` reopens the same store.
 fn new_store_name(username: &str) -> String {
     format!(
-        "sc-{}-{}",
+        "tw-{}-{}",
         sanitize_store_key(username),
         js_sys::Date::now() as u64
     )
@@ -113,7 +113,7 @@ impl MatrixSession {
         client
             .matrix_auth()
             .login_username(&username, &password)
-            .initial_device_display_name("Secure Collab")
+            .initial_device_display_name("TideWork")
             .await
             .map_err(|e| JsValue::from_str(&format!("Login failed: {e}")))?;
 
@@ -152,7 +152,7 @@ impl MatrixSession {
         let mut request = register::v3::Request::new();
         request.username = Some(username.clone());
         request.password = Some(password.clone());
-        request.initial_device_display_name = Some("Secure Collab".to_owned());
+        request.initial_device_display_name = Some("TideWork".to_owned());
 
         let result = client.matrix_auth().register(request).await;
 
@@ -168,7 +168,7 @@ impl MatrixSession {
                     let mut retry = register::v3::Request::new();
                     retry.username = Some(username.clone());
                     retry.password = Some(password.clone());
-                    retry.initial_device_display_name = Some("Secure Collab".to_owned());
+                    retry.initial_device_display_name = Some("TideWork".to_owned());
                     retry.auth = Some(uiaa::AuthData::Dummy(dummy));
 
                     client
@@ -303,7 +303,7 @@ impl MatrixSession {
     }
 
     /// List joined rooms. Returns a JSON array of `{id, name, isWorkspace}` objects.
-    /// The `isWorkspace` flag is true if the room has a `com.securecollab.workspace`
+    /// The `isWorkspace` flag is true if the room has a `io.tidework.workspace`
     /// state event, allowing the UI to filter out system rooms.
     #[wasm_bindgen(js_name = listRooms)]
     pub async fn list_rooms(&self) -> String {
@@ -456,7 +456,7 @@ impl MatrixSession {
         // future reloads at least stop regenerating the device identity.
         let store_name = saved.store_name.clone().unwrap_or_else(|| {
             format!(
-                "sc-legacy-{}-{}",
+                "tw-legacy-{}-{}",
                 sanitize_store_key(&saved.user_id),
                 sanitize_store_key(&saved.device_id)
             )
@@ -570,7 +570,7 @@ impl MatrixSession {
             u
         };
         let metadata_json = serde_json::json!({
-            "client_name": "Secure Collab",
+            "client_name": "TideWork",
             "client_uri": client_uri,
             "application_type": "web",
             "redirect_uris": [redirect],

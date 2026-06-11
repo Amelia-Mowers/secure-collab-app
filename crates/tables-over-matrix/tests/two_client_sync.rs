@@ -177,7 +177,7 @@ async fn test_two_client_sync_via_real_timeline() {
 /// E2E-encrypted room is Megolm-encrypted on the wire and must decrypt on the
 /// other client. This proves the SDK's transparent encrypt-on-send /
 /// decrypt-on-receive path works for our custom
-/// `com.securecollab.cell.update` events end to end — i.e. that enabling
+/// `io.tidework.cell.update` events end to end — i.e. that enabling
 /// encryption (review §4.2) does not break the read path.
 #[tokio::test]
 #[ignore]

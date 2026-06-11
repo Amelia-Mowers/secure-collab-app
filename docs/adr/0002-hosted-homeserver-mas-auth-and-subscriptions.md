@@ -97,6 +97,14 @@ Concretely:
   subscribe flow. Federation **on** (subscription gating applies only to
   accounts on our server; federated collaborators and self-hosters are
   unaffected).
+- **Name + domain (decided 2026-06-11): the hosted offering is "TideWork"
+  at `tidework.io`** — homeserver `matrix.tidework.io` (so user IDs are
+  `@user:tidework.io`, permanent), app at `app.tidework.io`. Wire identifiers
+  renamed to `io.tidework.*` (`io.tidework.workspace`,
+  `io.tidework.cell.update`) while only throwaway dev servers exist — the
+  last free moment to do so. The sign-in default flips to the official
+  server via `VITE_DEFAULT_HOMESERVER` once phase B is live (see
+  `ui/src/branding.ts`).
 - **Hosting (decided 2026-06-11): DigitalOcean + Cloudflare, split by
   statefulness.**
   - *Cloudflare* serves the edge/static half: the app + demo mode on

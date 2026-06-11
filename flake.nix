@@ -1,5 +1,5 @@
 {
-  description = "Secure Collaborative Workspace over Matrix";
+  description = "TideWork - end-to-end encrypted collaborative workspace over Matrix";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -98,7 +98,7 @@
           PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
 
           shellHook = ''
-            echo "🔐 Secure Collaborative Workspace Development Environment"
+            echo "🔐 TideWork Development Environment"
             echo ""
             echo "Rust: $(rustc --version)"
             echo "Node: $(node --version)"
