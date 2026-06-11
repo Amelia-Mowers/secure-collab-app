@@ -43,25 +43,63 @@ pub struct WorkspaceMarkerEventContent {
 use crate::workspace::Workspace;
 use tables_over_matrix::{default_encryption_settings, CellUpdate, MatrixClient};
 
+/// Sanitize a string for use as part of an IndexedDB database name.
+fn sanitize_store_key(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// A fresh, unique IndexedDB store name for a new login.
+///
+/// One store per device identity: every login/registration creates a new
+/// Matrix device, and its Olm state must live in its own store from the very
+/// first key upload (device keys are immutable once uploaded, so the store
+/// must be configured *before* login, which is why the name can't include the
+/// device ID). The name is persisted in the session blob (`sessionData`) so
+/// `restore()` reopens the same store.
+fn new_store_name(username: &str) -> String {
+    format!(
+        "sc-{}-{}",
+        sanitize_store_key(username),
+        js_sys::Date::now() as u64
+    )
+}
+
 /// A Matrix session that owns the SDK client and can create workspaces
 /// bound to rooms.
 #[wasm_bindgen]
 pub struct MatrixSession {
     client: Client,
     user_id: Option<OwnedUserId>,
+    /// IndexedDB store name backing this session's state + crypto stores.
+    store_name: Option<String>,
 }
 
 #[wasm_bindgen]
 impl MatrixSession {
     /// Connect to a homeserver and log in. Returns the user ID on success.
+    ///
+    /// State and crypto stores are persisted in IndexedDB so the device's Olm
+    /// account, Megolm sessions, and verification state survive page reloads —
+    /// without this, every reload would be an unverified "new device" that
+    /// can't decrypt its own history.
     #[wasm_bindgen]
     pub async fn login(
         homeserver_url: String,
         username: String,
         password: String,
     ) -> Result<MatrixSession, JsValue> {
+        let store_name = new_store_name(&username);
         let client = Client::builder()
             .homeserver_url(&homeserver_url)
+            .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
             .build()
             .await
@@ -76,7 +114,11 @@ impl MatrixSession {
 
         let user_id = client.user_id().map(|u| u.to_owned());
 
-        Ok(MatrixSession { client, user_id })
+        Ok(MatrixSession {
+            client,
+            user_id,
+            store_name: Some(store_name),
+        })
     }
 
     /// Register a new account on the homeserver and log in.
@@ -92,8 +134,10 @@ impl MatrixSession {
     ) -> Result<MatrixSession, JsValue> {
         use matrix_sdk::ruma::api::client::{account::register, uiaa};
 
+        let store_name = new_store_name(&username);
         let client = Client::builder()
             .homeserver_url(&homeserver_url)
+            .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
             .build()
             .await
@@ -135,7 +179,11 @@ impl MatrixSession {
 
         let user_id = client.user_id().map(|u| u.to_owned());
 
-        Ok(MatrixSession { client, user_id })
+        Ok(MatrixSession {
+            client,
+            user_id,
+            store_name: Some(store_name),
+        })
     }
 
     /// Get the logged-in user ID.
@@ -347,6 +395,9 @@ impl MatrixSession {
             "userId": matrix_session.meta.user_id.to_string(),
             "deviceId": matrix_session.meta.device_id.to_string(),
             "accessToken": matrix_session.tokens.access_token,
+            // The IndexedDB store backing this device's state + crypto stores;
+            // restore() must reopen the same one to keep the device identity.
+            "storeName": self.store_name,
         });
 
         serde_json::to_string(&data)
@@ -371,13 +422,28 @@ impl MatrixSession {
             device_id: String,
             #[serde(rename = "accessToken")]
             access_token: String,
+            /// Absent in sessions saved before stores were persisted.
+            #[serde(rename = "storeName", default)]
+            store_name: Option<String>,
         }
 
         let saved: SavedSession = serde_json::from_str(&session_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid session JSON: {e}")))?;
 
+        // Legacy sessions (saved before stores were persisted) had in-memory
+        // crypto that is already gone — give them a deterministic store so
+        // future reloads at least stop regenerating the device identity.
+        let store_name = saved.store_name.clone().unwrap_or_else(|| {
+            format!(
+                "sc-legacy-{}-{}",
+                sanitize_store_key(&saved.user_id),
+                sanitize_store_key(&saved.device_id)
+            )
+        });
+
         let client = Client::builder()
             .homeserver_url(&homeserver_url)
+            .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
             .build()
             .await
@@ -409,6 +475,7 @@ impl MatrixSession {
         Ok(MatrixSession {
             client,
             user_id: Some(user_id),
+            store_name: Some(store_name),
         })
     }
 

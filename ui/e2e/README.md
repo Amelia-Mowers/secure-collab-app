@@ -12,6 +12,11 @@ UI — that the unit/integration tests can't cover end to end.
 - `recovery.spec.ts` — a second device restores access with the **master key**.
 - `verification.spec.ts` — two devices complete an **SAS (emoji) verification**
   and the new device's gate clears once trusted.
+- `core.spec.ts` — the single-device product journey: workspace → table →
+  a column of each type → entries → inline grid edit → header sort → global
+  filter → kanban/card views → view switching → **persists across reload**
+  (cold-start materialization). Also carries a `test.fixme` documenting that
+  row deletion is local-only and does not survive a reload yet.
 
 ## Running
 

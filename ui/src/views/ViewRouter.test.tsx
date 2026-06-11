@@ -27,14 +27,16 @@ describe('ViewRouter', () => {
 
   it('renders KanbanView as fallback for an unknown view_type', async () => {
     const ws = makeTasksWorkspace()
-    ws.createView(JSON.stringify({
+    // Seed directly (not createView): an unknown type can only arrive via sync
+    // from a newer client — local creation rejects it, the read path tolerates it.
+    ws.seedView({
       id: 'mystery',
       name: 'Mystery View',
       table_id: 'tasks',
       view_type: 'unknown_type',
       sort: [],
       filters: [],
-    }))
+    })
     renderViewRouter(ws, 'tasks', 'mystery')
     // Falls back to KanbanView — shows the view name
     await waitFor(() => expect(screen.getByText('Mystery View')).toBeInTheDocument())
