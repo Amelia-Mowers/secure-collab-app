@@ -179,6 +179,15 @@ Concretely:
   homeserver — *not* sharding users across homeserver names. Server names are
   baked into MXIDs forever, so shard assignment would become irreversible
   identity. Federation is for cross-server collaboration, not load balancing.
+  Elasticity is asymmetric: **generic workers** (client API, `/sync`,
+  federation reads — i.e. spike-shaped onboarding load) scale up gracefully
+  behind the proxy with no homeserver restart, while **sharded writer roles**
+  (event persisters, federation senders) have their shard map in the shared
+  config every process reads — re-sharding means a config change + process
+  restarts, so write throughput is provisioned ahead, not autoscaled. The hard
+  ceiling is Postgres (single writer; scales vertically + pooling). Re-verify
+  against current Synapse worker docs at phase B — role elasticity has shifted
+  across versions.
 - matrix-sdk OAuth API stability across SDK upgrades (next-gen auth is still
   stabilizing ecosystem-wide).
 
