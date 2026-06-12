@@ -46,3 +46,5 @@ result-*
 .env
 .env.local
 .env.*.local
+infra/secrets/*
+!infra/secrets/*.sops.*
