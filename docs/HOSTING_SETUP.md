@@ -83,10 +83,26 @@ matrix.tidework.io    → DO droplet: proxy → Synapse + MAS  ← managed PG  [
 
 **GitHub holds the keys to *deploy*; the repo + server hold the keys to *run*.**
 
-- [ ] **Tier 1 → GitHub Actions secrets** (Settings → Secrets → Actions):
-      the DO API token, the zone-scoped Cloudflare token, a wrangler token,
-      and the droplet SSH deploy key. A GitHub compromise then yields deploy
-      ability — bad, recoverable, auditable — not production secrets.
+- [ ] **Tier 1 → GitHub Actions secrets.** A GitHub compromise then yields
+      deploy ability — bad, recoverable, auditable — not production secrets.
+      Add each at **github.com/Amelia-Mowers/secure-collab-app → Settings →
+      Secrets and variables → Actions → New repository secret**, using these
+      exact IDs (CI workflows will reference them by name):
+
+      | Secret ID | Value | Where to get it | When |
+      |---|---|---|---|
+      | `CLOUDFLARE_DNS_TOKEN` | the `tidework-dns` API token | dash.cloudflare.com → profile (top-right) → My Profile → **API Tokens**. Shown **once** at creation — if you didn't save it, use "Roll" to regenerate. | now |
+      | `CLOUDFLARE_ACCOUNT_ID` | account id (hex) | dash.cloudflare.com → tidework.io → **Overview**, right-hand sidebar ("Account ID"). | now |
+      | `CLOUDFLARE_ZONE_ID` | zone id (hex) | same Overview sidebar ("Zone ID"). | now |
+      | `CLOUDFLARE_DEPLOY_TOKEN` | the `tidework-deploy` API token | My Profile → API Tokens (create per the policy above when Pages/Worker deploys are built). | Pages deploy |
+      | `DIGITALOCEAN_ACCESS_TOKEN` | DO API token | cloud.digitalocean.com → **API** (left nav) → Tokens → Generate New Token. Use **custom scopes** (droplet + database read/write), not full access. Shown once. | now |
+      | `DEPLOY_SSH_KEY` | the **CI deploy** private key (full file contents incl. header/footer) | generate a *second* keypair, separate from your admin key: `ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh	idework_deploy -C "tidework-ci"` (no passphrase — CI can't type one); its `.pub` gets added to the droplet's authorized_keys during deploy setup. | droplet deploy |
+      | `DEPLOY_KNOWN_HOSTS` | the droplet's pinned host key | `ssh-keyscan matrix.tidework.io` (or the IP) once the droplet exists — pinning beats accept-on-first-use in CI. | droplet deploy |
+      | `STRIPE_API_KEY` | Stripe secret key (`sk_live_…`) | dashboard.stripe.com → **Developers → API keys**. The billing Worker's runtime secrets flow via `wrangler secret put` from these (the recorded exception — Cloudflare is that component's runtime). | phase D |
+      | `STRIPE_WEBHOOK_SIGNING_SECRET` | `whsec_…` | dashboard.stripe.com → Developers → **Webhooks** → the endpoint created for the billing Worker. | phase D |
+
+      The "now" rows are the only ones you can add today; the rest become
+      addable as their sources come into existence.
 - [ ] **Tier 2 → encrypted in the repo, never plaintext in GitHub**: the
       MAS↔Synapse shared secrets, MAS encryption/signing keys, Postgres
       password, Stripe secrets. Setup task for you:
