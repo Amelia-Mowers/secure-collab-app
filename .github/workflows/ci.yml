@@ -279,15 +279,17 @@ jobs:
         run: |
           nix develop --command bash -c "cd ui && npm ci && VITE_DEFAULT_HOMESERVER=https://matrix.tidework.io npm run build"
 
+      # Plain runner node for wrangler — npx inside `nix develop` tries to
+      # install into the read-only nix store prefix and fails.
       - name: Deploy site (tidework.io apex)
         run: |
-          nix develop --command bash -c "npx wrangler@4 pages project create tidework-site --production-branch=main 2>/dev/null || true"
-          nix develop --command bash -c "npx wrangler@4 pages deploy site --project-name=tidework-site --branch=main"
+          npx wrangler@4 pages project create tidework-site --production-branch=main 2>/dev/null || true
+          npx wrangler@4 pages deploy site --project-name=tidework-site --branch=main
 
       - name: Deploy app (app.tidework.io)
         run: |
-          nix develop --command bash -c "npx wrangler@4 pages project create tidework-app --production-branch=main 2>/dev/null || true"
-          nix develop --command bash -c "npx wrangler@4 pages deploy ui/dist --project-name=tidework-app --branch=main"
+          npx wrangler@4 pages project create tidework-app --production-branch=main 2>/dev/null || true
+          npx wrangler@4 pages deploy ui/dist --project-name=tidework-app --branch=main
 
       # Idempotent: attach custom domains to the Pages projects and ensure the
       # proxied DNS records exist. Non-fatal — a deploy shouldn't fail because
