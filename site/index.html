@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TideWork — end-to-end encrypted collaborative workspace</title>
+  <meta name="description" content="TideWork is an open-source, end-to-end encrypted, real-time collaborative workspace built on the Matrix protocol. Tables, kanban boards, and documents — with genuine E2E encryption, federation, and data sovereignty." />
+  <style>
+    :root {
+      --ink: #0c1b2a;
+      --ink-soft: #3c5168;
+      --tide: #0e7490;
+      --tide-deep: #155e75;
+      --foam: #f0fafb;
+      --line: #d2e4e9;
+    }
+    * { margin: 0; box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #ffffff 0%, var(--foam) 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      max-width: 960px; width: 100%; margin: 0 auto;
+      padding: 28px 24px; display: flex; align-items: center; gap: 10px;
+    }
+    .mark {
+      width: 30px; height: 30px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--tide), var(--tide-deep));
+      position: relative; overflow: hidden;
+    }
+    .mark::after {
+      content: ""; position: absolute; left: -20%; right: -20%; top: 55%; height: 60%;
+      background: rgba(255, 255, 255, 0.85);
+      border-radius: 45% 55% 0 0 / 100% 100% 0 0;
+    }
+    .wordmark { font-weight: 700; font-size: 19px; letter-spacing: -0.02em; }
+    main {
+      max-width: 960px; width: 100%; margin: 0 auto;
+      padding: 56px 24px 72px; flex: 1;
+    }
+    h1 {
+      font-size: clamp(34px, 6vw, 54px); line-height: 1.08;
+      letter-spacing: -0.03em; max-width: 17ch;
+    }
+    h1 em { font-style: normal; color: var(--tide); }
+    .sub {
+      margin-top: 18px; font-size: 19px; line-height: 1.55;
+      color: var(--ink-soft); max-width: 56ch;
+    }
+    .cta { margin-top: 34px; display: flex; gap: 14px; flex-wrap: wrap; }
+    .btn {
+      display: inline-block; padding: 13px 26px; border-radius: 10px;
+      font-size: 16px; font-weight: 600; text-decoration: none;
+      transition: transform 0.08s ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: var(--tide); color: #fff; }
+    .btn-primary:hover { background: var(--tide-deep); }
+    .btn-ghost { color: var(--tide-deep); border: 1.5px solid var(--line); background: #fff; }
+    .btn-ghost:hover { border-color: var(--tide); }
+    .features {
+      margin-top: 72px; display: grid; gap: 18px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+    .card {
+      background: #fff; border: 1px solid var(--line); border-radius: 14px;
+      padding: 22px;
+    }
+    .card h2 { font-size: 16px; margin-bottom: 8px; }
+    .card p { font-size: 14.5px; line-height: 1.55; color: var(--ink-soft); }
+    footer {
+      border-top: 1px solid var(--line); padding: 22px 24px;
+      font-size: 13.5px; color: var(--ink-soft);
+    }
+    footer .inner {
+      max-width: 960px; margin: 0 auto;
+      display: flex; gap: 18px; flex-wrap: wrap; justify-content: space-between;
+    }
+    footer a { color: var(--tide-deep); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="mark" aria-hidden="true"></div>
+    <span class="wordmark">TideWork</span>
+  </header>
+
+  <main>
+    <h1>Your team's workspace, <em>actually</em> encrypted.</h1>
+    <p class="sub">
+      TideWork is an open-source collaborative workspace — tables, kanban
+      boards, and documents that sync in real time — built on the Matrix
+      protocol with genuine end-to-end encryption. Your server never sees
+      your data. Neither do we.
+    </p>
+    <div class="cta">
+      <a class="btn btn-primary" href="https://app.tidework.io">Open TideWork</a>
+      <a class="btn btn-ghost" href="https://github.com/Amelia-Mowers/secure-collab-app">Source on GitHub</a>
+    </div>
+
+    <div class="features">
+      <div class="card">
+        <h2>🔐 End-to-end encrypted</h2>
+        <p>Every cell, card, and document is encrypted on your device with
+        Matrix's Megolm protocol. Auditable in the open-source code — not
+        marketing.</p>
+      </div>
+      <div class="card">
+        <h2>🌐 Federated &amp; sovereign</h2>
+        <p>Use our hosted server or point the app at your own Matrix
+        homeserver. Collaborate across servers. Your identity and data stay
+        yours.</p>
+      </div>
+      <div class="card">
+        <h2>📊 Everything is a table</h2>
+        <p>One data model under tables, kanban, and document views — with
+        conflict-free real-time sync across all your devices.</p>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="inner">
+      <span>© 2026 TideWork · tidework.io</span>
+      <span>
+        <a href="https://app.tidework.io">App</a> ·
+        <a href="https://github.com/Amelia-Mowers/secure-collab-app">GitHub</a> ·
+        <a href="https://matrix.org">Built on Matrix</a>
+      </span>
+    </div>
+  </footer>
+</body>
+</html>
