@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node -e \"require('fs').copyFileSync('dist/index.html','dist/404.html')\"",
     "preview": "vite preview",
     "test": "vitest",
     "e2e": "playwright test",

@@ -1,0 +1,17 @@
+# Cloudflare Pages headers for app.tidework.io — the CSP that GitHub Pages
+# could never set (architecture.md security notes; ADR 0002).
+#
+# Notes on the deliberate loosenings:
+# - script-src 'wasm-unsafe-eval': required to instantiate the WASM core.
+# - connect-src https: — users can point the app at ANY homeserver (the
+#   custom-server override is a product promise), so the target set is open;
+#   https-only still blocks plaintext exfil and mixed content.
+# - style-src 'unsafe-inline': React inline style attributes (kanban colors,
+#   avatars). Tightening to nonces is a tracked nicety, not a launch blocker.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

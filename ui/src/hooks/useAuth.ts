@@ -723,9 +723,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Dynamic client registration + authorization URL; the PKCE verifier
         // stays in this page's WASM client, which is why the popup (not a
         // full-page redirect) carries the user through MAS.
+        // BASE_URL keeps this correct under sub-path deployments (e.g. GH
+        // Pages serves the app at /<repo>/) as well as root-path hosting.
         const authUrl: string = await wasm.MatrixSession.startOauthLogin(
           homeserver,
-          `${window.location.origin}/oauth/callback`,
+          `${window.location.origin}${import.meta.env.BASE_URL}oauth/callback`,
         )
         popup.navigate(authUrl)
         const redirectedUrl = await popup.waitForCallback()
