@@ -20,26 +20,14 @@ interface HomeserverOption {
   description: string
 }
 
+// Two ways in, both first-class: the hosted server, or any server you run.
+// (General public servers were removed — they aren't a supported path; the
+// custom entry covers every self-host/BYO case, including local dev.)
 const SUGGESTED_SERVERS: HomeserverOption[] = [
   {
     label: OFFICIAL_HOMESERVER_LABEL,
     url: OFFICIAL_HOMESERVER_URL,
-    description: 'The official TideWork server (coming soon)',
-  },
-  {
-    label: 'matrix.org',
-    url: 'https://matrix.org',
-    description: 'Large public server — sign in only (register at matrix.org)',
-  },
-  {
-    label: 'envs.net',
-    url: 'https://matrix.envs.net',
-    description: 'Community server — sign in only (register at envs.net)',
-  },
-  {
-    label: 'Local dev server',
-    url: 'http://localhost:6167',
-    description: 'Local Conduit instance for development',
+    description: 'The official hosted server — secure sign-in, managed & backed up',
   },
 ]
 
