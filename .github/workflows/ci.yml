@@ -306,6 +306,9 @@ jobs:
         working-directory: ui
         env:
           GITHUB_PAGES: 'true'
+          # The deployed app defaults to the production homeserver (ADR 0002
+          # phase C); dev/self-host builds keep local Conduit (branding.ts).
+          VITE_DEFAULT_HOMESERVER: 'https://matrix.tidework.io'
         run: npm run build
 
       - name: Setup Pages

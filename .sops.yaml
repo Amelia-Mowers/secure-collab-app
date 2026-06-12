@@ -1,0 +1,11 @@
+# Tier-2 secrets policy (ADR 0002): runtime secrets live encrypted in this
+# repo, decryptable by exactly two identities —
+#   1. Amelia's personal age key (offline, in the password manager)
+#   2. the production droplet's SSH host key (ssh-to-age of
+#      /etc/ssh/ssh_host_ed25519_key — the server decrypts locally;
+#      CI only ever pushes ciphertext)
+creation_rules:
+  - path_regex: infra/secrets/.*
+    age: >-
+      age1rrfapht3kn7h9rasnpxffj69slnd4xfv5af4ys8vv0x3x9umr4assuh944,
+      age1gn44k6mr2wfnnvhz3c89uwc36wdckep3fwsrn9k4r9zdy888eg6sgs8qjk

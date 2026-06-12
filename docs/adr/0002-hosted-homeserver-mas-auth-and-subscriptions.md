@@ -92,8 +92,13 @@ service that locks/unlocks accounts.**
 
 Concretely:
 
-- **Hosted stack:** Synapse + Postgres + MAS + reverse proxy, deployed via
-  matrix-docker-ansible-deploy. Registration closed except through the
+- **Hosted stack:** Synapse + Postgres + MAS + reverse proxy.
+  *(Amended 2026-06-12: deployed via a small in-repo compose stack —
+  `infra/` — rather than matrix-docker-ansible-deploy. With DO-managed
+  Postgres and a single droplet, ~40 lines of compose + two config templates
+  are fully auditable; the playbook earns its complexity at fleet scale.
+  MAS lives at `auth.tidework.io` — its issuer URL is baked into every OAuth
+  session, so it gets a dedicated stable hostname.)* Registration closed except through the
   subscribe flow. Federation **on** (subscription gating applies only to
   accounts on our server; federated collaborators and self-hosters are
   unaffected).

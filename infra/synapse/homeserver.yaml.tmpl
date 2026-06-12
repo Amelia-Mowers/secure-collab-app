@@ -1,0 +1,63 @@
+# Synapse configuration for the TideWork hosted homeserver.
+# Rendered by infra/deploy.sh with envsubst — ${...} placeholders come from
+# the sops-decrypted tier-2 secrets + deploy-time facts. Hand-written and
+# minimal on purpose: every line here is a decision, not generator output.
+
+# Identity: user IDs are @user:tidework.io (permanent — ADR 0002); clients
+# and federation actually connect to matrix.tidework.io via .well-known
+# delegation on the apex.
+server_name: "tidework.io"
+public_baseurl: "https://matrix.tidework.io/"
+
+pid_file: /data/homeserver.pid
+signing_key_path: "/data/tidework.io.signing.key"
+media_store_path: /data/media_store
+report_stats: false
+suppress_key_server_warning: true
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: true # host nginx terminates TLS
+    bind_addresses: ["0.0.0.0"] # container-internal; published on 127.0.0.1 only
+    resources:
+      - names: [client, federation]
+        compress: false
+
+# DO managed Postgres (tier-2 secrets). sslmode=require encrypts the link;
+# upgrading to verify-full with the cluster CA is a tracked follow-up.
+database:
+  name: psycopg2
+  args:
+    user: "${PG_USER}"
+    password: "${PG_PASSWORD}"
+    dbname: synapse
+    host: "${PG_HOST}"
+    port: ${PG_PORT}
+    sslmode: require
+    cp_min: 5
+    cp_max: 10
+
+# Auth is delegated to MAS (MSC3861) — Synapse does no registration or
+# password handling itself. Registration happens only through MAS, which is
+# closed except via the subscribe flow (ADR 0002).
+enable_registration: false
+password_config:
+  enabled: false
+
+experimental_features:
+  msc3861:
+    enabled: true
+    issuer: "https://auth.tidework.io/"
+    client_id: "0000000000000000000SYNAPSE"
+    client_auth_method: client_secret_basic
+    client_secret: "${MAS_SYNAPSE_CLIENT_SECRET}"
+    admin_token: "${MAS_ADMIN_TOKEN}"
+    account_management_url: "https://auth.tidework.io/account"
+
+trusted_key_servers:
+  - server_name: "matrix.org"
+
+# Media limits — generous enough for document workspaces, bounded for a 4GB box.
+max_upload_size: 50M

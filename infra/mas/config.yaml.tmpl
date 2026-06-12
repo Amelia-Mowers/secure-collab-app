@@ -1,0 +1,57 @@
+# MAS (Matrix Authentication Service) configuration for TideWork.
+# Rendered by infra/deploy.sh with envsubst. MAS's generated secrets
+# (encryption key, signing keys) live in /srv/tidework/mas/secrets.yaml on
+# the droplet — created once at first deploy by `mas-cli config generate`
+# and passed as a second --config file; they never enter this repo.
+
+http:
+  public_base: "https://auth.tidework.io/"
+  issuer: "https://auth.tidework.io/"
+  listeners:
+    - name: web
+      resources:
+        - name: discovery
+        - name: human
+        - name: oauth
+        - name: compat
+        - name: graphql
+        - name: assets
+      binds:
+        - address: "[::]:8080" # container-internal; published on 127.0.0.1 only
+      proxy_protocol: false
+    - name: internal
+      resources:
+        - name: health
+      binds:
+        - address: "[::]:8081"
+      proxy_protocol: false
+  trusted_proxies:
+    - 172.16.0.0/12 # docker bridge — host nginx forwards through it
+
+database:
+  uri: "postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT}/mas?sslmode=require"
+
+matrix:
+  homeserver: "tidework.io"
+  secret: "${MAS_ADMIN_TOKEN}"
+  endpoint: "http://synapse:8008/"
+
+# The static OAuth client Synapse uses to talk to MAS (documented convention id).
+clients:
+  - client_id: "0000000000000000000SYNAPSE"
+    client_auth_method: client_secret_basic
+    client_secret: "${MAS_SYNAPSE_CLIENT_SECRET}"
+
+passwords:
+  enabled: true
+
+# Registration is CLOSED: accounts come from the subscribe flow (phase D) or
+# operator-created via `mas-cli manage register-user`. ADR 0002.
+account:
+  password_registration_enabled: false
+  email_change_allowed: false
+
+email:
+  from: '"TideWork" <noreply@tidework.io>'
+  reply_to: '"TideWork" <noreply@tidework.io>'
+  transport: blackhole # no email provider yet — revisit before launch

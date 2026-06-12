@@ -173,8 +173,15 @@ Ordered phases; **A gates everything**:
   PKCE verifier is in-memory); `sessionData()`/`restore()` handle both
   session kinds. The C-phase remainder: wire this into `SignInPage`/`useAuth`
   with `.well-known` auth-metadata detection + the popup/callback page.
-- [ ] **B. Hosted stack** — Synapse + Postgres + MAS (ansible playbook), closed
-  registration, `.well-known` discovery on the brand domain, backups/monitoring.
+- [~] **B. Hosted stack** — _live 2026-06-12:_ Synapse 1.148 + MAS 1.12 in a
+  small in-repo compose stack (`infra/` — conscious deviation from the ansible
+  playbook, recorded in ADR 0002) on the DO droplet against managed Postgres;
+  repo-owned nginx TLS (certbot certonly, renew hook); registration closed;
+  two-tier secrets live (sops/age, droplet decrypts locally). Public smoke
+  green: matrix.tidework.io + auth.tidework.io + MSC3861 delegation. MAS
+  policy correctly rejects non-https client registration (verified).
+  _Remaining:_ apex `.well-known` discovery docs (Cloudflare side), droplet
+  backups/monitoring, Postgres `verify-full` TLS, app move to CF Pages.
 - [~] **C. Client: default homeserver + auth branching** — _auth branching
   done 2026-06-11:_ the sign-in page probes the selected homeserver
   (`checkOauthSupport` → bridge `homeserverSupportsOauth`) and swaps the
@@ -186,8 +193,9 @@ Ordered phases; **A gates everything**:
   reload-restore). _Branding landed 2026-06-11:_ the picker lists **TideWork**
   (`matrix.tidework.io`, "coming soon") first; the default flips to it via
   `VITE_DEFAULT_HOMESERVER` in the hosted build (`ui/src/branding.ts`).
-  _Remaining:_ set that env in the deploy once **B** is live (+ `.well-known`
-  on tidework.io).
+  _Env flip landed 2026-06-12:_ the GitHub Pages deploy builds with
+  `VITE_DEFAULT_HOMESERVER=https://matrix.tidework.io`. _Remaining:_ apex
+  `.well-known` on tidework.io (with **B**'s Cloudflare work).
   _Fixed along the way:_ `ensureHistoryAccess` treated the SDK's "unknown"
   recovery state as "nothing to do" — a fresh device could silently skip the
   recovery prompt when the state settled slowly (observed on the OAuth path);
