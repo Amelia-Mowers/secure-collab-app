@@ -1,130 +1,339 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TideWork — end-to-end encrypted collaborative workspace</title>
-  <meta name="description" content="TideWork is an open-source, end-to-end encrypted, real-time collaborative workspace built on the Matrix protocol. Tables, kanban boards, and documents — with genuine E2E encryption, federation, and data sovereignty." />
-  <style>
-    :root {
-      --ink: #0c1b2a;
-      --ink-soft: #3c5168;
-      --tide: #0e7490;
-      --tide-deep: #155e75;
-      --foam: #f0fafb;
-      --line: #d2e4e9;
-    }
-    * { margin: 0; box-sizing: border-box; }
-    body {
-      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
-      color: var(--ink);
-      background: linear-gradient(180deg, #ffffff 0%, var(--foam) 100%);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    header {
-      max-width: 960px; width: 100%; margin: 0 auto;
-      padding: 28px 24px; display: flex; align-items: center; gap: 10px;
-    }
-    .mark {
-      width: 30px; height: 30px; border-radius: 8px;
-      background: linear-gradient(135deg, var(--tide), var(--tide-deep));
-      position: relative; overflow: hidden;
-    }
-    .mark::after {
-      content: ""; position: absolute; left: -20%; right: -20%; top: 55%; height: 60%;
-      background: rgba(255, 255, 255, 0.85);
-      border-radius: 45% 55% 0 0 / 100% 100% 0 0;
-    }
-    .wordmark { font-weight: 700; font-size: 19px; letter-spacing: -0.02em; }
-    main {
-      max-width: 960px; width: 100%; margin: 0 auto;
-      padding: 56px 24px 72px; flex: 1;
-    }
-    h1 {
-      font-size: clamp(34px, 6vw, 54px); line-height: 1.08;
-      letter-spacing: -0.03em; max-width: 17ch;
-    }
-    h1 em { font-style: normal; color: var(--tide); }
-    .sub {
-      margin-top: 18px; font-size: 19px; line-height: 1.55;
-      color: var(--ink-soft); max-width: 56ch;
-    }
-    .cta { margin-top: 34px; display: flex; gap: 14px; flex-wrap: wrap; }
-    .btn {
-      display: inline-block; padding: 13px 26px; border-radius: 10px;
-      font-size: 16px; font-weight: 600; text-decoration: none;
-      transition: transform 0.08s ease;
-    }
-    .btn:active { transform: translateY(1px); }
-    .btn-primary { background: var(--tide); color: #fff; }
-    .btn-primary:hover { background: var(--tide-deep); }
-    .btn-ghost { color: var(--tide-deep); border: 1.5px solid var(--line); background: #fff; }
-    .btn-ghost:hover { border-color: var(--tide); }
-    .features {
-      margin-top: 72px; display: grid; gap: 18px;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    }
-    .card {
-      background: #fff; border: 1px solid var(--line); border-radius: 14px;
-      padding: 22px;
-    }
-    .card h2 { font-size: 16px; margin-bottom: 8px; }
-    .card p { font-size: 14.5px; line-height: 1.55; color: var(--ink-soft); }
-    footer {
-      border-top: 1px solid var(--line); padding: 22px 24px;
-      font-size: 13.5px; color: var(--ink-soft);
-    }
-    footer .inner {
-      max-width: 960px; margin: 0 auto;
-      display: flex; gap: 18px; flex-wrap: wrap; justify-content: space-between;
-    }
-    footer a { color: var(--tide-deep); }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TideWork — the workspace your server can't read</title>
+<meta name="description" content="TideWork is an open-source, end-to-end encrypted collaborative workspace — tables, kanban boards, and documents over the Matrix protocol. Your server stores ciphertext. Only your devices hold the keys." />
+<link rel="stylesheet" href="/fonts/fonts.css" />
+<style>
+  /* ── Deep-water system ─────────────────────────────────────────────── */
+  :root {
+    --abyss: #03101c;        /* the floor */
+    --deep: #062338;         /* mid-water */
+    --water: #0a3a52;        /* upper water */
+    --surface: #0d4664;      /* near the light */
+    --foam: #eaf6f6;         /* brightest text */
+    --mist: #9fc3cd;         /* secondary text */
+    --faint: #5c8292;        /* tertiary / ticks */
+    --spray: #67e2d4;        /* luminous accent */
+    --buoy: #ff9e57;         /* CTA — buoy orange */
+    --buoy-deep: #f08236;
+    --line: rgba(154, 203, 212, 0.16);
+    --serif: 'Fraunces', Georgia, serif;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  * { margin: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    color: var(--mist);
+    background:
+      radial-gradient(120% 70% at 70% -10%, #11597d 0%, transparent 55%),
+      linear-gradient(180deg, var(--surface) 0%, var(--water) 18%, var(--deep) 52%, var(--abyss) 100%);
+    background-color: var(--abyss);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+  ::selection { background: var(--spray); color: var(--abyss); }
+
+  /* grain — faint, so the gradient doesn't band */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1;
+    opacity: 0.05; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; position: relative; }
+
+  /* ── Depth rail: the page is a sounding line ───────────────────────── */
+  .depth {
+    position: absolute; left: -2px; top: 0; bottom: 0; width: 1px;
+    background: linear-gradient(180deg, transparent, var(--line) 6%, var(--line) 94%, transparent);
+  }
+  .tick {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+    color: var(--faint); display: block; margin-bottom: 26px;
+  }
+  .tick::before { content: "— "; color: var(--spray); }
+
+  /* ── Header ────────────────────────────────────────────────────────── */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(10px);
+    background: linear-gradient(180deg, rgba(6, 30, 46, 0.85), rgba(6, 30, 46, 0.55));
+    border-bottom: 1px solid var(--line);
+  }
+  .nav { display: flex; align-items: center; gap: 28px; padding: 16px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; margin-right: auto; }
+  .mark { width: 28px; height: 28px; border-radius: 7px; position: relative; overflow: hidden;
+    background: linear-gradient(135deg, var(--spray), #1b8d96); }
+  .mark::after { content: ""; position: absolute; left: -25%; right: -25%; top: 52%; height: 70%;
+    background: var(--abyss); border-radius: 50% 50% 0 0 / 100% 100% 0 0; opacity: 0.85; }
+  .brand b { font-family: var(--serif); font-weight: 600; font-size: 18px; color: var(--foam); letter-spacing: 0.01em; }
+  .nav a { color: var(--mist); text-decoration: none; font-size: 14.5px; }
+  .nav a:hover { color: var(--foam); }
+  .nav .go {
+    color: var(--abyss); background: var(--buoy); padding: 8px 18px; border-radius: 8px;
+    font-weight: 600; transition: background 0.15s ease;
+  }
+  .nav .go:hover { background: var(--buoy-deep); color: var(--abyss); }
+  @media (max-width: 640px) { .nav a:not(.go):not(.brand) { display: none; } }
+
+  /* ── Hero — the surface ────────────────────────────────────────────── */
+  .hero { padding: 110px 0 150px; position: relative; }
+  .hero h1 {
+    font-family: var(--serif); font-optical-sizing: auto;
+    font-size: clamp(42px, 7.2vw, 78px); font-weight: 560;
+    line-height: 1.02; letter-spacing: -0.022em; color: var(--foam);
+    max-width: 14ch;
+  }
+  .hero h1 .cant { font-style: italic; color: var(--spray); }
+  .hero .sub { margin-top: 26px; font-size: 18.5px; max-width: 54ch; }
+  .hero .sub strong { color: var(--foam); font-weight: 600; }
+  .cta { margin-top: 38px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 14px 28px; border-radius: 10px; font-size: 16px;
+    font-weight: 600; text-decoration: none; transition: transform 0.08s, background 0.15s, border-color 0.15s;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-buoy { background: var(--buoy); color: var(--abyss); box-shadow: 0 6px 30px rgba(255, 158, 87, 0.25); }
+  .btn-buoy:hover { background: var(--buoy-deep); }
+  .btn-line { color: var(--foam); border: 1px solid var(--line); background: rgba(255,255,255,0.03); }
+  .btn-line:hover { border-color: var(--spray); }
+  .hero .fine { margin-top: 18px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+
+  /* staggered surfacing */
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  .hero > .wrap > * { animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .hero > .wrap > *:nth-child(2) { animation-delay: 0.1s; }
+  .hero > .wrap > *:nth-child(3) { animation-delay: 0.2s; }
+  .hero > .wrap > *:nth-child(4) { animation-delay: 0.32s; }
+  .hero > .wrap > *:nth-child(5) { animation-delay: 0.42s; }
+
+  /* drifting waves at the hero's waterline */
+  .waves { position: absolute; left: 0; right: 0; bottom: 0; height: 90px; overflow: hidden; opacity: 0.55; }
+  .wave { position: absolute; left: 0; bottom: 0; width: 200%; height: 100%; background-repeat: repeat-x; background-size: 50% 100%; }
+  .w1 { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 90' preserveAspectRatio='none'%3E%3Cpath d='M0,55 C200,25 400,85 600,55 C800,25 1000,85 1200,55 L1200,90 L0,90 Z' fill='%23103e58'/%3E%3C/svg%3E");
+    animation: drift 26s linear infinite; }
+  .w2 { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 90' preserveAspectRatio='none'%3E%3Cpath d='M0,65 C250,40 450,90 650,62 C850,38 1050,88 1200,60 L1200,90 L0,90 Z' fill='%230a3048'/%3E%3C/svg%3E");
+    animation: drift 17s linear infinite reverse; }
+  @keyframes drift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .wave, .hero > .wrap > * { animation: none !important; }
+  }
+
+  /* ── Sections ─────────────────────────────────────────────────────── */
+  section { padding: 96px 0; position: relative; }
+  .eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--spray); }
+  h2 { font-family: var(--serif); font-size: clamp(28px, 4vw, 40px); font-weight: 560; color: var(--foam);
+    letter-spacing: -0.015em; margin: 10px 0 14px; max-width: 24ch; }
+  .lede { max-width: 58ch; }
+
+  /* ── The decrypt table — hover to read ─────────────────────────────── */
+  .vault { margin-top: 44px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+    background: rgba(4, 22, 35, 0.6); }
+  .vault-head { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--mono); font-size: 12px;
+    letter-spacing: 0.08em; color: var(--faint); border-bottom: 1px solid var(--line); }
+  .vault-head div { padding: 12px 18px; }
+  .vault-head div + div { border-left: 1px solid var(--line); color: var(--spray); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: none; }
+  .cell { padding: 14px 18px; font-family: var(--mono); font-size: 13px; overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis; }
+  .cell.cipher { color: var(--faint); }
+  .cell.plain { border-left: 1px solid var(--line); color: var(--foam); position: relative; }
+  .cell.plain > span { transition: opacity 0.35s ease, filter 0.35s ease; }
+  .cell.plain .hid { position: absolute; inset: 0; padding: 14px 18px; color: var(--faint); }
+  .row:not(:hover) .cell.plain .txt { opacity: 0; filter: blur(6px); }
+  .row:hover .cell.plain .hid { opacity: 0; }
+  .row:hover { background: rgba(103, 226, 212, 0.04); }
+  .vault-cap { font-size: 13.5px; color: var(--faint); padding: 14px 18px; border-top: 1px solid var(--line); }
+  .vault-cap b { color: var(--mist); font-weight: 600; }
+  @media (hover: none) { /* touch: show plaintext, the metaphor still reads */
+    .row .cell.plain .txt { opacity: 1 !important; filter: none !important; }
+    .row .cell.plain .hid { opacity: 0; }
+  }
+  @media (max-width: 640px) {
+    .vault-head div:first-child, .cell.cipher { display: none; }
+    .vault-head, .row { grid-template-columns: 1fr; }
+    .cell.plain { border-left: none; }
+  }
+
+  /* ── Feature soundings ─────────────────────────────────────────────── */
+  .soundings { margin-top: 44px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .sound { border: 1px solid var(--line); border-radius: 14px; padding: 26px 24px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent);
+    transition: border-color 0.2s ease, transform 0.2s ease; }
+  .sound:hover { border-color: rgba(103, 226, 212, 0.45); transform: translateY(-3px); }
+  .sound .no { font-family: var(--mono); font-size: 12px; color: var(--spray); letter-spacing: 0.12em; }
+  .sound h3 { font-family: var(--serif); font-size: 21px; font-weight: 560; color: var(--foam); margin: 10px 0 8px; }
+  .sound p { font-size: 14.5px; }
+  .sound code { font-family: var(--mono); font-size: 12.5px; color: var(--spray); background: rgba(103,226,212,0.08);
+    padding: 1px 6px; border-radius: 5px; }
+
+  /* ── Pricing — the deep ────────────────────────────────────────────── */
+  .fares { margin-top: 44px; display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); max-width: 760px; }
+  .fare { border: 1px solid var(--line); border-radius: 16px; padding: 30px 28px; background: rgba(3, 16, 28, 0.7); }
+  .fare.hosted { border-color: rgba(255, 158, 87, 0.4); position: relative; }
+  .fare.hosted::before { content: "EARLY TIDE"; position: absolute; top: -10px; left: 24px;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--abyss);
+    background: var(--buoy); padding: 3px 10px; border-radius: 99px; }
+  .fare h3 { font-family: var(--serif); font-size: 22px; font-weight: 560; color: var(--foam); }
+  .price { margin: 14px 0 4px; font-family: var(--serif); font-size: 40px; color: var(--foam); }
+  .price small { font-family: var(--sans); font-size: 14px; color: var(--faint); }
+  .fare ul { list-style: none; padding: 0; margin: 18px 0 26px; }
+  .fare li { font-size: 14.5px; padding: 5px 0 5px 22px; position: relative; }
+  .fare li::before { content: "~"; position: absolute; left: 2px; color: var(--spray); font-family: var(--mono); }
+  .fare .btn { width: 100%; text-align: center; }
+
+  /* ── Footer — the seafloor ─────────────────────────────────────────── */
+  footer { border-top: 1px solid var(--line); padding: 40px 0 48px; background: var(--abyss); position: relative; }
+  .foot { display: flex; gap: 20px; flex-wrap: wrap; justify-content: space-between; align-items: baseline; }
+  footer a { color: var(--mist); }
+  footer a:hover { color: var(--foam); }
+  .vow { margin-top: 18px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .vow::before { content: "$ "; color: var(--spray); }
+</style>
 </head>
 <body>
-  <header>
-    <div class="mark" aria-hidden="true"></div>
-    <span class="wordmark">TideWork</span>
-  </header>
 
-  <main>
-    <h1>Your team's workspace, <em>actually</em> encrypted.</h1>
-    <p class="sub">
-      TideWork is an open-source collaborative workspace — tables, kanban
-      boards, and documents that sync in real time — built on the Matrix
-      protocol with genuine end-to-end encryption. Your server never sees
-      your data. Neither do we.
-    </p>
-    <div class="cta">
-      <a class="btn btn-primary" href="https://app.tidework.io">Open TideWork</a>
-      <a class="btn btn-ghost" href="https://github.com/Amelia-Mowers/secure-collab-app">Source on GitHub</a>
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="/"><span class="mark" aria-hidden="true"></span><b>TideWork</b></a>
+    <a href="#vault">Proof</a>
+    <a href="#charts">How it works</a>
+    <a href="#fares">Pricing</a>
+    <a href="https://github.com/Amelia-Mowers/secure-collab-app">GitHub</a>
+    <a class="go" href="https://app.tidework.io">Open app</a>
+  </div>
+</header>
+
+<main>
+  <!-- 0 m ─ the surface -->
+  <div class="hero">
+    <div class="wrap">
+      <span class="tick">0 m · the surface</span>
+      <h1>The workspace your server <span class="cant">can't</span> read.</h1>
+      <p class="sub">
+        Tables, kanban boards, and documents that sync in real time — built on
+        the Matrix protocol with <strong>genuine end-to-end encryption</strong>.
+        Every cell is encrypted on your device before it ever leaves.
+        Your server stores ciphertext. So do we.
+      </p>
+      <div class="cta">
+        <a class="btn btn-buoy" href="https://app.tidework.io">Open TideWork</a>
+        <a class="btn btn-line" href="https://github.com/Amelia-Mowers/secure-collab-app">Read the source</a>
+      </div>
+      <p class="fine">open source · federated · no telemetry — and this page runs zero JavaScript</p>
     </div>
+    <div class="waves" aria-hidden="true"><div class="wave w1"></div><div class="wave w2"></div></div>
+  </div>
 
-    <div class="features">
-      <div class="card">
-        <h2>🔐 End-to-end encrypted</h2>
-        <p>Every cell, card, and document is encrypted on your device with
-        Matrix's Megolm protocol. Auditable in the open-source code — not
-        marketing.</p>
+  <!-- −40 m ─ the proof -->
+  <section id="vault">
+    <div class="wrap">
+      <span class="depth" aria-hidden="true"></span>
+      <span class="tick">−40 m · the proof</span>
+      <h2>What the server sees. What you see.</h2>
+      <p class="lede">
+        The left column is your project board exactly as it crosses the wire
+        and sits at rest on the homeserver. The right column exists only on
+        devices that hold the keys. <b>Hover a row to decrypt it.</b>
+      </p>
+      <div class="vault" role="img" aria-label="Comparison of encrypted server-side data and decrypted client-side data">
+        <div class="vault-head"><div>server: ciphertext at rest</div><div>your device: decrypted</div></div>
+        <div class="row">
+          <div class="cell cipher">m.megolm.v1 · AwgBEpA…ZkXq31u9cQH8mAjT4vRw==</div>
+          <div class="cell plain"><span class="hid">●●●●●●●●●●●●●●●</span><span class="txt">Launch checklist — Status: In&nbsp;progress</span></div>
+        </div>
+        <div class="row">
+          <div class="cell cipher">m.megolm.v1 · AwgCKjM…o2WfBd7lqGyNn5sHxEt0Aw==</div>
+          <div class="cell plain"><span class="hid">●●●●●●●●●●●●●●●</span><span class="txt">Q3 budget — Owner: amelia — Due: Jul&nbsp;18</span></div>
+        </div>
+        <div class="row">
+          <div class="cell cipher">m.megolm.v1 · AwgDR8x…Vt1mPzaa0KcU6yhJe4dLBQ==</div>
+          <div class="cell plain"><span class="hid">●●●●●●●●●●●●●●●</span><span class="txt">Incident retro notes — 14 comments</span></div>
+        </div>
       </div>
-      <div class="card">
-        <h2>🌐 Federated &amp; sovereign</h2>
-        <p>Use our hosted server or point the app at your own Matrix
-        homeserver. Collaborate across servers. Your identity and data stay
-        yours.</p>
-      </div>
-      <div class="card">
-        <h2>📊 Everything is a table</h2>
-        <p>One data model under tables, kanban, and document views — with
-        conflict-free real-time sync across all your devices.</p>
+      <div class="vault" style="border:none; background:none;"><div class="vault-cap" style="border:1px solid var(--line); border-radius:12px;">
+        Verified in the open: encryption, key backup, and device verification are
+        <b>tested end-to-end in CI on every change</b> — against a real homeserver, in real browsers.
+      </div></div>
+    </div>
+  </section>
+
+  <!-- −200 m ─ the charts -->
+  <section id="charts">
+    <div class="wrap">
+      <span class="tick">−200 m · the charts</span>
+      <h2>One honest data model, all the way down.</h2>
+      <div class="soundings">
+        <div class="sound">
+          <span class="no">SOUNDING 01</span>
+          <h3>Everything is a table</h3>
+          <p>Rows, schema, even view configurations — one event type,
+          <code>io.tidework.cell.update</code>, one merge rule, one code path.
+          Kanban and documents are just projections of the same encrypted cells.</p>
+        </div>
+        <div class="sound">
+          <span class="no">SOUNDING 02</span>
+          <h3>Conflict-free, offline-friendly</h3>
+          <p>Last-write-wins cells on a hybrid logical clock converge across
+          devices and collaborators — no locks, no merge dialogs, no lost edits
+          after a reload.</p>
+        </div>
+        <div class="sound">
+          <span class="no">SOUNDING 03</span>
+          <h3>Federated &amp; sovereign</h3>
+          <p>Use our hosted server, or point the app at any Matrix homeserver
+          you trust — including your own. Collaborate across servers. Leave
+          whenever you like; it's your data and your identity.</p>
+        </div>
       </div>
     </div>
-  </main>
+  </section>
 
-  <footer>
-    <div class="inner">
+  <!-- −1000 m ─ the fares -->
+  <section id="fares">
+    <div class="wrap">
+      <span class="tick">−1000 m · the fares</span>
+      <h2>Same code. Same encryption. Your choice of captain.</h2>
+      <p class="lede">TideWork is open-core: the entire workspace — crypto included — is
+      open source. Pay us to run the boring parts, or run them yourself.</p>
+      <div class="fares">
+        <div class="fare hosted">
+          <h3>Hosted</h3>
+          <div class="price">$12<small> / month</small></div>
+          <ul>
+            <li>Account on <b>tidework.io</b> — managed, backed up</li>
+            <li>Unlimited encrypted workspaces &amp; devices</li>
+            <li>Federates with the whole Matrix network</li>
+            <li>Cancel anytime — your keys stay yours</li>
+          </ul>
+          <a class="btn btn-buoy" href="/subscribe">Subscribe</a>
+        </div>
+        <div class="fare">
+          <h3>Self-hosted</h3>
+          <div class="price">Free<small> — forever</small></div>
+          <ul>
+            <li>The same app, pointed at your homeserver</li>
+            <li>Full data &amp; identity sovereignty</li>
+            <li>Apache-2.0 licensed, auditable</li>
+            <li>Deploy configs included in the repo</li>
+          </ul>
+          <a class="btn btn-line" href="https://github.com/Amelia-Mowers/secure-collab-app">Run your own</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- the seafloor -->
+<footer>
+  <div class="wrap">
+    <div class="foot">
       <span>© 2026 TideWork · tidework.io</span>
       <span>
         <a href="https://app.tidework.io">App</a> ·
@@ -132,6 +341,9 @@
         <a href="https://matrix.org">Built on Matrix</a>
       </span>
     </div>
-  </footer>
+    <p class="vow">this page loads no JavaScript, sets no cookies, and makes zero third-party requests — fonts included.</p>
+  </div>
+</footer>
+
 </body>
 </html>
