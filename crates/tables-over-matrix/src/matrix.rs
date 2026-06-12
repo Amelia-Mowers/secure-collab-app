@@ -105,7 +105,7 @@ mod matrix_impl {
     /// recommended by the Matrix spec. This is a timeline (message-like)
     /// event, not a state event, since each cell write is an append to
     /// the room timeline.
-    pub const CELL_UPDATE_EVENT_TYPE: &str = "com.securecollab.cell.update";
+    pub const CELL_UPDATE_EVENT_TYPE: &str = "io.tidework.cell.update";
 
     /// Matrix event content for a cell update.
     ///
@@ -132,7 +132,7 @@ mod matrix_impl {
     /// }
     /// ```
     #[derive(Clone, Debug, Deserialize, Serialize, EventContent)]
-    #[ruma_event(type = "com.securecollab.cell.update", kind = MessageLike)]
+    #[ruma_event(type = "io.tidework.cell.update", kind = MessageLike)]
     pub struct CellUpdateEventContent {
         /// Wire format version for forward compatibility.
         #[serde(default = "default_version")]
@@ -288,7 +288,7 @@ mod matrix_impl {
             self.client
                 .matrix_auth()
                 .login_username(username, password)
-                .initial_device_display_name("Secure Collab Client")
+                .initial_device_display_name("TideWork Client")
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to login: {e}"))?;
 
@@ -354,7 +354,7 @@ mod matrix_impl {
         }
 
         /// Parse a raw Matrix event JSON into a `CellUpdate`, if it is
-        /// a `com.securecollab.cell.update` event.
+        /// a `io.tidework.cell.update` event.
         ///
         /// Returns `None` if the event is a different type or fails to parse.
         pub fn extract_cell_update(event_json: &str) -> Option<ReceivedCellUpdate> {
@@ -584,7 +584,7 @@ mod matrix_impl {
         fn test_extract_cell_update_from_event_json() {
             // The wire format has value encoded as a JSON string
             let event_json = json!({
-                "type": "com.securecollab.cell.update",
+                "type": "io.tidework.cell.update",
                 "event_id": "$abc123:example.com",
                 "origin_server_ts": 1709312400000u64,
                 "content": {
@@ -611,7 +611,7 @@ mod matrix_impl {
         #[test]
         fn test_extract_cell_update_with_float_value() {
             let event_json = json!({
-                "type": "com.securecollab.cell.update",
+                "type": "io.tidework.cell.update",
                 "event_id": "$float123:example.com",
                 "origin_server_ts": 100,
                 "content": {

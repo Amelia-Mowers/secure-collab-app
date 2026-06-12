@@ -138,7 +138,7 @@ export function WorkspacesPage() {
               <path d="M5 7V5a3 3 0 016 0v2" />
             </svg>
           </div>
-          Secure Collab
+          TideWork
         </div>
         <div className="workspaces-page__user">
           <AccountSwitcher direction="down" />

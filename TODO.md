@@ -183,8 +183,11 @@ Ordered phases; **A gates everything**:
   the verify gate, and recovery bootstrap for free; `/oauth/callback` posts
   the redirect back to the opener). Validated end-to-end through the real UI
   (`ui/e2e/oauth.spec.ts`: detect → popup → MAS → recovery key → workspaces →
-  reload-restore). _Remaining:_ default the homeserver picker to our hosted
-  server once **B** exists (+ `.well-known` on the brand domain).
+  reload-restore). _Branding landed 2026-06-11:_ the picker lists **TideWork**
+  (`matrix.tidework.io`, "coming soon") first; the default flips to it via
+  `VITE_DEFAULT_HOMESERVER` in the hosted build (`ui/src/branding.ts`).
+  _Remaining:_ set that env in the deploy once **B** is live (+ `.well-known`
+  on tidework.io).
   _Fixed along the way:_ `ensureHistoryAccess` treated the SDK's "unknown"
   recovery state as "nothing to do" — a fresh device could silently skip the
   recovery prompt when the state settled slowly (observed on the OAuth path);
@@ -258,7 +261,7 @@ Independent of A–F (client-only — can ship before any infra exists):
   `CellUpdate`s — so it is now `#[doc(hidden)]` and documented as test
   support (the bridges don't use it).
 - [ ] **Delete the per-device IndexedDB store on sign-out** — login/register now
-  create one store per device identity (`sc-{user}-{ts}`); signing out leaves it
+  create one store per device identity (`tw-{user}-{ts}`); signing out leaves it
   orphaned. Expose the name (it's in the session blob) and
   `indexedDB.deleteDatabase` it when the account is removed.
 - [ ] **ADR: open up the view-type taxonomy** — the closed `ViewType` enum makes

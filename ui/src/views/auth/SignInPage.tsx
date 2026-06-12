@@ -3,6 +3,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import type { AccountSession } from '@/hooks/useAuth'
 import { openOauthPopup } from '@/auth/oauthPopup'
+import {
+  APP_NAME,
+  TAGLINE,
+  DEFAULT_HOMESERVER_URL,
+  OFFICIAL_HOMESERVER_URL,
+  OFFICIAL_HOMESERVER_LABEL,
+} from '@/branding'
 import './SignInPage.css'
 
 // ── Suggested homeservers ────────────────────────────────────────────────────
@@ -14,6 +21,11 @@ interface HomeserverOption {
 }
 
 const SUGGESTED_SERVERS: HomeserverOption[] = [
+  {
+    label: OFFICIAL_HOMESERVER_LABEL,
+    url: OFFICIAL_HOMESERVER_URL,
+    description: 'The official TideWork server (coming soon)',
+  },
   {
     label: 'matrix.org',
     url: 'https://matrix.org',
@@ -40,9 +52,9 @@ export function SignInPage() {
   const [searchParams] = useSearchParams()
   const isAddAccount = searchParams.get('addAccount') === '1'
   const [mode, setMode] = useState<AuthMode>('signin')
-  const [homeserver, setHomeserver] = useState('http://localhost:6167')
+  const [homeserver, setHomeserver] = useState(DEFAULT_HOMESERVER_URL)
   const [showCustomServer, setShowCustomServer] = useState(
-    !SUGGESTED_SERVERS.some(s => s.url === 'http://localhost:6167'),
+    !SUGGESTED_SERVERS.some(s => s.url === DEFAULT_HOMESERVER_URL),
   )
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -227,12 +239,12 @@ export function SignInPage() {
         </div>
 
         <h1 className="signin__title">
-          {isAddAccount ? 'Add Account' : 'Secure Collab'}
+          {isAddAccount ? 'Add Account' : APP_NAME}
         </h1>
         <p className="signin__subtitle">
           {isAddAccount
             ? 'Sign in or create a Matrix account'
-            : 'End-to-end encrypted collaborative workspace'}
+            : TAGLINE}
         </p>
 
         {/* ── Sign in / Sign up tabs ─────────────────────────── */}

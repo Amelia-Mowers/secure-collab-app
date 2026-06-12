@@ -1,6 +1,6 @@
-# Secure Collaborative Workspace over Matrix
+# TideWork
 
-An open-source, end-to-end encrypted, real-time collaborative workspace built on the Matrix protocol. Think Notion or Airtable, but with genuine E2E encryption, federation, and full data sovereignty.
+**[tidework.io](https://tidework.io)** — an open-source, end-to-end encrypted, real-time collaborative workspace built on the Matrix protocol. Think Notion or Airtable, but with genuine E2E encryption, federation, and full data sovereignty.
 
 ## Features
 
