@@ -9,6 +9,7 @@ import {
   DEFAULT_HOMESERVER_URL,
   OFFICIAL_HOMESERVER_URL,
   OFFICIAL_HOMESERVER_LABEL,
+  SUBSCRIBE_URL,
 } from '@/branding'
 import './SignInPage.css'
 
@@ -293,8 +294,8 @@ export function SignInPage() {
           /* ── Next-gen auth: the server owns sign-in/registration ────── */
           <div className="signin__form" data-testid="oauth-signin">
             <p className="signin__hint">
-              This server uses secure single sign-on. You&apos;ll sign in — or create
-              your account — in a popup on your server&apos;s own page.
+              This server uses secure single sign-on. You&apos;ll sign in in a popup on
+              your server&apos;s own page.
             </p>
             {displayError && (
               <div className="signin__error" role="alert">
@@ -309,6 +310,15 @@ export function SignInPage() {
             >
               {loading ? 'Waiting for sign-in…' : 'Continue with secure sign-in'}
             </button>
+            {homeserver.trim() === OFFICIAL_HOMESERVER_URL && (
+              <p className="signin__hint">
+                New here?{' '}
+                <a href={SUBSCRIBE_URL} target="_blank" rel="noreferrer">
+                  Subscribe to create your account
+                </a>{' '}
+                — you&apos;ll get a registration token to use at sign-up.
+              </p>
+            )}
           </div>
         ) : (
         <form className="signin__form" onSubmit={handleSubmit}>

@@ -21,3 +21,6 @@ export const OFFICIAL_HOMESERVER_LABEL = 'TideWork'
  */
 export const DEFAULT_HOMESERVER_URL: string =
   (import.meta.env.VITE_DEFAULT_HOMESERVER as string | undefined) ?? 'http://localhost:6167'
+
+/** Where new users subscribe to get a hosted account (ADR 0002 phase D). */
+export const SUBSCRIBE_URL = 'https://billing.tidework.io/subscribe'

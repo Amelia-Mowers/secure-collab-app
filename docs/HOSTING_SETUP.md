@@ -122,8 +122,19 @@ matrix.tidework.io    → DO droplet: proxy → Synapse + MAS  ← managed PG  [
 - [ ] Decide the initial pricing shape (monthly/yearly, trial length, grace
       period before locking) — these become the policy knobs from ADR 0002's
       open questions.
-- [ ] Don't create webhooks/products yet — they need the Worker URL from the
-      deploy work.
+- [ ] **Extend `CLOUDFLARE_DEPLOY_TOKEN`** (edit the existing token — the
+      value stays the same): add **Account → Workers Scripts → Edit** and
+      **Zone → Workers Routes → Edit (tidework.io)** — required for the
+      billing Worker deploy + its custom domain.
+- [ ] **After the first Worker deploy**: Stripe dashboard → Developers →
+      Webhooks → Add endpoint `https://billing.tidework.io/webhook`, events
+      `customer.subscription.updated` + `customer.subscription.deleted` →
+      copy the `whsec_…` → `gh secret set STRIPE_WEBHOOK_SIGNING_SECRET`.
+- [ ] **Use TEST mode first**: make sure `STRIPE_API_KEY` is the `sk_test_…`
+      key until the flow is validated with card `4242 4242 4242 4242`; swap
+      to the live key (and a live webhook endpoint/secret) afterwards.
+      No product/price setup needed — the Worker uses inline price_data
+      ($12/mo, configurable in `billing/wrangler.toml`).
 
 ## 7. Things to write down in your password manager
 
