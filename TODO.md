@@ -180,8 +180,16 @@ Ordered phases; **A gates everything**:
   two-tier secrets live (sops/age, droplet decrypts locally). Public smoke
   green: matrix.tidework.io + auth.tidework.io + MSC3861 delegation. MAS
   policy correctly rejects non-https client registration (verified).
-  _Remaining:_ apex `.well-known` discovery docs (Cloudflare side), droplet
-  backups/monitoring, Postgres `verify-full` TLS, app move to CF Pages.
+  _2026-06-12 (later):_ apex `.well-known` live on tidework.io, app moved to
+  Cloudflare Pages at **app.tidework.io** with real CSP headers, landing page
+  on the apex (`site/`), domains/DNS wired idempotently by the
+  `deploy-cloudflare` CI job. **Validated end to end twice**: the deployed
+  app completed the full SSO journey (probe → MAS popup → recovery key →
+  workspaces → reload-restore) against production
+  (`ui/e2e/validate-production.mjs`) — which also flushed out and fixed the
+  sub-path OAuth bugs (redirect URI BASE_URL + router basename + SPA 404).
+  _Remaining:_ droplet backups/monitoring, Postgres `verify-full` TLS,
+  retire the GitHub Pages deploy job after a soak period.
 - [~] **C. Client: default homeserver + auth branching** — _auth branching
   done 2026-06-11:_ the sign-in page probes the selected homeserver
   (`checkOauthSupport` → bridge `homeserverSupportsOauth`) and swaps the
