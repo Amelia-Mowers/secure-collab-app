@@ -58,21 +58,21 @@ matrix.tidework.io    → DO droplet: proxy → Synapse + MAS  ← managed PG  [
 ## 3. DigitalOcean
 
 - [x] Create a DigitalOcean account (same 2FA standard).
-- [ ] Pick the **region** — this is your jurisdiction statement as much as a
+- [x] Pick the **region** — this is your jurisdiction statement as much as a
       latency choice (AMS3/FRA1 for an EU posture).
-- [ ] Create a **droplet**: Ubuntu LTS, 4GB RAM / 2 vCPU to start
+- [x] Create a **droplet**: Ubuntu LTS, 4GB RAM / 2 vCPU to start
       (~$24/mo), with your SSH public key (create a dedicated keypair for
       this; don't reuse your personal one).
-- [ ] Create a **managed Postgres cluster** (smallest tier, ~$15/mo), same
+- [x] Create a **managed Postgres cluster** (smallest tier, ~$15/mo), same
       region/VPC as the droplet. Restrict its firewall to the droplet.
-- [ ] Create a **scoped API token** (project-limited if you use DO projects)
+- [x] Create a **scoped API token** (project-limited if you use DO projects)
       → GitHub Actions secrets later (tier 1).
 - [ ] Enable droplet backups or plan snapshot cadence (the droplet holds
       Synapse media + MAS state between Postgres backups).
 
 ## 4. DNS records (in Cloudflare, once droplet exists)
 
-- [ ] `matrix.tidework.io` → A/AAAA to the droplet — **grey cloud (DNS only)**.
+- [x] `matrix.tidework.io` → A/AAAA to the droplet — **grey cloud (DNS only)**.
       This is deliberate, not an oversight: proxying the homeserver would
       hand Cloudflare every bearer token. See ADR 0002 before changing it.
 - [ ] `app.tidework.io` → Pages (created at deploy time) — proxied is fine.
@@ -96,7 +96,7 @@ matrix.tidework.io    → DO droplet: proxy → Synapse + MAS  ← managed PG  [
       | `CLOUDFLARE_ZONE_ID` | zone id (hex) | same Overview sidebar ("Zone ID"). | now |
       | `CLOUDFLARE_DEPLOY_TOKEN` | the `tidework-deploy` API token | My Profile → API Tokens (create per the policy above when Pages/Worker deploys are built). | Pages deploy |
       | `DIGITALOCEAN_ACCESS_TOKEN` | DO API token | cloud.digitalocean.com → **API** (left nav) → Tokens → Generate New Token. Use **custom scopes** (droplet + database read/write), not full access. Shown once. | now |
-      | `DEPLOY_SSH_KEY` | the **CI deploy** private key (full file contents incl. header/footer) | generate a *second* keypair, separate from your admin key: `ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh	idework_deploy -C "tidework-ci"` (no passphrase — CI can't type one); its `.pub` gets added to the droplet's authorized_keys during deploy setup. | droplet deploy |
+      | `DEPLOY_SSH_KEY` | the **CI deploy** private key (full file contents incl. header/footer) | generate a *second* keypair, separate from your admin key: `ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\tidework_deploy -C "tidework-ci"` (no passphrase — CI can't type one); its `.pub` gets added to the droplet's authorized_keys during deploy setup. | droplet deploy |
       | `DEPLOY_KNOWN_HOSTS` | the droplet's pinned host key | `ssh-keyscan matrix.tidework.io` (or the IP) once the droplet exists — pinning beats accept-on-first-use in CI. | droplet deploy |
       | `STRIPE_API_KEY` | Stripe secret key (`sk_live_…`) | dashboard.stripe.com → **Developers → API keys**. The billing Worker's runtime secrets flow via `wrangler secret put` from these (the recorded exception — Cloudflare is that component's runtime). | phase D |
       | `STRIPE_WEBHOOK_SIGNING_SECRET` | `whsec_…` | dashboard.stripe.com → Developers → **Webhooks** → the endpoint created for the billing Worker. | phase D |
