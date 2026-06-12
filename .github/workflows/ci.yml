@@ -291,6 +291,19 @@ jobs:
           npx wrangler@4 pages project create tidework-app --production-branch=main 2>/dev/null || true
           npx wrangler@4 pages deploy ui/dist --project-name=tidework-app --branch=main
 
+      # Billing Worker (ADR 0002 phase D). Secrets are pushed every deploy —
+      # the recorded two-tier exception (Cloudflare is this component's
+      # runtime). The webhook secret may not exist until the Stripe endpoint
+      # is created against the first deploy; tolerated until then.
+      - name: Deploy billing Worker
+        working-directory: billing
+        run: |
+          npm ci
+          printf '%s' "${{ secrets.STRIPE_API_KEY }}" | npx wrangler secret put STRIPE_API_KEY || true
+          printf '%s' "${{ secrets.MAS_BILLING_CLIENT_SECRET }}" | npx wrangler secret put MAS_BILLING_CLIENT_SECRET || true
+          printf '%s' "${{ secrets.STRIPE_WEBHOOK_SIGNING_SECRET }}" | npx wrangler secret put STRIPE_WEBHOOK_SIGNING_SECRET || echo "  webhook secret pending (create the Stripe endpoint first)"
+          npx wrangler deploy
+
       # Idempotent: attach custom domains to the Pages projects and ensure the
       # proxied DNS records exist. Non-fatal — a deploy shouldn't fail because
       # a domain is already attached or still validating.

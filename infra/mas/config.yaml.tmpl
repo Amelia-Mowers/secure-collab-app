@@ -16,6 +16,10 @@ http:
         - name: compat
         - name: graphql
         - name: assets
+        # Admin REST API for the billing Worker (token issuance, lock/unlock).
+        # Gated: only clients in policy.data.admin_clients can mint
+        # urn:mas:admin tokens, via client_credentials with their secret.
+        - name: adminapi
       binds:
         - address: "[::]:8080" # container-internal; published on 127.0.0.1 only
       proxy_protocol: false
@@ -41,15 +45,28 @@ clients:
   - client_id: "0000000000000000000SYNAPSE"
     client_auth_method: client_secret_basic
     client_secret: "${MAS_SYNAPSE_CLIENT_SECRET}"
+  # The billing Worker (Stripe ↔ MAS): client_credentials only, allowlisted
+  # for the admin API below. Secret is tier-2 (sops) + a Worker secret.
+  - client_id: "00000000000000000000STR1PE"
+    client_auth_method: client_secret_basic
+    client_secret: "${MAS_BILLING_CLIENT_SECRET}"
 
 passwords:
   enabled: true
 
-# Registration is CLOSED: accounts come from the subscribe flow (phase D) or
-# operator-created via `mas-cli manage register-user`. ADR 0002.
+# Registration happens ONLY with a single-use token issued by the billing
+# Worker after Stripe checkout (ADR 0002 phase D) — or operator-created via
+# `mas-cli manage register-user`.
 account:
-  password_registration_enabled: false
+  password_registration_enabled: true
+  registration_token_required: true
   email_change_allowed: false
+
+# Allow the billing client to use the admin API (urn:mas:admin).
+policy:
+  data:
+    admin_clients:
+      - "00000000000000000000STR1PE"
 
 email:
   from: '"TideWork" <noreply@tidework.io>'

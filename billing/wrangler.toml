@@ -1,0 +1,25 @@
+# TideWork billing Worker (ADR 0002 phase D): Stripe ↔ MAS.
+# The one non-open-core-adjacent component — deliberately tiny. Stripe is the
+# database: the registration token + username live on the subscription's
+# metadata, so there is no KV/state here at all.
+name = "tidework-billing"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+routes = [
+  { pattern = "billing.tidework.io", custom_domain = true },
+]
+
+[vars]
+MAS_URL = "https://auth.tidework.io"
+MAS_BILLING_CLIENT_ID = "00000000000000000000STR1PE"
+PRICE_CENTS = "1200"
+PRICE_CURRENCY = "usd"
+SITE_URL = "https://tidework.io"
+APP_URL = "https://app.tidework.io"
+
+# Secrets (pushed by CI via `wrangler secret put` from GitHub secrets — the
+# recorded two-tier exception, since Cloudflare is this component's runtime):
+#   STRIPE_API_KEY
+#   STRIPE_WEBHOOK_SIGNING_SECRET
+#   MAS_BILLING_CLIENT_SECRET

@@ -40,6 +40,8 @@ ssh-to-age -private-key -i /etc/ssh/ssh_host_ed25519_key > "$SRV/secrets/host-ag
 export SOPS_AGE_KEY_FILE="$SRV/secrets/host-age-key.txt"
 sops -d "$DEPLOY/secrets.sops.env" > "$SRV/secrets/postgres.env"
 set -a; . "$SRV/secrets/postgres.env"; set +a
+sops -d "$DEPLOY/billing.sops.env" > "$SRV/secrets/billing.env"
+set -a; . "$SRV/secrets/billing.env"; set +a
 
 # ── One-time: MAS↔Synapse shared secrets (generated here, stay here) ────────
 if [ ! -f "$SRV/secrets/shared.env" ]; then
@@ -74,10 +76,10 @@ if [ ! -f "$SRV/mas/secrets.yaml" ]; then
   echo "  generated mas secrets"
 fi
 
-export PG_HOST PG_PORT PG_USER PG_PASSWORD MAS_ADMIN_TOKEN MAS_SYNAPSE_CLIENT_SECRET
+export PG_HOST PG_PORT PG_USER PG_PASSWORD MAS_ADMIN_TOKEN MAS_SYNAPSE_CLIENT_SECRET MAS_BILLING_CLIENT_SECRET
 envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET' \
   < "$DEPLOY/synapse/homeserver.yaml.tmpl" > "$SRV/synapse/homeserver.yaml"
-envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET' \
+envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET $MAS_BILLING_CLIENT_SECRET' \
   < "$DEPLOY/mas/config.yaml.tmpl" > "$SRV/mas/config.rendered.yaml"
 # MAS 1.12 does not actually merge multiple --config files - combine the
 # rendered config with the generated secrets into one file ourselves.
@@ -127,5 +129,7 @@ chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 
 # ── Up ──────────────────────────────────────────────────────────────────────
 cp "$DEPLOY/docker-compose.yml" "$SRV/docker-compose.yml"
-cd "$SRV" && docker compose pull -q && docker compose up -d --wait
+cd "$SRV" && docker compose pull -q && docker compose up -d --wait --force-recreate
+# --force-recreate: configs are bind-mounted files; compose can't see content
+# changes, so recreate to pick up re-rendered configs every deploy.
 echo "remote setup complete"
