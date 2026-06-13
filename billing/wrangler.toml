@@ -10,11 +10,18 @@ routes = [
   { pattern = "billing.tidework.io", custom_domain = true },
 ]
 
+# Lock unpaid accounts past the trial, four times a day.
+[triggers]
+crons = ["13 */6 * * *"]
+
 [vars]
 MAS_URL = "https://auth.tidework.io"
 MAS_BILLING_CLIENT_ID = "00000000000000000000STR1PE"
 PRICE_CENTS = "1200"
 PRICE_CURRENCY = "usd"
+TRIAL_DAYS = "14"
+# Operator/test accounts the sweep must never lock.
+EXEMPT_USERNAMES = "opcheck,opcheck2"
 SITE_URL = "https://tidework.io"
 APP_URL = "https://app.tidework.io"
 

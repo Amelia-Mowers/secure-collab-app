@@ -2,6 +2,7 @@ import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth, InvitedRoom } from '@/hooks/useAuth'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
+import { TrialBadge } from '@/components/TrialStatus'
 import './WorkspacesPage.css'
 
 function formatDate(ts: number): string {
@@ -141,6 +142,7 @@ export function WorkspacesPage() {
           TideWork
         </div>
         <div className="workspaces-page__user">
+          <TrialBadge />
           <AccountSwitcher direction="down" />
         </div>
       </div>

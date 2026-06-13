@@ -54,12 +54,20 @@ clients:
 passwords:
   enabled: true
 
-# Registration happens ONLY with a single-use token issued by the billing
-# Worker after Stripe checkout (ADR 0002 phase D) — or operator-created via
-# `mas-cli manage register-user`.
+# Registration attempts are token-gated anyway, so the IP rate limit mainly
+# protects against form spam — the default is strict enough to lock out a
+# NAT'd office; allow a burst with slow refill instead.
+rate_limiting:
+  registration:
+    burst: 10
+    per_second: 0.016
+
+# Open registration with a 14-day trial (ADR 0002 phase D, amended): the
+# billing Worker's sweep locks unpaid accounts past the trial. Escalation
+# valves if registration is ever flooded: MAS-native CAPTCHA (Turnstile),
+# or flip registration_token_required back on (emergency brake).
 account:
   password_registration_enabled: true
-  registration_token_required: true
   email_change_allowed: false
 
 # Allow the billing client to use the admin API (urn:mas:admin).

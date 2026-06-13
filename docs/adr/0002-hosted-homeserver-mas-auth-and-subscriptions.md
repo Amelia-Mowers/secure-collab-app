@@ -163,11 +163,24 @@ Concretely:
 - **Default homeserver** baked into the sign-in page (ours), with the existing
   "Custom server" override kept; `.well-known` discovery so the brand domain
   resolves to the homeserver.
-- **Signup/subscribe flow:** checkout-first — Stripe Checkout → success
-  webhook → billing service authorizes account creation (MAS's policy engine
-  gates registration on a checkout-issued credential) → user lands in the
-  normal first-device crypto onboarding (recovery key bootstrap), which is
-  unchanged.
+- **Signup/subscribe flow** *(amended 2026-06-12 — trial-first replaces
+  checkout-first)*: registration is **open** with a **14-day trial**; a
+  scheduled sweep in the billing Worker locks accounts past `TRIAL_DAYS`
+  with no active subscription, and the existing webhook unlocks on payment
+  / re-locks on lapse. The original checkout-first registration-token flow
+  was built and validated, then replaced: the token handoff was clunky UX
+  and — worse — nothing structurally tied the checkout-typed username to
+  the registered one (a typo decoupled billing from the account forever).
+  Trial-first fixes both: the account exists before payment, so the
+  subscription is keyed programmatically to the real username. `TRIAL_DAYS`
+  is a knob; 0 = strict pay-to-use. Never-paid locked accounts become
+  deletable after a long grace (the one exception to lock-never-deactivate —
+  there is nothing of value to preserve). **Unpaid-flood mitigations,
+  layered:** per-IP registration rate limit (burst 10, ~1/min refill),
+  unused accounts cost ≈ a Postgres row, day-14 auto-lock, MAS-native
+  CAPTCHA (Turnstile) as a config escalation, and
+  `registration_token_required` as the emergency brake. User lands in the
+  normal first-device crypto onboarding, which is unchanged.
 - **Demo mode feeds the funnel, fully client-side.** The codebase already
   ships a local-only WASM bridge (`WasmWorkspace` in `bridge.rs`) alongside
   the Matrix-backed one, and the UI views tolerate non-Matrix workspaces. A
