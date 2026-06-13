@@ -208,19 +208,27 @@ Ordered phases; **A gates everything**:
   recovery state as "nothing to do" — a fresh device could silently skip the
   recovery prompt when the state settled slowly (observed on the OAuth path);
   it now polls until the state settles.
-- [~] **D. Billing service + enforcement** — _shipped 2026-06-12 (pending
-  Stripe-side setup):_ `billing/` Worker at billing.tidework.io —
-  `/subscribe` → Stripe Checkout (collects desired username), `/success` →
-  mints a **single-use MAS registration token** (admin API, verified live)
-  idempotently parked on the subscription's metadata (Stripe is the
-  database; no KV), `/webhook` → **lock on lapse/unpaid, unlock on active,
-  never deactivate**. MAS now requires a registration token to sign up
-  (`registration_token_required`), with the billing client allowlisted for
-  `urn:mas:admin`. Landing's Subscribe + the app's "New here?" link wired.
-  _Remaining (user actions):_ extend the CF deploy token (Workers Scripts +
-  Workers Routes), create the Stripe webhook endpoint after first deploy +
-  set `STRIPE_WEBHOOK_SIGNING_SECRET`, validate with test-mode cards, then
-  decide grace-period policy.
+- [x] **D. Billing service + enforcement** — _done & fully validated
+  2026-06-13 (test mode), in its amended trial-first shape:_ open
+  registration → 14-day trial (`/status` feeds the app's TrialBadge +
+  full-page TrialGate) → cron sweep locks unpaid accounts past the trial →
+  Stripe checkout keyed programmatically to the username → `/success` +
+  webhook unlock; cancel/lapse re-locks. **Complete state machine verified
+  live**: register(no token)→trial/14 → sweep→locked → pay→active →
+  cancel→locked; exempt operator accounts spared. _Refinements tracked
+  below; go-live needs the live-mode Stripe key + live webhook endpoint._
+
+- [ ] **Email provider — LAUNCH BLOCKER** — MAS requires email verification
+  at registration and the stack has no email backend (blackhole): no real
+  user can finish sign-up. Pick a transactional provider (Resend/Postmark/
+  SES), configure MAS `email.transport: smtp` (creds = tier-2 sops), and
+  domain auth (SPF/DKIM on tidework.io via Cloudflare DNS).
+- [ ] **Billing refinements** — (a) Stripe *search* is eventually consistent
+  (~1 min): a just-paid user can briefly read `trial`, and an unluckily-timed
+  sweep could lock someone whose subscription isn't indexed yet (self-heals
+  via webhook/success-unlock, but add a pre-lock re-check or store the
+  customer id); (b) never-paid accounts locked >60 days → deletion sweep;
+  (c) grace-period policy before the sweep locks (currently none).
 - [~] **E. Auth-flow e2e** — _CI job landed 2026-06-11:_ `e2e-oauth` runs the
   throwaway Synapse+MAS stack (`nix shell .#oauth-stack-tools` →
   `scripts/spike-synapse-mas.sh --e2e`) and drives the SSO sign-in flow
