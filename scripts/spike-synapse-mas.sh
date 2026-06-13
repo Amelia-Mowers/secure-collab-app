@@ -64,10 +64,11 @@ CLIENT_SECRET="$(head -c 32 /dev/urandom | xxd -p -c 64)"
 echo "==> mas: generate + patch config"
 mas-cli config generate >"$DIR/mas-base.yaml" 2>/dev/null
 
-python3 - "$DIR" "$SYNAPSE_PORT" "$MAS_PORT" "$MAS_HEALTH_PORT" "$ADMIN_SECRET" "$CLIENT_SECRET" <<'PYEOF'
+python3 - "$DIR" "$SYNAPSE_PORT" "$MAS_PORT" "$MAS_HEALTH_PORT" "$ADMIN_SECRET" "$CLIENT_SECRET" "$MODE" <<'PYEOF'
 import sys, yaml
 
 dir, synapse_port, mas_port, health_port, admin_secret, client_secret = sys.argv[1:7]
+mode = sys.argv[7] if len(sys.argv) > 7 else ""
 
 with open(f"{dir}/mas-base.yaml") as f:
     cfg = yaml.safe_load(f)
@@ -115,6 +116,14 @@ cfg["policy"] = {
         }
     }
 }
+# e2e only: deliberately short-lived access tokens (8s) so the OAuth refresh
+# path is actually exercised. With MAS's 5-minute default, every test reloads
+# while the first token is still valid — which is exactly how a missing
+# `handle_refresh_tokens()` (it booted real users minutes after sign-in and
+# re-triggered the verify gate) slipped past CI. A returning device must now
+# spend its refresh token to stay signed in.
+if mode == "--e2e":
+    cfg["experimental"] = {"access_token_ttl": 8}
 
 with open(f"{dir}/mas.yaml", "w") as f:
     yaml.safe_dump(cfg, f)

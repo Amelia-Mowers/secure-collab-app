@@ -30,6 +30,20 @@ Priority bands:
   - [x] **Device verification + cross-signing + key backup** — implemented per **`docs/adr/0001-e2e-key-management.md`** (test-first): `EncryptionSettings` auto cross-signing + backup, the recovery-key flow + sign-in verify gate, SAS device verification (mechanism + interactive UI, e2e-validated), `backup_exists()`, and undecryptable-history detection + banner. Phase C (UIA) deferred; warn-on-unverified + require-verified dropped (see ADR). _Remaining (carried to the **E2E** section): broader two-browser coverage of collaboration / multi-tab._
   - [ ] Decide policy for **legacy unencrypted rooms** (created before this change): the guard makes them read-only. Offer a migrate/recreate path or a clear UI state.
 
+- [x] **OAuth token refresh** — _fixed 2026-06-12._ MAS access tokens are
+  short-lived (~5 min) but no `Client::builder()` path enabled
+  `.handle_refresh_tokens()`, and nothing re-persisted refreshed tokens. So any
+  return to the app after the token expired 401'd (`M_UNKNOWN_TOKEN`) on the
+  first request: booted to sign-in, and — because `initialSync()` failed — the
+  recovery probe reported `needs_recovery` and the **verify gate re-appeared
+  every time** (the "asks for the master key again" symptom). Fix: enable
+  `.handle_refresh_tokens()` on all builders + a new `startTokenPersistence`
+  bridge method that subscribes to `SessionChange::TokensRefreshed` and re-saves
+  the session blob (`useAuth` wires it on restore/sign-in). **Coverage gap that
+  hid it:** `oauth.spec.ts` reloaded within the token lifetime, so refresh never
+  ran — the e2e MAS now issues 8s tokens (`--e2e`) and the spec waits past expiry
+  before asserting an uneventful restore.
+
 - [ ] **Persist row deletion** — `deleteRow` only mutates local state; the bridge
   never emits anything to Matrix (`bridge_matrix.rs` `delete_row`), so a deleted
   row resurrects from the timeline on the next cold start and other devices

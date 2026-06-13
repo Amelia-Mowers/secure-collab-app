@@ -9,7 +9,6 @@ import {
   DEFAULT_HOMESERVER_URL,
   OFFICIAL_HOMESERVER_URL,
   OFFICIAL_HOMESERVER_LABEL,
-  SUBSCRIBE_URL,
 } from '@/branding'
 import './SignInPage.css'
 
@@ -236,23 +235,29 @@ export function SignInPage() {
             : TAGLINE}
         </p>
 
-        {/* ── Sign in / Sign up tabs ─────────────────────────── */}
-        <div className="signin__tabs">
-          <button
-            className={`signin__tab ${mode === 'signin' ? 'signin__tab--active' : ''}`}
-            onClick={() => { setMode('signin'); setLocalError(null) }}
-            type="button"
-          >
-            Sign in
-          </button>
-          <button
-            className={`signin__tab ${mode === 'signup' ? 'signin__tab--active' : ''}`}
-            onClick={() => { setMode('signup'); setLocalError(null) }}
-            type="button"
-          >
-            Create account
-          </button>
-        </div>
+        {/* ── Sign in / Sign up tabs ─────────────────────────────
+            Only meaningful for password (custom) servers. Next-gen-auth
+            servers like the hosted TideWork one own their own combined
+            sign-in/registration flow on their page, so the toggle is hidden
+            there to avoid implying a separate local choice. */}
+        {!oauthServer && (
+          <div className="signin__tabs">
+            <button
+              className={`signin__tab ${mode === 'signin' ? 'signin__tab--active' : ''}`}
+              onClick={() => { setMode('signin'); setLocalError(null) }}
+              type="button"
+            >
+              Sign in
+            </button>
+            <button
+              className={`signin__tab ${mode === 'signup' ? 'signin__tab--active' : ''}`}
+              onClick={() => { setMode('signup'); setLocalError(null) }}
+              type="button"
+            >
+              Create account
+            </button>
+          </div>
+        )}
 
         {/* ── Homeserver picker ───────────────────────────────── */}
         <fieldset className="signin__server-picker">
@@ -310,15 +315,6 @@ export function SignInPage() {
             >
               {loading ? 'Waiting for sign-in…' : 'Continue with secure sign-in'}
             </button>
-            {homeserver.trim() === OFFICIAL_HOMESERVER_URL && (
-              <p className="signin__hint">
-                New here?{' '}
-                <a href={SUBSCRIBE_URL} target="_blank" rel="noreferrer">
-                  Subscribe to create your account
-                </a>{' '}
-                — you&apos;ll get a registration token to use at sign-up.
-              </p>
-            )}
           </div>
         ) : (
         <form className="signin__form" onSubmit={handleSubmit}>

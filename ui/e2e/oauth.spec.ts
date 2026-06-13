@@ -71,5 +71,22 @@ test('SSO sign-in via MAS popup: detect, authorize, bootstrap recovery, restore'
     await expect(page).toHaveURL(/workspaces/)
   })
 
+  await test.step('the session survives access-token expiry (token refresh)', async () => {
+    // The e2e MAS issues 8-second access tokens (spike-synapse-mas.sh, --e2e),
+    // so this wait guarantees the token captured at sign-in is dead. A reload
+    // now must spend the refresh token to restore — the exact path that was
+    // unhandled in production: an expired token there 401'd every request,
+    // booting the user to sign-in and re-tripping the verify gate. Waiting it
+    // out and asserting an uneventful restore is the regression guard.
+    await page.waitForTimeout(11_000)
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Workspaces' })).toBeVisible({
+      timeout: 120_000,
+    })
+    await expect(page).toHaveURL(/workspaces/)
+    // No verify gate and no "session expired" — refresh kept the device live.
+    await expect(page.getByRole('heading', { name: /verify this device/i })).toBeHidden()
+  })
+
   await context.close()
 })

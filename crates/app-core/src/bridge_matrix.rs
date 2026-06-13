@@ -29,7 +29,7 @@ use matrix_sdk::{
         serde::Raw,
         OwnedDeviceId, OwnedRoomId, OwnedUserId,
     },
-    AuthSession, Client, LoopCtrl, RoomMemberships, SessionMeta, SessionTokens,
+    AuthSession, Client, LoopCtrl, RoomMemberships, SessionChange, SessionMeta, SessionTokens,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -77,6 +77,39 @@ fn new_store_name(username: &str) -> String {
     )
 }
 
+/// Serialize the client's current auth session into the persisted blob shape
+/// (`kind`/`userId`/`deviceId`/`accessToken`/`refreshToken`/`clientId`/
+/// `storeName`). Reads live tokens from `client.session()`, so calling it after
+/// a token refresh yields the *current* tokens — that's what lets
+/// `startTokenPersistence` re-save fresh tokens. Returns `None` if there is no
+/// active session or its auth type is unsupported.
+fn serialize_session(client: &Client, store_name: &Option<String>) -> Option<String> {
+    // `storeName`: the IndexedDB store backing this device's state + crypto
+    // stores; restore() must reopen the same one to keep the device identity.
+    let data = match client.session()? {
+        AuthSession::Matrix(ms) => serde_json::json!({
+            "kind": "password",
+            "userId": ms.meta.user_id.to_string(),
+            "deviceId": ms.meta.device_id.to_string(),
+            "accessToken": ms.tokens.access_token,
+            "storeName": store_name,
+        }),
+        AuthSession::OAuth(os) => serde_json::json!({
+            "kind": "oauth",
+            "userId": os.user.meta.user_id.to_string(),
+            "deviceId": os.user.meta.device_id.to_string(),
+            "accessToken": os.user.tokens.access_token,
+            "refreshToken": os.user.tokens.refresh_token,
+            // The dynamically-registered OAuth client id — needed to restore
+            // the registered client alongside the session.
+            "clientId": os.client_id.as_str(),
+            "storeName": store_name,
+        }),
+        _ => return None,
+    };
+    serde_json::to_string(&data).ok()
+}
+
 /// A Matrix session that owns the SDK client and can create workspaces
 /// bound to rooms.
 #[wasm_bindgen]
@@ -106,6 +139,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // OAuth (MAS) access tokens are short-lived; without this the SDK
+            // never spends the refresh token and every request after expiry
+            // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the
+            // verify gate on the next reload. Refreshed tokens are persisted
+            // by `startTokenPersistence`.
+            .handle_refresh_tokens()
             .build()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
@@ -144,6 +183,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // OAuth (MAS) access tokens are short-lived; without this the SDK
+            // never spends the refresh token and every request after expiry
+            // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the
+            // verify gate on the next reload. Refreshed tokens are persisted
+            // by `startTokenPersistence`.
+            .handle_refresh_tokens()
             .build()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
@@ -383,38 +428,42 @@ impl MatrixSession {
     /// The JSON contains: `homeserverUrl`, `userId`, `deviceId`, `accessToken`.
     #[wasm_bindgen(js_name = sessionData)]
     pub fn session_data(&self) -> Result<String, JsValue> {
-        let session = self
-            .client
-            .session()
-            .ok_or_else(|| JsValue::from_str("No active session"))?;
+        serialize_session(&self.client, &self.store_name)
+            .ok_or_else(|| JsValue::from_str("No active session"))
+    }
 
-        // `storeName`: the IndexedDB store backing this device's state +
-        // crypto stores; restore() must reopen the same one to keep the
-        // device identity.
-        let data = match session {
-            AuthSession::Matrix(ms) => serde_json::json!({
-                "kind": "password",
-                "userId": ms.meta.user_id.to_string(),
-                "deviceId": ms.meta.device_id.to_string(),
-                "accessToken": ms.tokens.access_token,
-                "storeName": self.store_name,
-            }),
-            AuthSession::OAuth(os) => serde_json::json!({
-                "kind": "oauth",
-                "userId": os.user.meta.user_id.to_string(),
-                "deviceId": os.user.meta.device_id.to_string(),
-                "accessToken": os.user.tokens.access_token,
-                "refreshToken": os.user.tokens.refresh_token,
-                // The dynamically-registered OAuth client id — needed to
-                // restore the registered client alongside the session.
-                "clientId": os.client_id.as_str(),
-                "storeName": self.store_name,
-            }),
-            _ => return Err(JsValue::from_str("Unsupported auth session type")),
-        };
+    /// Re-persist the session blob whenever the SDK refreshes the OAuth
+    /// tokens, so a later reload restores with a *live* access/refresh token
+    /// instead of the dead one captured at sign-in. Without this, refresh
+    /// works in-memory for the current page but is lost on reload — the very
+    /// gap that booted users and tripped the verify gate.
+    ///
+    /// `on_tokens` is called with the fresh `sessionData()` JSON string; the
+    /// JS side overwrites the stored account blob. Spawns a task — does not
+    /// block. Idempotent enough to call once per restored/signed-in session.
+    #[wasm_bindgen(js_name = startTokenPersistence)]
+    pub fn start_token_persistence(&self, on_tokens: js_sys::Function) {
+        let client = self.client.clone();
+        let store_name = self.store_name.clone();
+        let mut changes = client.subscribe_to_session_changes();
 
-        serde_json::to_string(&data)
-            .map_err(|e| JsValue::from_str(&format!("Serialization failed: {e}")))
+        spawn_local(async move {
+            loop {
+                match changes.recv().await {
+                    Ok(SessionChange::TokensRefreshed) => {
+                        if let Some(blob) = serialize_session(&client, &store_name) {
+                            let _ = on_tokens.call1(&JsValue::NULL, &JsValue::from_str(&blob));
+                        }
+                    }
+                    // UnknownToken (refresh itself failed / token revoked) — the
+                    // request layer surfaces the auth error to the UI; nothing to
+                    // persist here.
+                    Ok(_) => {}
+                    // Lagged past the buffer or the sender dropped — stop.
+                    Err(_) => break,
+                }
+            }
+        });
     }
 
     /// Restore a previously saved session without re-entering the password.
@@ -466,6 +515,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // OAuth (MAS) access tokens are short-lived; without this the SDK
+            // never spends the refresh token and every request after expiry
+            // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the
+            // verify gate on the next reload. Refreshed tokens are persisted
+            // by `startTokenPersistence`.
+            .handle_refresh_tokens()
             .build()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
@@ -552,6 +607,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // OAuth (MAS) access tokens are short-lived; without this the SDK
+            // never spends the refresh token and every request after expiry
+            // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the
+            // verify gate on the next reload. Refreshed tokens are persisted
+            // by `startTokenPersistence`.
+            .handle_refresh_tokens()
             .build()
             .await
             .map_err(|e| JsValue::from_str(&format!("Failed to connect: {e}")))?;
