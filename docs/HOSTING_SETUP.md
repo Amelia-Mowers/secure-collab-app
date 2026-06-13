@@ -126,13 +126,16 @@ matrix.tidework.io    → DO droplet: proxy → Synapse + MAS  ← managed PG  [
       value stays the same): add **Account → Workers Scripts → Edit** and
       **Zone → Workers Routes → Edit (tidework.io)** — required for the
       billing Worker deploy + its custom domain.
-- [ ] **After the first Worker deploy**: Stripe dashboard → Developers →
-      Webhooks → Add endpoint `https://billing.tidework.io/webhook`, events
-      `customer.subscription.updated` + `customer.subscription.deleted` →
-      copy the `whsec_…` → `gh secret set STRIPE_WEBHOOK_SIGNING_SECRET`.
-- [ ] **Use TEST mode first**: make sure `STRIPE_API_KEY` is the `sk_test_…`
-      key until the flow is validated with card `4242 4242 4242 4242`; swap
-      to the live key (and a live webhook endpoint/secret) afterwards.
+- [x] **Webhook endpoint** _(done; live as of 2026-06-13)_: Stripe dashboard →
+      Developers → Webhooks → endpoint `https://billing.tidework.io/webhook`,
+      events `customer.subscription.created/updated/deleted` → `whsec_…` →
+      `gh secret set STRIPE_WEBHOOK_SIGNING_SECRET`. **Per-mode:** the live
+      endpoint is separate from (and replaces) the test one — they don't
+      migrate, only the URL + event list carry over.
+- [x] **Live mode** _(done 2026-06-13; validated in test mode first with card
+      `4242 4242 4242 4242`)_: `STRIPE_API_KEY` is the `sk_live_…` key and the
+      live webhook secret is set; the test-mode endpoint is disabled. The API
+      key and webhook secret must flip together or the signature modes mismatch.
       No product/price setup needed — the Worker uses inline price_data
       ($12/mo, configurable in `billing/wrangler.toml`).
 

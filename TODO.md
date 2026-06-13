@@ -230,7 +230,11 @@ Ordered phases; **A gates everything**:
   webhook unlock; cancel/lapse re-locks. **Complete state machine verified
   live**: register(no token)→trial/14 → sweep→locked → pay→active →
   cancel→locked; exempt operator accounts spared. _Refinements tracked
-  below; go-live needs the live-mode Stripe key + live webhook endpoint._
+  below._ **Switched to live mode 2026-06-13:** `STRIPE_API_KEY` is the
+  `sk_live_…` key and a live-mode webhook endpoint
+  (`https://billing.tidework.io/webhook`; subscription created/updated/deleted)
+  with its own live signing secret is wired; the old test-mode endpoint is
+  disabled.
 
 - [ ] **Email provider — LAUNCH BLOCKER** — MAS requires email verification
   at registration and the stack has no email backend (blackhole): no real
