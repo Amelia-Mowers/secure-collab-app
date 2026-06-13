@@ -17,6 +17,7 @@ scp -q "$here\docker-compose.yml" "$here\remote-setup.sh" "${Target}:/srv/tidewo
 scp -qr "$here\synapse" "$here\mas" "$here\nginx" "${Target}:/srv/tidework/deploy/"
 scp -q "$here\secrets\postgres.sops.env" "${Target}:/srv/tidework/deploy/secrets.sops.env"
 scp -q "$here\secrets\billing.sops.env" "${Target}:/srv/tidework/deploy/billing.sops.env"
+scp -q "$here\secrets\email.sops.env" "${Target}:/srv/tidework/deploy/email.sops.env"
 
 Write-Host "==> running remote setup"
 ssh -o BatchMode=yes $Target "sed -i 's/\r$//' /srv/tidework/deploy/remote-setup.sh /srv/tidework/deploy/*/*.tmpl /srv/tidework/deploy/nginx/*.conf 2>/dev/null; bash /srv/tidework/deploy/remote-setup.sh"

@@ -42,6 +42,8 @@ sops -d "$DEPLOY/secrets.sops.env" > "$SRV/secrets/postgres.env"
 set -a; . "$SRV/secrets/postgres.env"; set +a
 sops -d "$DEPLOY/billing.sops.env" > "$SRV/secrets/billing.env"
 set -a; . "$SRV/secrets/billing.env"; set +a
+sops -d "$DEPLOY/email.sops.env" > "$SRV/secrets/email.env"
+set -a; . "$SRV/secrets/email.env"; set +a
 
 # ── One-time: MAS↔Synapse shared secrets (generated here, stay here) ────────
 if [ ! -f "$SRV/secrets/shared.env" ]; then
@@ -76,10 +78,10 @@ if [ ! -f "$SRV/mas/secrets.yaml" ]; then
   echo "  generated mas secrets"
 fi
 
-export PG_HOST PG_PORT PG_USER PG_PASSWORD MAS_ADMIN_TOKEN MAS_SYNAPSE_CLIENT_SECRET MAS_BILLING_CLIENT_SECRET
+export PG_HOST PG_PORT PG_USER PG_PASSWORD MAS_ADMIN_TOKEN MAS_SYNAPSE_CLIENT_SECRET MAS_BILLING_CLIENT_SECRET SMTP_PASSWORD
 envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET' \
   < "$DEPLOY/synapse/homeserver.yaml.tmpl" > "$SRV/synapse/homeserver.yaml"
-envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET $MAS_BILLING_CLIENT_SECRET' \
+envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET $MAS_BILLING_CLIENT_SECRET $SMTP_PASSWORD' \
   < "$DEPLOY/mas/config.yaml.tmpl" > "$SRV/mas/config.rendered.yaml"
 # MAS 1.12 does not actually merge multiple --config files - combine the
 # rendered config with the generated secrets into one file ourselves.

@@ -21,6 +21,7 @@ scp -q \
 scp -qr "$HERE/synapse" "$HERE/mas" "$HERE/nginx" "$TARGET":/srv/tidework/deploy/
 scp -q "$HERE/secrets/postgres.sops.env" "$TARGET":/srv/tidework/deploy/secrets.sops.env
 scp -q "$HERE/secrets/billing.sops.env" "$TARGET":/srv/tidework/deploy/billing.sops.env
+scp -q "$HERE/secrets/email.sops.env" "$TARGET":/srv/tidework/deploy/email.sops.env
 
 echo "==> running remote setup"
 ssh "$TARGET" "bash /srv/tidework/deploy/remote-setup.sh"
