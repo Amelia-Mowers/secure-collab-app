@@ -149,7 +149,12 @@ async function success(env: Env, url: URL): Promise<Response> {
 
   const stripe = stripeClient(env)
   const session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ['subscription'] })
-  if (session.payment_status !== 'paid') return new Response('Payment not completed', { status: 402 })
+  // A 100%-off promotion code yields `no_payment_required` (no money moves but
+  // the subscription is live) — accept it alongside `paid`; only a genuinely
+  // unpaid session is a failure.
+  if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+    return new Response('Payment not completed', { status: 402 })
+  }
 
   const username = session.client_reference_id ?? 'your account'
 
