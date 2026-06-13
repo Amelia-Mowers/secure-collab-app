@@ -539,6 +539,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // Overwrite a single account's persisted session blob (e.g. after the SDK
+  // refreshes OAuth tokens). Functional update so it never goes stale against
+  // the account pool.
+  const persistSessionBlob = useCallback((userId: string, blob: string) => {
+    if (!blob) return
+    setAccounts(prev => {
+      const updated = prev.map(a =>
+        a.userId === userId ? { ...a, matrixSessionData: blob } : a,
+      )
+      saveAccounts(updated)
+      return updated
+    })
+  }, [])
+
+  // Keep the stored session blob current with the SDK's live tokens. MAS access
+  // tokens are short-lived; the SDK refreshes them in-memory, but a reload would
+  // restore the *dead* token captured at sign-in unless we re-persist. We re-save
+  // once now (restore/sign-in may have already refreshed during the first
+  // round-trip) and on every subsequent refresh.
+  useEffect(() => {
+    const ms = matrixSession
+    if (!ms || typeof ms.startTokenPersistence !== 'function') return
+    const uid: string | undefined = ms.userId?.()
+    if (!uid) return
+    try {
+      persistSessionBlob(uid, ms.sessionData())
+    } catch {
+      /* no active session yet — the refresh callback will catch up */
+    }
+    ms.startTokenPersistence((blob: string) => persistSessionBlob(uid, blob))
+  }, [matrixSession, persistSessionBlob])
+
   // Detect INCOMING verification requests (e.g. another of our devices asking
   // to verify). The listener records requests while a sync runs in the app; we
   // poll the drained flow id and surface the accept prompt.

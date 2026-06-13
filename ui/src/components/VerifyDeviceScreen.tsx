@@ -100,7 +100,7 @@ function RecoverySetupFailed({
       </p>
       <div className="verify__actions">
         <button type="button" className="verify__primary" onClick={handleRetry} disabled={busy}>
-          {busy ? 'Retrying…' : 'Retry'}
+          {busy ? <><Spinner />Retrying…</> : 'Retry'}
         </button>
         <button type="button" className="verify__link" onClick={onSignOut} disabled={busy}>
           Sign out
@@ -198,7 +198,7 @@ function VerifyThisDevice({
               disabled={busy}
               onClick={() => run(onVerify)}
             >
-              Verify with another device
+              {busy ? <><Spinner />Working…</> : 'Verify with another device'}
             </button>
             <button
               type="button"
@@ -248,9 +248,14 @@ function VerifyThisDevice({
               disabled={busy || key.trim().length === 0}
               onClick={() => run(() => onMasterKey(key.trim()))}
             >
-              {busy ? 'Restoring…' : 'Restore'}
+              {busy ? <><Spinner />Restoring…</> : 'Restore'}
             </button>
           </div>
+          {busy && (
+            <p className="verify__progress" role="status">
+              Fetching and decrypting your history from secure backup — this can take a few seconds.
+            </p>
+          )}
         </>
       )}
     </Overlay>
@@ -360,4 +365,10 @@ function Overlay({ labelledBy, children }: { labelledBy: string; children: React
       <div className="verify">{children}</div>
     </div>
   )
+}
+
+/** Inline spinner for in-button busy states (master-key restore can take a few
+ *  seconds while the SDK fetches + decrypts the backup). */
+function Spinner() {
+  return <span className="verify__spinner" aria-hidden="true" />
 }
