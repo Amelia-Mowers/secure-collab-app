@@ -18,7 +18,7 @@ import { chromium } from '@playwright/test'
 
 const USERNAME = process.env.TRIAL_USERNAME ?? `trial${Date.now() % 100000}`
 const PASSWORD = process.env.TRIAL_PASSWORD ?? 'trial-pass-2026!x'
-const EMAIL = `${USERNAME}@example.com`
+const EMAIL = process.env.TRIAL_EMAIL ?? `${USERNAME}@example.com`
 
 const browser = await chromium.launch({
   args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],

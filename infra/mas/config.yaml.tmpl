@@ -76,7 +76,17 @@ policy:
     admin_clients:
       - "00000000000000000000STR1PE"
 
+# Transactional email via Resend (verification codes, password resets).
+# Domain-authenticated (SPF/DKIM on tidework.io); username is literally
+# "resend", the password is the API key (tier-2 sops: email.sops.env).
 email:
   from: '"TideWork" <noreply@tidework.io>'
   reply_to: '"TideWork" <noreply@tidework.io>'
-  transport: blackhole # no email provider yet — revisit before launch
+  transport: smtp
+  mode: tls
+  hostname: smtp.resend.com
+  # 2465 = Resend's alternate TLS port — DigitalOcean blocks standard SMTP
+  # ports (25/465/587) on droplets.
+  port: 2465
+  username: resend
+  password: "${SMTP_PASSWORD}"

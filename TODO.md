@@ -236,11 +236,13 @@ Ordered phases; **A gates everything**:
   with its own live signing secret is wired; the old test-mode endpoint is
   disabled.
 
-- [ ] **Email provider — LAUNCH BLOCKER** — MAS requires email verification
-  at registration and the stack has no email backend (blackhole): no real
-  user can finish sign-up. Pick a transactional provider (Resend/Postmark/
-  SES), configure MAS `email.transport: smtp` (creds = tier-2 sops), and
-  domain auth (SPF/DKIM on tidework.io via Cloudflare DNS).
+- [x] **Email provider** — _resolved 2026-06-12:_ Resend, SMTP transport in
+  MAS (`smtp.resend.com:2465` TLS — port 2465 because DigitalOcean blocks
+  standard SMTP ports 25/465/587 on droplets), sender `noreply@tidework.io`,
+  domain verified (SPF/DKIM via Cloudflare DNS), API key as tier-2 sops
+  secret (`infra/secrets/email.sops.env`). Verified end to end: live
+  registration completed with a real emailed code (delivery confirmed in the
+  Resend dashboard).
 - [ ] **Billing refinements** — (a) Stripe *search* is eventually consistent
   (~1 min): a just-paid user can briefly read `trial`, and an unluckily-timed
   sweep could lock someone whose subscription isn't indexed yet (self-heals
