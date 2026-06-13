@@ -10,7 +10,9 @@ $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Write-Host "==> pushing deploy bundle to $Target"
-ssh -o BatchMode=yes $Target "mkdir -p /srv/tidework/deploy"
+# Clean dirs first: scp -r into an existing directory NESTS instead of
+# overwriting (deploy/nginx/nginx/...), which once hung a deploy.
+ssh -o BatchMode=yes $Target "mkdir -p /srv/tidework/deploy && rm -rf /srv/tidework/deploy/synapse /srv/tidework/deploy/mas /srv/tidework/deploy/nginx"
 scp -q "$here\docker-compose.yml" "$here\remote-setup.sh" "${Target}:/srv/tidework/deploy/"
 scp -qr "$here\synapse" "$here\mas" "$here\nginx" "${Target}:/srv/tidework/deploy/"
 scp -q "$here\secrets\postgres.sops.env" "${Target}:/srv/tidework/deploy/secrets.sops.env"
