@@ -1,0 +1,100 @@
+/* Trial badge — compact pill, calm until the deadline gets close. */
+.trial-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--text-secondary, #5c7080);
+  border: 1px solid var(--border, #d8e2e8);
+  background: var(--bg-secondary, #f6fafb);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.trial-badge:hover {
+  border-color: var(--accent, #0e7490);
+  color: var(--text-primary, #1a2b3a);
+}
+.trial-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #0e7490);
+}
+.trial-badge--urgent {
+  color: #9a3412;
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+.trial-badge--urgent .trial-badge__dot {
+  background: #f97316;
+}
+.trial-badge__cta {
+  font-weight: 600;
+  color: var(--accent, #0e7490);
+}
+.trial-badge--urgent .trial-badge__cta {
+  color: #ea580c;
+}
+
+/* Locked gate — full-page, no bypass except subscribing or signing out. */
+.trial-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(120% 80% at 70% -20%, rgba(17, 89, 125, 0.9) 0%, rgba(3, 16, 28, 0.97) 60%);
+  backdrop-filter: blur(6px);
+}
+.trial-gate__card {
+  max-width: 440px;
+  width: 100%;
+  padding: 38px 34px;
+  border-radius: 16px;
+  border: 1px solid rgba(154, 203, 212, 0.2);
+  background: rgba(4, 22, 35, 0.85);
+  color: #9fc3cd;
+  text-align: center;
+}
+.trial-gate__card h2 {
+  font-size: 24px;
+  color: #eaf6f6;
+  margin-bottom: 12px;
+}
+.trial-gate__card p {
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.trial-gate__card strong {
+  color: #eaf6f6;
+}
+.trial-gate__subscribe {
+  display: block;
+  margin-top: 26px;
+  padding: 13px 24px;
+  border-radius: 10px;
+  background: #ff9e57;
+  color: #03101c;
+  font-weight: 600;
+  font-size: 15px;
+  text-decoration: none;
+}
+.trial-gate__subscribe:hover {
+  background: #f08236;
+}
+.trial-gate__signout {
+  margin-top: 14px;
+  background: none;
+  border: none;
+  color: #5c8292;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.trial-gate__signout:hover {
+  color: #9fc3cd;
+}

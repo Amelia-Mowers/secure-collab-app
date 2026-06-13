@@ -12,6 +12,7 @@ import { CardView } from './views/card/CardView'
 import { ViewRouter } from './views/ViewRouter'
 import { SignInPage } from './views/auth/SignInPage'
 import { OauthCallbackPage } from './views/auth/OauthCallbackPage'
+import { TrialGate } from './components/TrialStatus'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
 import './App.css'
 
@@ -129,6 +130,9 @@ export default function App() {
           restoring before it can read history, and renders verification
           prompts (emoji compare / incoming requests). */}
       <VerifyDeviceScreen />
+      {/* Full-page subscribe prompt when the hosted account is locked
+          (trial over / lapsed) — ADR 0002 trial-first flow. */}
+      <TrialGate />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
         {/* OAuth popup redirect target — posts the callback URL to the opener

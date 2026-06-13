@@ -24,3 +24,11 @@ export const DEFAULT_HOMESERVER_URL: string =
 
 /** Where new users subscribe to get a hosted account (ADR 0002 phase D). */
 export const SUBSCRIBE_URL = 'https://billing.tidework.io/subscribe'
+
+/** Billing status endpoint for the trial badge / locked gate. */
+export const BILLING_STATUS_URL = 'https://billing.tidework.io/status'
+
+/** Checkout for a specific account (trial-first flow — ADR 0002 amended). */
+export function subscribeUrlFor(username: string): string {
+  return SUBSCRIBE_URL + '?username=' + encodeURIComponent(username)
+}

@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { notifyWorkspaceChanged } from '@/hooks/useTable'
+import { TrialBadge } from '@/components/TrialStatus'
 import './Sidebar.css'
 
 interface SidebarProps {
@@ -508,8 +509,9 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
           {/* Spacer */}
           <div style={{ flex: 1 }} />
 
-          {/* Footer: theme + account switcher */}
+          {/* Footer: trial status + theme + account switcher */}
           <div className="sidebar__footer">
+            <TrialBadge />
             <button className="sidebar__item sidebar__item--theme" onClick={toggleTheme}>
               {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
               <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
