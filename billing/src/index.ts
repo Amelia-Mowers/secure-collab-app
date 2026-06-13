@@ -130,6 +130,10 @@ async function subscribe(env: Env, url: URL): Promise<Response> {
         },
       },
     ],
+    // Surface the promo-code field at checkout so coupon/promotion codes work
+    // (e.g. a 100%-off founder code, or comping a live-flow test without a
+    // real charge). Codes are created in the Stripe dashboard, per-mode.
+    allow_promotion_codes: true,
     // The username rides on the SUBSCRIPTION itself, programmatically — this
     // is what the webhook + sweep key on. No hand-typed coupling.
     subscription_data: { metadata: { tidework_username: username } },
