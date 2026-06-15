@@ -175,7 +175,7 @@ jobs:
             -p tables-over-matrix \
             --no-default-features \
             --features matrix-native \
-            -- --ignored --nocapture
+            -- --ignored --nocapture --test-threads=4
 
       - name: Run app-core integration tests
         run: |

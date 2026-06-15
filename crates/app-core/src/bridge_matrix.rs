@@ -139,6 +139,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share encrypted room history with invitees (MSC4268) so new
+            // collaborators can decrypt workspace data written before they
+            // joined; mirrors MatrixClient::new. Requires a homeserver that
+            // exposes the inviter in the invite stripped state — prod's Synapse
+            // does (see the collaborator_history_matrix integration test).
+            .with_enable_share_history_on_invite(true)
             // OAuth (MAS) access tokens are short-lived; without this the SDK
             // never spends the refresh token and every request after expiry
             // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the
@@ -183,6 +189,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share encrypted room history with invitees (MSC4268) so new
+            // collaborators can decrypt workspace data written before they
+            // joined; mirrors MatrixClient::new. Requires a homeserver that
+            // exposes the inviter in the invite stripped state — prod's Synapse
+            // does (see the collaborator_history_matrix integration test).
+            .with_enable_share_history_on_invite(true)
             // OAuth (MAS) access tokens are short-lived; without this the SDK
             // never spends the refresh token and every request after expiry
             // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the
@@ -515,6 +527,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share encrypted room history with invitees (MSC4268) so new
+            // collaborators can decrypt workspace data written before they
+            // joined; mirrors MatrixClient::new. Requires a homeserver that
+            // exposes the inviter in the invite stripped state — prod's Synapse
+            // does (see the collaborator_history_matrix integration test).
+            .with_enable_share_history_on_invite(true)
             // OAuth (MAS) access tokens are short-lived; without this the SDK
             // never spends the refresh token and every request after expiry
             // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the
@@ -607,6 +625,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share encrypted room history with invitees (MSC4268) so new
+            // collaborators can decrypt workspace data written before they
+            // joined; mirrors MatrixClient::new. Requires a homeserver that
+            // exposes the inviter in the invite stripped state — prod's Synapse
+            // does (see the collaborator_history_matrix integration test).
+            .with_enable_share_history_on_invite(true)
             // OAuth (MAS) access tokens are short-lived; without this the SDK
             // never spends the refresh token and every request after expiry
             // 401s with M_UNKNOWN_TOKEN — booting the user and tripping the

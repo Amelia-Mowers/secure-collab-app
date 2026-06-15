@@ -272,6 +272,16 @@ mod matrix_impl {
         pub async fn new(homeserver_url: &str) -> Result<Self> {
             let client = Client::builder()
                 .homeserver_url(homeserver_url)
+                // Forward encrypted room history to a user when they are invited
+                // (MSC4268), so a new collaborator can decrypt and materialize
+                // workspace data written *before* they joined. Without this the
+                // SDK only shares the current Megolm session, leaving pre-join
+                // history undecryptable and the workspace silently incomplete
+                // (review §4.2 / ADR 0001). Requires a homeserver that exposes
+                // the inviter in the invite stripped state (Synapse does; Conduit
+                // does not — which is why the integration harness runs Synapse).
+                // See the `collaborator_history_matrix` test for the full trace.
+                .with_enable_share_history_on_invite(true)
                 .with_encryption_settings(default_encryption_settings())
                 .build()
                 .await
