@@ -161,7 +161,9 @@ rc_invites:
             .arg(&config_path)
             .arg("--generate-keys")
             .output()
-            .context("Failed to run synapse_homeserver --generate-keys — is matrix-synapse installed?")?;
+            .context(
+                "Failed to run synapse_homeserver --generate-keys — is matrix-synapse installed?",
+            )?;
         if !keygen.status.success() {
             bail!(
                 "Synapse key generation failed: {}",
