@@ -41,8 +41,14 @@
           openssl
           sqlite
 
-          # Test Matrix homeserver
+          # Test Matrix homeservers:
+          #   - matrix-conduit: fast throwaway used by the Playwright e2e harness.
+          #   - matrix-synapse: used by the Rust integration harness so tests run
+          #     against the same homeserver software as prod (ADR 0002), which —
+          #     unlike Conduit — includes the inviter's membership in the invite
+          #     stripped state, a prerequisite for MSC4268 history-on-invite.
           matrix-conduit
+          matrix-synapse
         ];
 
         # Synapse with the `oidc` extra (authlib) so MSC3861 — delegating auth

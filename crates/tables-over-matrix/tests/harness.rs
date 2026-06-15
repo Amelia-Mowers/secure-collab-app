@@ -8,7 +8,6 @@
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use std::io::Write;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -22,83 +21,188 @@ fn free_port() -> u16 {
     listener.local_addr().unwrap().port()
 }
 
-/// A test harness that manages a local Conduit homeserver.
+/// A test harness that manages a local Synapse homeserver.
 ///
-/// On creation, starts Conduit on a random port with a temporary data
-/// directory.  On drop, kills the process and removes the data directory.
+/// Synapse (not Conduit) so the integration tests run against the same
+/// homeserver software as production (ADR 0002). Conduit omits the inviter's
+/// membership from the invite stripped state, which breaks MSC4268
+/// history-on-invite (`collaborator_history_matrix`); Synapse includes it.
+///
+/// On creation, generates a throwaway config + signing key, starts Synapse on a
+/// random port with a temporary SQLite data directory, and waits until it
+/// serves requests. On drop, kills the process and removes the data directory.
 pub struct TestHarness {
-    conduit_process: Child,
+    homeserver_process: Child,
     homeserver_url: String,
     data_dir: PathBuf,
     port: u16,
 }
 
 impl TestHarness {
-    /// Start a real Conduit homeserver for testing.
+    /// Start a real Synapse homeserver for testing.
     pub async fn new() -> Result<Self> {
         let port = free_port();
         let homeserver_url = format!("http://localhost:{port}");
 
-        // Create a temporary data directory
-        let data_dir = std::env::temp_dir().join(format!("conduit-test-{port}"));
+        // Temporary data directory (native Linux fs under WSL — keep it off the
+        // Windows mount for speed; std::env::temp_dir() is /tmp there).
+        let data_dir = std::env::temp_dir().join(format!("synapse-test-{port}"));
         std::fs::create_dir_all(&data_dir).context("Failed to create temp data directory")?;
 
-        // Write a minimal Conduit config
-        let config_path = data_dir.join("conduit.toml");
-        let config = format!(
-            r#"[global]
-server_name = "localhost"
-database_backend = "rocksdb"
-database_path = "{db_path}"
-port = {port}
-address = "127.0.0.1"
-max_request_size = 20_000_000
-allow_registration = true
-allow_federation = false
-trusted_servers = ["matrix.org"]
-log = "warn"
+        // A Python logging config so Synapse writes its own logs to a file in the
+        // data dir (handy when a start-up fails) instead of polluting stdout.
+        let log_config_path = data_dir.join("log.config");
+        std::fs::write(
+            &log_config_path,
+            format!(
+                r#"version: 1
+formatters:
+  precise:
+    format: '%(asctime)s %(levelname)s %(name)s - %(message)s'
+handlers:
+  file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: precise
+    filename: {log}
+    maxBytes: 10485760
+    backupCount: 1
+    encoding: utf8
+root:
+  level: WARNING
+  handlers: [file]
+disable_existing_loggers: false
 "#,
-            db_path = data_dir.join("db").display(),
-            port = port,
-        );
-        let mut f =
-            std::fs::File::create(&config_path).context("Failed to write conduit config")?;
-        f.write_all(config.as_bytes())?;
+                log = data_dir.join("homeserver.log").display(),
+            ),
+        )
+        .context("Failed to write Synapse log config")?;
 
-        // Start Conduit
-        let conduit_process = Command::new("conduit")
-            .env("CONDUIT_CONFIG", config_path.to_str().unwrap())
+        // Minimal Synapse config: SQLite, open registration without verification,
+        // federation off, rate limits relaxed (tests register several users and
+        // send many events fast), trusted_key_servers empty (no matrix.org).
+        let config_path = data_dir.join("homeserver.yaml");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"server_name: "localhost"
+pid_file: {pid}
+public_baseurl: "{url}/"
+listeners:
+  - port: {port}
+    type: http
+    tls: false
+    bind_addresses: ['127.0.0.1']
+    x_forwarded: false
+    resources:
+      - names: [client]
+        compress: false
+database:
+  name: sqlite3
+  args:
+    database: {db}
+log_config: "{log_config}"
+media_store_path: {media}
+signing_key_path: "{signing_key}"
+trusted_key_servers: []
+suppress_key_server_warning: true
+report_stats: false
+enable_registration: true
+enable_registration_without_verification: true
+registration_requires_token: false
+macaroon_secret_key: "test_macaroon_secret_key_do_not_use_in_prod"
+form_secret: "test_form_secret_do_not_use_in_prod"
+presence:
+  enabled: false
+rc_message:
+  per_second: 1000
+  burst_count: 1000
+rc_registration:
+  per_second: 1000
+  burst_count: 1000
+rc_login:
+  address:
+    per_second: 1000
+    burst_count: 1000
+  account:
+    per_second: 1000
+    burst_count: 1000
+  failed_attempts:
+    per_second: 1000
+    burst_count: 1000
+rc_joins:
+  local:
+    per_second: 1000
+    burst_count: 1000
+  remote:
+    per_second: 1000
+    burst_count: 1000
+rc_invites:
+  per_room:
+    per_second: 1000
+    burst_count: 1000
+  per_user:
+    per_second: 1000
+    burst_count: 1000
+"#,
+                pid = data_dir.join("homeserver.pid").display(),
+                url = homeserver_url,
+                port = port,
+                db = data_dir.join("homeserver.db").display(),
+                log_config = log_config_path.display(),
+                media = data_dir.join("media_store").display(),
+                signing_key = data_dir.join("signing.key").display(),
+            ),
+        )
+        .context("Failed to write Synapse config")?;
+
+        // Generate the signing key referenced by the config (synchronous).
+        let keygen = Command::new("synapse_homeserver")
+            .arg("--config-path")
+            .arg(&config_path)
+            .arg("--generate-keys")
+            .output()
+            .context("Failed to run synapse_homeserver --generate-keys — is matrix-synapse installed?")?;
+        if !keygen.status.success() {
+            bail!(
+                "Synapse key generation failed: {}",
+                String::from_utf8_lossy(&keygen.stderr)
+            );
+        }
+
+        // Start Synapse.
+        let homeserver_process = Command::new("synapse_homeserver")
+            .arg("--config-path")
+            .arg(&config_path)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .context("Failed to start Conduit — is matrix-conduit installed?")?;
+            .context("Failed to start synapse_homeserver — is matrix-synapse installed?")?;
 
         let harness = Self {
-            conduit_process,
+            homeserver_process,
             homeserver_url,
             data_dir,
             port,
         };
 
-        // Wait for Conduit to be ready
         harness.wait_for_ready().await?;
 
         Ok(harness)
     }
 
-    /// Poll Conduit until it responds to requests (or timeout).
+    /// Poll Synapse until it responds to requests (or timeout).
     async fn wait_for_ready(&self) -> Result<()> {
         let client = reqwest::Client::new();
         let url = format!("{}/_matrix/client/versions", self.homeserver_url);
 
-        // Generous timeout: when several #[ignore]d tests run in parallel they
-        // each spin up their own Conduit + RocksDB, and a cold start under that
-        // contention can take well over 5s. 300 * 100ms = 30s.
-        for i in 0..300 {
+        // Synapse runs DB schema migrations on first start and is slower to come
+        // up than Conduit, especially under parallel-test contention. 600 *
+        // 100ms = 60s.
+        for i in 0..600 {
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     eprintln!(
-                        "[harness] Conduit ready on port {} (attempt {})",
+                        "[harness] Synapse ready on port {} (attempt {})",
                         self.port,
                         i + 1
                     );
@@ -109,8 +213,9 @@ log = "warn"
         }
 
         bail!(
-            "Conduit failed to start within 30 seconds on port {}",
-            self.port
+            "Synapse failed to start within 60 seconds on port {} (see {}/homeserver.log)",
+            self.port,
+            self.data_dir.display(),
         );
     }
 
@@ -124,30 +229,48 @@ log = "warn"
     pub async fn register_user(&self, username: &str) -> Result<MatrixClient> {
         let password = format!("{username}_test_password");
 
-        // POST to /register — Conduit with allow_registration=true
-        // accepts m.login.dummy auth directly.
         let http = reqwest::Client::new();
-        let register_url = format!("{}/_matrix/client/r0/register", self.homeserver_url);
+        let register_url = format!("{}/_matrix/client/v3/register", self.homeserver_url);
 
-        let body = serde_json::json!({
-            "username": username,
-            "password": password,
-            "auth": {
-                "type": "m.login.dummy"
-            }
-        });
-
-        let resp = http
+        // Synapse gates /register behind user-interactive auth: the first call
+        // (no `auth`) returns 401 with a `session` and the available flows; we
+        // then resubmit with `m.login.dummy` carrying that session. (Conduit
+        // accepted the dummy in one shot; Synapse does not.)
+        let init = http
             .post(&register_url)
-            .json(&body)
+            .json(&serde_json::json!({ "username": username, "password": password }))
             .send()
             .await
-            .context("Registration request failed")?;
+            .context("Registration (init) request failed")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            bail!("Registration failed ({}): {}", status, text);
+        // A fresh open-registration server replies 401 (UIA challenge). If it
+        // somehow returns 200 immediately, we're already done.
+        if !init.status().is_success() {
+            let uia: serde_json::Value = init
+                .json()
+                .await
+                .context("Registration UIA challenge was not JSON")?;
+            let session = uia
+                .get("session")
+                .and_then(|s| s.as_str())
+                .context("Registration UIA challenge had no session")?;
+
+            let resp = http
+                .post(&register_url)
+                .json(&serde_json::json!({
+                    "username": username,
+                    "password": password,
+                    "auth": { "type": "m.login.dummy", "session": session }
+                }))
+                .send()
+                .await
+                .context("Registration (complete) request failed")?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                bail!("Registration failed ({}): {}", status, text);
+            }
         }
 
         // Create a MatrixClient and log in
@@ -320,6 +443,73 @@ log = "warn"
         Ok(())
     }
 
+    /// Invite a user to a room and have them join, **entirely through the
+    /// matrix-rust-sdk** — the path production uses and the only one that makes
+    /// MSC4268 "encrypted history on invite" work end to end.
+    ///
+    /// This is deliberately different from [`Self::invite_and_join`], which uses
+    /// raw HTTP for both steps. Two SDK behaviours are load-bearing here and a
+    /// raw-HTTP flow exercises neither:
+    ///
+    /// - **Invite (sender):** `Room::invite_user_by_id` (used by
+    ///   `ConnectedWorkspace::inviteUser`) triggers `share_room_history`, which
+    ///   bundles the room's shared-history Megolm keys, uploads them as an
+    ///   encrypted file, and sends the recipient a to-device pointer — so the
+    ///   invitee can later decrypt events sent *before* they joined. (Requires
+    ///   the inviter to have cross-signing set up, else it silently no-ops.)
+    /// - **Join (receiver):** `Client::join_room_by_id` records
+    ///   `InviteAcceptanceDetails { invite_accepted_at, inviter }`. The bundle
+    ///   receiver task *refuses* a historical-key bundle unless those details
+    ///   are present (so a malicious homeserver can't inject history) — i.e. the
+    ///   invitee must have joined via the SDK, from a synced invite, recently,
+    ///   and the bundle's sender must match the recorded inviter.
+    ///
+    /// The inviter must already know the room (sync first), and the joiner must
+    /// have synced at least once so their device keys / one-time keys are on the
+    /// server for the inviter to establish an Olm session and deliver the bundle.
+    pub async fn sdk_invite_and_join(
+        &self,
+        inviter: &MatrixClient,
+        joiner: &MatrixClient,
+        room_id: &str,
+    ) -> Result<()> {
+        use matrix_sdk::ruma::{OwnedRoomId, OwnedUserId};
+
+        let owned_room: OwnedRoomId = room_id
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid room id: {room_id}"))?;
+        let joiner_user_id: OwnedUserId = joiner
+            .inner()
+            .user_id()
+            .context("Joiner not logged in")?
+            .to_owned();
+
+        // SDK-level invite: matrix-rust-sdk bundles + uploads the shared-history
+        // room keys and sends the to-device pointer to the invitee's devices.
+        let room = inviter
+            .inner()
+            .get_room(&owned_room)
+            .context("Inviter does not know the room — sync_once() before inviting")?;
+        room.invite_user_by_id(&joiner_user_id)
+            .await
+            .context("SDK invite_user_by_id failed")?;
+
+        // Joiner must SEE the invite (sync) so the SDK knows who invited them,
+        // then accept THROUGH THE SDK so `InviteAcceptanceDetails` are recorded —
+        // the gate the bundle receiver task checks before importing history.
+        joiner
+            .sync_once()
+            .await
+            .context("Joiner sync (to observe invite) failed")?;
+        joiner
+            .inner()
+            .join_room_by_id(&owned_room)
+            .await
+            .context("SDK join_room_by_id failed")?;
+
+        Ok(())
+    }
+
     /// Wait for events to propagate between clients.
     pub async fn wait_for_sync(&self) {
         sleep(Duration::from_millis(500)).await;
@@ -335,8 +525,8 @@ fn urlencoded(s: &str) -> String {
 
 impl Drop for TestHarness {
     fn drop(&mut self) {
-        let _ = self.conduit_process.kill();
-        let _ = self.conduit_process.wait();
+        let _ = self.homeserver_process.kill();
+        let _ = self.homeserver_process.wait();
         let _ = std::fs::remove_dir_all(&self.data_dir);
     }
 }
