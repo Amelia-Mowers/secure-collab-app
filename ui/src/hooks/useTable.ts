@@ -54,6 +54,7 @@ export interface WorkspaceHandle {
   addColumn(tableId: string, columnJson: string): void | Promise<void>
   reorderColumns(tableId: string, orderedIdsJson: string): void | Promise<void>
   updateColumn(tableId: string, columnId: string, patchJson: string): void | Promise<void>
+  deleteColumn(tableId: string, columnId: string): void | Promise<void>
   updateCell(tableId: string, rowId: string, columnId: string, value: string): void | Promise<void>
   applyUpdate(update: string): void
   getTableRows(tableId: string): string

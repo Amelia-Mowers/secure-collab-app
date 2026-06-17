@@ -258,23 +258,68 @@
 .col-sortable:hover .col-name { color: var(--text); }
 .col-sort-indicator { font-size: 9px; color: var(--accent, #6366f1); }
 
-/* Rename affordance: a pencil pinned to the header's right edge, revealed on
-   hover. pointer-events stay off until hover so it never intercepts the
-   sort-click on the rest of the header. */
-.col-rename-btn {
+/* Column ⋯ menu (rename / change type / delete), pinned to the header's right
+   edge and revealed on hover. The trigger keeps pointer-events off until hover
+   so it never intercepts the sort-click on the rest of the header. */
+.col-menu {
   position: absolute;
-  right: 4px;
+  right: 2px;
   top: 50%;
   transform: translateY(-50%);
+}
+.col-menu-btn {
   opacity: 0;
   pointer-events: none;
-  padding: 2px;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
   color: var(--text-tertiary);
   border-radius: 3px;
   transition: opacity 0.15s, color 0.15s, background-color 0.15s;
 }
-.col-sortable:hover .col-rename-btn { opacity: 0.7; pointer-events: auto; }
-.col-rename-btn:hover { opacity: 1; color: var(--text); background: var(--bg-hover); }
+.col-sortable:hover .col-menu-btn { opacity: 0.7; pointer-events: auto; }
+.col-menu-btn:hover { opacity: 1; color: var(--text); background: var(--bg-hover); }
+
+.col-menu__backdrop { position: fixed; inset: 0; z-index: 40; }
+.col-menu__dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 41;
+  min-width: 160px;
+  margin-top: 4px;
+  padding: 4px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.col-menu__item {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text, #111);
+  border-radius: 4px;
+}
+.col-menu__item:hover { background: var(--bg-hover, #f3f4f6); }
+.col-menu__delete { color: var(--red, #dc2626); }
+.col-menu__delete:hover { background: var(--red-muted, #fee2e2); }
+.col-menu__section { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.col-menu__label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-transform: none;
+  letter-spacing: normal;
+}
+.col-menu__type { flex: 1; font-size: 12px; padding: 3px 4px; text-transform: none; }
 
 .col-rename-input {
   width: 100%;

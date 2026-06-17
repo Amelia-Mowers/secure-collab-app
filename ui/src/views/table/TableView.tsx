@@ -73,24 +73,42 @@ function globalTextFilter(row: any, columnId: string, filterValue: string): bool
   return hay.toLowerCase().includes(String(filterValue).toLowerCase())
 }
 
-/** A draggable, sortable column header. A small drag distance is required to
- *  start a reorder (see the PointerSensor), so a plain click still toggles the
- *  TanStack sort. */
+/** Types a column can be changed to in-place. Select/multiselect/reference are
+ *  omitted — they need extra config (options / target table). */
+const RETYPE_TYPES: { value: string; label: string }[] = [
+  { value: 'text', label: 'Text' },
+  { value: 'number', label: 'Number' },
+  { value: 'date', label: 'Date' },
+  { value: 'boolean', label: 'Checkbox' },
+  { value: 'document', label: 'Document' },
+]
+
+/** A draggable, sortable column header with a ⋯ menu (rename / change type /
+ *  delete). A small drag distance is required to start a reorder (see the
+ *  PointerSensor), so a plain click still toggles the TanStack sort; the ⋯
+ *  trigger sits at the right edge so it never intercepts that click. */
 function SortableHeader({
   id,
   label,
   sorted,
+  colType,
   onSort,
   onRename,
+  onRetype,
+  onDelete,
 }: {
   id: string
   label: string
   sorted: false | 'asc' | 'desc'
+  colType: string
   onSort: ((event: unknown) => void) | undefined
   onRename: (name: string) => void
+  onRetype: (type: string) => void
+  onDelete: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
   const [renaming, setRenaming] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [draft, setDraft] = useState(label)
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
@@ -140,21 +158,54 @@ function SortableHeader({
       <span className="col-sort-indicator">
         {sorted === 'asc' ? ' ▲' : sorted === 'desc' ? ' ▼' : ''}
       </span>
-      <button
-        className="col-rename-btn ghost"
-        title="Rename column"
-        aria-label="Rename column"
+      <div
+        className="col-menu"
         onPointerDown={e => e.stopPropagation()}
-        onClick={e => {
-          e.stopPropagation()
-          setDraft(label)
-          setRenaming(true)
-        }}
+        onClick={e => e.stopPropagation()}
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
-          <path d="M8.5 1.5l2 2L4 10l-2.5.5L2 8z" />
-        </svg>
-      </button>
+        <button
+          className="col-menu-btn ghost"
+          title="Column options"
+          aria-label="Column options"
+          onClick={() => setMenuOpen(o => !o)}
+        >
+          ⋯
+        </button>
+        {menuOpen && (
+          <>
+            <div className="col-menu__backdrop" onClick={() => setMenuOpen(false)} />
+            <div className="col-menu__dropdown" role="menu">
+              <button
+                className="col-menu__item"
+                onClick={() => { setMenuOpen(false); setDraft(label); setRenaming(true) }}
+              >
+                Rename
+              </button>
+              <div className="col-menu__section">
+                <span className="col-menu__label">Type</span>
+                <select
+                  className="col-menu__type"
+                  value={colType}
+                  onChange={e => { setMenuOpen(false); onRetype(e.target.value) }}
+                >
+                  {!RETYPE_TYPES.some(t => t.value === colType) && (
+                    <option value={colType}>{colType}</option>
+                  )}
+                  {RETYPE_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                className="col-menu__item col-menu__delete"
+                onClick={() => { setMenuOpen(false); onDelete() }}
+              >
+                Delete column
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </th>
   )
 }
@@ -193,7 +244,11 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     if (schema?.columns) {
       Object.keys(schema.columns).forEach(colId => columnSet.add(colId))
     }
+    // Drop columns deleted from the schema, even though their cell values may
+    // still linger in row data until they decay out of the timeline.
+    const deleted = new Set<string>(schema?.deleted_columns ?? [])
     return Array.from(columnSet)
+      .filter(colId => !deleted.has(colId))
       .map(colId => {
         const def = schema?.columns?.[colId]
         return {
@@ -248,6 +303,19 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     // send, so re-reading the schema right away reflects the new order instantly
     // while the send happens in the background.
     const result = workspace.reorderColumns(tableId, JSON.stringify(reordered))
+    try {
+      setSchema(JSON.parse(workspace.getTableSchema(tableId)))
+    } catch {
+      /* keep current schema */
+    }
+    Promise.resolve(result).catch(showCellError)
+    if (workspaceId) notifyWorkspaceChanged(workspaceId)
+  }
+
+  const handleDeleteColumn = (colId: string, colName: string) => {
+    if (!tableId || !workspace) return
+    if (!window.confirm(`Delete column "${colName}"? Its values will stop showing.`)) return
+    const result = workspace.deleteColumn(tableId, colId)
     try {
       setSchema(JSON.parse(workspace.getTableSchema(tableId)))
     } catch {
@@ -470,16 +538,24 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                   items={columnsMeta.map(c => c.id)}
                   strategy={horizontalListSortingStrategy}
                 >
-                  {table.getHeaderGroups()[0]?.headers.map(header => (
-                    <SortableHeader
-                      key={header.id}
-                      id={header.column.id}
-                      label={String(header.column.columnDef.header)}
-                      sorted={header.column.getIsSorted()}
-                      onSort={header.column.getToggleSortingHandler()}
-                      onRename={name => handleUpdateColumn(header.column.id, { name })}
-                    />
-                  ))}
+                  {table.getHeaderGroups()[0]?.headers.map(header => {
+                    const label = String(header.column.columnDef.header)
+                    const colType =
+                      columnsMeta.find(c => c.id === header.column.id)?.column_type ?? 'text'
+                    return (
+                      <SortableHeader
+                        key={header.id}
+                        id={header.column.id}
+                        label={label}
+                        sorted={header.column.getIsSorted()}
+                        colType={colType}
+                        onSort={header.column.getToggleSortingHandler()}
+                        onRename={name => handleUpdateColumn(header.column.id, { name })}
+                        onRetype={type => handleUpdateColumn(header.column.id, { column_type: type })}
+                        onDelete={() => handleDeleteColumn(header.column.id, label)}
+                      />
+                    )
+                  })}
                 </SortableContext>
                 <th className="col-add-header">
                   <button

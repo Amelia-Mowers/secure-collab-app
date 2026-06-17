@@ -151,6 +151,19 @@ impl WasmWorkspace {
         Ok(())
     }
 
+    /// Delete a column (decay model — marks it deleted in the schema).
+    #[wasm_bindgen(js_name = deleteColumn)]
+    pub fn delete_column(&mut self, table_id: String, column_id: String) -> Result<(), JsValue> {
+        self.workspace
+            .delete_column(&table_id, &column_id)
+            .map_err(|e| match e {
+                crate::Error::TableNotFound => JsValue::from_str("Table not found"),
+                _ => JsValue::from_str("Failed to delete column"),
+            })?;
+
+        Ok(())
+    }
+
     /// Apply a cell update from the network
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&mut self, update_json: &str) -> Result<(), JsValue> {

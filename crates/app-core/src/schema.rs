@@ -90,6 +90,11 @@ pub struct TableDefinition {
     pub name: String,
     pub description: Option<String>,
     pub columns: HashMap<String, ColumnDefinition>,
+    /// Ids of columns that have been deleted (decay model). They are excluded
+    /// from `columns`; surfaced so the UI can also drop their lingering cell
+    /// values from the grid while they age out of the timeline.
+    #[serde(default)]
+    pub deleted_columns: Vec<String>,
 }
 
 impl TableDefinition {
@@ -99,6 +104,7 @@ impl TableDefinition {
             name: name.into(),
             description: None,
             columns: HashMap::new(),
+            deleted_columns: Vec::new(),
         }
     }
 
@@ -290,7 +296,18 @@ impl SchemaManager {
             if let Some(tid) = self.schema_table.get_value(&row_id, "table_id") {
                 if tid.as_str() == Some(table_id) {
                     if let Some(column) = self.parse_column_definition(&row_id) {
-                        definition.columns.insert(column.id.clone(), column);
+                        // Deleted columns (decay model) are excluded from the live
+                        // schema but reported so the UI can drop their cells too.
+                        let deleted = self
+                            .schema_table
+                            .get_value(&row_id, "deleted")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if deleted {
+                            definition.deleted_columns.push(column.id);
+                        } else {
+                            definition.columns.insert(column.id.clone(), column);
+                        }
                     }
                 }
             }
@@ -511,6 +528,29 @@ impl SchemaManager {
             }
         }
         updates
+    }
+
+    /// Delete a column (decay model — architecture.md "Deletion as Natural
+    /// Decay"): write a `deleted = true` marker on the column's schema row.
+    /// `get_table_schema` then excludes it and reports it in `deleted_columns`;
+    /// its data cells are no longer surfaced and age out of the lookback window.
+    /// Returns the schema CellUpdate applied.
+    pub fn delete_column(
+        &mut self,
+        table_id: &str,
+        column_id: &str,
+        timestamp: u64,
+    ) -> Vec<CellUpdate> {
+        let row_id = format!("{table_id}.{column_id}");
+        let update = CellUpdate::new(
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "deleted",
+            serde_json::json!(true),
+            timestamp,
+        );
+        self.schema_table.apply_update(update.clone());
+        vec![update]
     }
 
     /// Apply updates to the schema system tables
