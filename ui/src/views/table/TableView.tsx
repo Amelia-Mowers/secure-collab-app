@@ -9,6 +9,21 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  arrayMove,
+  useSortable,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import { AddColumnModal, type NewColumnDef } from '@/components/AddColumnModal'
@@ -25,6 +40,7 @@ interface ColumnMeta {
   name: string
   column_type: string
   options?: string[]
+  order?: number | null
 }
 
 interface TableRow {
@@ -55,6 +71,45 @@ function globalTextFilter(row: any, columnId: string, filterValue: string): bool
       ? JSON.stringify(v)
       : String(v)
   return hay.toLowerCase().includes(String(filterValue).toLowerCase())
+}
+
+/** A draggable, sortable column header. A small drag distance is required to
+ *  start a reorder (see the PointerSensor), so a plain click still toggles the
+ *  TanStack sort. */
+function SortableHeader({
+  id,
+  label,
+  sorted,
+  onSort,
+}: {
+  id: string
+  label: string
+  sorted: false | 'asc' | 'desc'
+  onSort: ((event: unknown) => void) | undefined
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    cursor: 'grab',
+  }
+  return (
+    <th
+      ref={setNodeRef}
+      style={style}
+      className="col-sortable"
+      title="Drag to reorder · click to sort"
+      {...attributes}
+      {...listeners}
+      onClick={onSort}
+    >
+      <span className="col-name">{label}</span>
+      <span className="col-sort-indicator">
+        {sorted === 'asc' ? ' ▲' : sorted === 'desc' ? ' ▼' : ''}
+      </span>
+    </th>
+  )
 }
 
 export function TableView({ workspace, syncCount }: TableViewProps) {
@@ -91,12 +146,25 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     if (schema?.columns) {
       Object.keys(schema.columns).forEach(colId => columnSet.add(colId))
     }
-    return Array.from(columnSet).sort().map(colId => ({
-      id: colId,
-      name: schema?.columns?.[colId]?.name || colId.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-      column_type: schema?.columns?.[colId]?.column_type || 'text',
-      options: schema?.columns?.[colId]?.options,
-    }))
+    return Array.from(columnSet)
+      .map(colId => {
+        const def = schema?.columns?.[colId]
+        return {
+          id: colId,
+          name: def?.name || colId.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+          column_type: def?.column_type || 'text',
+          options: def?.options,
+          order: typeof def?.order === 'number' ? def.order : null,
+        }
+      })
+      // Sort by the schema's explicit column order; columns without one (legacy
+      // tables or row-only keys) fall to the end, ordered by id.
+      .sort((a, b) => {
+        if (a.order != null && b.order != null) return a.order - b.order
+        if (a.order != null) return -1
+        if (b.order != null) return 1
+        return a.id.localeCompare(b.id)
+      })
   }, [rows, schema])
 
   useEffect(() => {
@@ -117,6 +185,29 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       setToast(`Update failed: ${msg}`)
     }
     setTimeout(() => setToast(null), 4000)
+  }
+
+  // Column drag-to-reorder. A 6px threshold means a click still sorts.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const handleColumnDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id || !tableId || !workspace) return
+    const ids = columnsMeta.map(c => c.id)
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from < 0 || to < 0) return
+    const reordered = arrayMove(ids, from, to)
+    // reorderColumns applies locally (synchronous in WASM) before its network
+    // send, so re-reading the schema right away reflects the new order instantly
+    // while the send happens in the background.
+    const result = workspace.reorderColumns(tableId, JSON.stringify(reordered))
+    try {
+      setSchema(JSON.parse(workspace.getTableSchema(tableId)))
+    } catch {
+      /* keep current schema */
+    }
+    Promise.resolve(result).catch(showCellError)
+    if (workspaceId) notifyWorkspaceChanged(workspaceId)
   }
 
   const handleAddColumn = async (def: NewColumnDef) => {
@@ -306,23 +397,28 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       <div className="table-view__content">
         <div className="table-scroll" ref={scrollRef}>
           <table className="data-table">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleColumnDragEnd}
+            >
             <thead>
               <tr>
                 <th className="col-open-header" />
-                {table.getHeaderGroups()[0]?.headers.map(header => {
-                  const sorted = header.column.getIsSorted()
-                  return (
-                    <th
+                <SortableContext
+                  items={columnsMeta.map(c => c.id)}
+                  strategy={horizontalListSortingStrategy}
+                >
+                  {table.getHeaderGroups()[0]?.headers.map(header => (
+                    <SortableHeader
                       key={header.id}
-                      className="col-sortable"
-                      onClick={header.column.getToggleSortingHandler()}
-                      title="Sort"
-                    >
-                      <span className="col-name">{String(header.column.columnDef.header)}</span>
-                      <span className="col-sort-indicator">{sorted === 'asc' ? ' ▲' : sorted === 'desc' ? ' ▼' : ''}</span>
-                    </th>
-                  )
-                })}
+                      id={header.column.id}
+                      label={String(header.column.columnDef.header)}
+                      sorted={header.column.getIsSorted()}
+                      onSort={header.column.getToggleSortingHandler()}
+                    />
+                  ))}
+                </SortableContext>
                 <th className="col-add-header">
                   <button
                     className="col-add-btn ghost"
@@ -333,6 +429,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                 <th className="col-actions-header" />
               </tr>
             </thead>
+            </DndContext>
             <tbody>
               {tableRows.length === 0 && (
                 <tr className="row-empty-cta">

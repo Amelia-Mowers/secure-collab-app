@@ -1404,6 +1404,28 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Reorder a table's columns. `ordered_ids_json` is a JSON array of column
+    /// ids in the new left-to-right order.
+    #[wasm_bindgen(js_name = reorderColumns)]
+    pub async fn reorder_columns(
+        &self,
+        table_id: String,
+        ordered_ids_json: &str,
+    ) -> Result<(), JsValue> {
+        let ordered: Vec<String> = serde_json::from_str(ordered_ids_json)
+            .map_err(|_| JsValue::from_str("Invalid column id list"))?;
+
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.reorder_columns(&table_id, &ordered)
+                .map_err(|_| JsValue::from_str("Failed to reorder columns"))?
+        };
+
+        self.send_updates(&updates).await?;
+
+        Ok(())
+    }
+
     /// Apply a cell update from the network (manual).
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&self, update_json: &str) -> Result<(), JsValue> {

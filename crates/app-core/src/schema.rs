@@ -37,6 +37,10 @@ pub struct ColumnDefinition {
     pub options: Option<Vec<String>>,
     /// For reference type - target table ID
     pub reference_table: Option<String>,
+    /// Display position. Lower sorts first; `None` (legacy columns created before
+    /// ordering existed) sorts after ordered columns. Reordering rewrites these.
+    #[serde(default)]
+    pub order: Option<i64>,
 }
 
 impl ColumnDefinition {
@@ -49,7 +53,13 @@ impl ColumnDefinition {
             default_value: None,
             options: None,
             reference_table: None,
+            order: None,
         }
+    }
+
+    pub fn with_order(mut self, order: i64) -> Self {
+        self.order = Some(order);
+        self
     }
 
     pub fn with_required(mut self, required: bool) -> Self {
@@ -152,9 +162,14 @@ impl SchemaManager {
             updates.push(desc_update);
         }
 
-        // Create column definitions in schema table
+        // Create column definitions in schema table. Assign a deterministic
+        // initial order (by column id) so the display position is explicit and
+        // stable rather than HashMap-arbitrary; reordering overrides it later.
         let mut ts = timestamp + 2;
-        for (col_id, column) in definition.columns {
+        let mut ordered_cols: Vec<(String, ColumnDefinition)> =
+            definition.columns.into_iter().collect();
+        ordered_cols.sort_by(|a, b| a.0.cmp(&b.0));
+        for (idx, (col_id, column)) in ordered_cols.into_iter().enumerate() {
             // Each column is a row in the schema table
             // Row ID format: {table_id}.{column_id}
             let row_id = format!("{}.{}", table_id, col_id);
@@ -240,6 +255,16 @@ impl SchemaManager {
                 updates.push(ref_update);
             }
 
+            let order_update = CellUpdate::new(
+                SCHEMA_TABLE_ID,
+                &row_id,
+                "order",
+                serde_json::json!(column.order.unwrap_or(idx as i64)),
+                ts + 8,
+            );
+            self.schema_table.apply_update(order_update.clone());
+            updates.push(order_update);
+
             ts += 10;
         }
 
@@ -298,7 +323,35 @@ impl SchemaManager {
             column.reference_table = ref_table.as_str().map(String::from);
         }
 
+        if let Some(order) = self.schema_table.get_value(row_id, "order") {
+            column.order = order.as_i64();
+        }
+
         Some(column)
+    }
+
+    /// The next order index for a new column in `table_id`: one past the current
+    /// max, so added columns append rather than jump to an arbitrary position.
+    fn next_column_order(&self, table_id: &str) -> i64 {
+        let mut max_order: Option<i64> = None;
+        for row_id in self.schema_table.rows() {
+            let belongs = self
+                .schema_table
+                .get_value(&row_id, "table_id")
+                .and_then(|v| v.as_str().map(String::from))
+                == Some(table_id.to_string());
+            if !belongs {
+                continue;
+            }
+            if let Some(o) = self
+                .schema_table
+                .get_value(&row_id, "order")
+                .and_then(|v| v.as_i64())
+            {
+                max_order = Some(max_order.map_or(o, |m| m.max(o)));
+            }
+        }
+        max_order.map(|m| m + 1).unwrap_or(0)
     }
 
     /// Add a single column to an existing table's schema without touching data.
@@ -385,6 +438,44 @@ impl SchemaManager {
             updates.push(default_update);
         }
 
+        // Append after the current columns unless an explicit order was given.
+        let order = column
+            .order
+            .unwrap_or_else(|| self.next_column_order(table_id));
+        let order_update = CellUpdate::new(
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "order",
+            serde_json::json!(order),
+            timestamp + 8,
+        );
+        self.schema_table.apply_update(order_update.clone());
+        updates.push(order_update);
+
+        updates
+    }
+
+    /// Rewrite column display order: assign `0..N` to `ordered_column_ids` in the
+    /// given sequence. Returns the schema CellUpdates applied.
+    pub fn reorder_columns(
+        &mut self,
+        table_id: &str,
+        ordered_column_ids: &[String],
+        timestamp: u64,
+    ) -> Vec<CellUpdate> {
+        let mut updates = Vec::new();
+        for (idx, col_id) in ordered_column_ids.iter().enumerate() {
+            let row_id = format!("{table_id}.{col_id}");
+            let update = CellUpdate::new(
+                SCHEMA_TABLE_ID,
+                &row_id,
+                "order",
+                serde_json::json!(idx as i64),
+                timestamp + idx as u64,
+            );
+            self.schema_table.apply_update(update.clone());
+            updates.push(update);
+        }
         updates
     }
 

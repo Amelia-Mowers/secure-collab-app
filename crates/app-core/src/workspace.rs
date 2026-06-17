@@ -165,6 +165,23 @@ impl Workspace {
         Ok(updates)
     }
 
+    /// Reorder a table's columns. `ordered_column_ids` is the new left-to-right
+    /// order; returns the schema CellUpdates to persist.
+    pub fn reorder_columns(
+        &mut self,
+        table_id: &str,
+        ordered_column_ids: &[String],
+    ) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+        let timestamp = self.next_timestamp();
+        let updates = self
+            .schema_manager
+            .reorder_columns(table_id, ordered_column_ids, timestamp);
+        Ok(updates)
+    }
+
     /// Create a new view for a table
     pub fn create_view(&mut self, config: ViewConfig) -> Result<Vec<CellUpdate>> {
         // Verify the table exists

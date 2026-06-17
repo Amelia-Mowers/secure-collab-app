@@ -52,6 +52,7 @@ export interface WorkspaceHandle {
   createTable(definition: string): string | Promise<string>
   createView(config: string): string | Promise<string>
   addColumn(tableId: string, columnJson: string): void | Promise<void>
+  reorderColumns(tableId: string, orderedIdsJson: string): void | Promise<void>
   updateCell(tableId: string, rowId: string, columnId: string, value: string): void | Promise<void>
   applyUpdate(update: string): void
   getTableRows(tableId: string): string
