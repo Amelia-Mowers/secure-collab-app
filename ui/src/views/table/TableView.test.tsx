@@ -219,4 +219,24 @@ describe('TableView', () => {
       await waitFor(() => expect(screen.getByText('42')).toBeInTheDocument())
     })
   })
+
+  describe('keyboard navigation', () => {
+    it('Enter moves edit focus to the cell below in the same column', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+
+      // Edit the first row's title, then press Enter.
+      fireEvent.click(screen.getByText('Design homepage').closest('.cell-click')!)
+      const input = await screen.findByDisplayValue('Design homepage')
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      // Edit focus should land on the next row's title cell (commit fired too,
+      // but the value was unchanged).
+      await waitFor(() =>
+        expect(screen.getByDisplayValue('Set up CI/CD')).toBeInTheDocument(),
+      )
+    })
+  })
 })

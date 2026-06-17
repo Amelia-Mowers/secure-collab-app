@@ -411,6 +411,36 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     }
   }, [workspace])
 
+  // Latest displayed rows/columns in refs so moveEditing stays stable (it's
+  // captured by the memoized cell renderer). tableRowsRef is set after the table
+  // model is built, below.
+  const tableRowsRef = useRef<any[]>([])
+  const columnsMetaRef = useRef(columnsMeta)
+  columnsMetaRef.current = columnsMeta
+
+  // Keyboard nav: move edit focus to an adjacent cell. Walks the displayed
+  // (sorted/filtered) rows × visible columns; Tab wraps across rows, and running
+  // past the first/last cell exits edit mode.
+  const moveEditing = React.useCallback(
+    (rowId: string, colId: string, dir: 'up' | 'down' | 'left' | 'right') => {
+      const rowIds = tableRowsRef.current.map((r: any) => r.original._row_id)
+      const colIds = columnsMetaRef.current.map(c => c.id)
+      let ri = rowIds.indexOf(rowId)
+      let ci = colIds.indexOf(colId)
+      if (ri < 0 || ci < 0) { setEditing(null); return }
+      if (dir === 'right') { ci++; if (ci >= colIds.length) { ci = 0; ri++ } }
+      else if (dir === 'left') { ci--; if (ci < 0) { ci = colIds.length - 1; ri-- } }
+      else if (dir === 'down') ri++
+      else if (dir === 'up') ri--
+      if (ri < 0 || ri >= rowIds.length || ci < 0 || ci >= colIds.length) {
+        setEditing(null)
+        return
+      }
+      setEditing(`${rowIds[ri]}:${colIds[ci]}`)
+    },
+    [],
+  )
+
   // ── TanStack column model (data columns only; add-column + actions are
   //    rendered separately so the grid model stays purely schema-driven) ──
   const columns = useMemo<ColumnDef<TableRow>[]>(() => {
@@ -437,6 +467,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               autoFocus
               lookup={referenceLookup}
               commit={v => updateCell(rowId, col.id, v).catch(showCellError)}
+              onNavigate={dir => moveEditing(rowId, col.id, dir)}
               onDone={() => setEditing(null)}
             />
           )
@@ -451,7 +482,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         )
       },
     }))
-  }, [columnsMeta, editing, updateCell, referenceLookup])
+  }, [columnsMeta, editing, updateCell, referenceLookup, moveEditing])
 
   const table = useReactTable({
     data: rows as TableRow[],
@@ -471,6 +502,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   })
 
   const tableRows = table.getRowModel().rows
+  // Expose the displayed rows to the stable moveEditing callback (keyboard nav).
+  tableRowsRef.current = tableRows
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
