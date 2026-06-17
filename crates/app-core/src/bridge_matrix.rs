@@ -1450,6 +1450,20 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Delete a column (decay model — marks it deleted in the schema).
+    #[wasm_bindgen(js_name = deleteColumn)]
+    pub async fn delete_column(&self, table_id: String, column_id: String) -> Result<(), JsValue> {
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.delete_column(&table_id, &column_id)
+                .map_err(|_| JsValue::from_str("Failed to delete column"))?
+        };
+
+        self.send_updates(&updates).await?;
+
+        Ok(())
+    }
+
     /// Apply a cell update from the network (manual).
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&self, update_json: &str) -> Result<(), JsValue> {

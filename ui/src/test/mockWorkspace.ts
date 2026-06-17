@@ -18,6 +18,7 @@ export interface ColumnDef {
   options?: string[]
   reference_table?: string
   order?: number
+  deleted?: boolean
 }
 
 export interface TableDef {
@@ -25,6 +26,7 @@ export interface TableDef {
   name: string
   description?: string
   columns: Record<string, ColumnDef>
+  deleted_columns?: string[]
 }
 
 export interface ViewConfig {
@@ -68,7 +70,15 @@ export class MockWorkspace {
   getTableSchema(tableId: string): string {
     const schema = this.schemas.get(tableId)
     if (!schema) throw new Error('Table not found')
-    return JSON.stringify(schema)
+    // Exclude deleted columns from `columns` and report them in
+    // `deleted_columns`, mirroring the Rust SchemaManager (decay model).
+    const columns: Record<string, ColumnDef> = {}
+    const deleted_columns: string[] = []
+    for (const [id, col] of Object.entries(schema.columns)) {
+      if (col.deleted) deleted_columns.push(id)
+      else columns[id] = col
+    }
+    return JSON.stringify({ ...schema, columns, deleted_columns })
   }
 
   getTableRows(tableId: string): string {
@@ -119,6 +129,13 @@ export class MockWorkspace {
     if (patch.name !== undefined) col.name = patch.name
     if (patch.column_type !== undefined) col.column_type = patch.column_type
     if (patch.options !== undefined) col.options = patch.options
+  }
+
+  deleteColumn(tableId: string, columnId: string): void {
+    const schema = this.schemas.get(tableId)
+    if (!schema) throw new Error('Table not found')
+    const col = schema.columns[columnId]
+    if (col) col.deleted = true
   }
 
   // ── Cell operations ───────────────────────────────────────────────────────

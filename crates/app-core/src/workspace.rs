@@ -201,6 +201,19 @@ impl Workspace {
         Ok(updates)
     }
 
+    /// Delete a column (decay model): marks it deleted in the schema. Returns the
+    /// schema CellUpdates to persist.
+    pub fn delete_column(&mut self, table_id: &str, column_id: &str) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+        let timestamp = self.next_timestamp();
+        let updates = self
+            .schema_manager
+            .delete_column(table_id, column_id, timestamp);
+        Ok(updates)
+    }
+
     /// Create a new view for a table
     pub fn create_view(&mut self, config: ViewConfig) -> Result<Vec<CellUpdate>> {
         // Verify the table exists
