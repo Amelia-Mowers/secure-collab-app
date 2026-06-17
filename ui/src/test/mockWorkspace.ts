@@ -110,6 +110,17 @@ export class MockWorkspace {
     })
   }
 
+  updateColumn(tableId: string, columnId: string, patchJson: string): void {
+    const schema = this.schemas.get(tableId)
+    if (!schema) throw new Error('Table not found')
+    const col = schema.columns[columnId]
+    if (!col) return
+    const patch = JSON.parse(patchJson) as Partial<ColumnDef>
+    if (patch.name !== undefined) col.name = patch.name
+    if (patch.column_type !== undefined) col.column_type = patch.column_type
+    if (patch.options !== undefined) col.options = patch.options
+  }
+
   // ── Cell operations ───────────────────────────────────────────────────────
 
   updateCell(

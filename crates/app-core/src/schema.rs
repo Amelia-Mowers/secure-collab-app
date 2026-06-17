@@ -479,6 +479,40 @@ impl SchemaManager {
         updates
     }
 
+    /// Update mutable fields of an existing column. `patch` is a JSON object with
+    /// any of: `name`, `column_type`, `options`, `default_value`; a schema cell is
+    /// written for each present field (rename / retype / edit options / default).
+    /// Returns the CellUpdates applied.
+    pub fn update_column(
+        &mut self,
+        table_id: &str,
+        column_id: &str,
+        patch: &Value,
+        timestamp: u64,
+    ) -> Vec<CellUpdate> {
+        let row_id = format!("{table_id}.{column_id}");
+        let mut updates = Vec::new();
+        let mut ts = timestamp;
+
+        // (patch key → schema cell name). `column_type`/`default_value` map to the
+        // cell names used by create_table (`type`/`default`).
+        let mappings = [
+            ("name", "name"),
+            ("column_type", "type"),
+            ("options", "options"),
+            ("default_value", "default"),
+        ];
+        for (patch_key, cell) in mappings {
+            if let Some(value) = patch.get(patch_key) {
+                let update = CellUpdate::new(SCHEMA_TABLE_ID, &row_id, cell, value.clone(), ts);
+                self.schema_table.apply_update(update.clone());
+                updates.push(update);
+                ts += 1;
+            }
+        }
+        updates
+    }
+
     /// Apply updates to the schema system tables
     pub fn apply_updates(&mut self, updates: Vec<CellUpdate>) {
         for update in updates {

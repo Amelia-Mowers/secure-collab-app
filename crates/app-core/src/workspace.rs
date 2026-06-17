@@ -182,6 +182,25 @@ impl Workspace {
         Ok(updates)
     }
 
+    /// Update mutable fields of a column (rename / retype / options / default).
+    /// `patch` is a JSON object with any of `name`/`column_type`/`options`/
+    /// `default_value`; returns the schema CellUpdates to persist.
+    pub fn update_column(
+        &mut self,
+        table_id: &str,
+        column_id: &str,
+        patch: &serde_json::Value,
+    ) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+        let timestamp = self.next_timestamp();
+        let updates = self
+            .schema_manager
+            .update_column(table_id, column_id, patch, timestamp);
+        Ok(updates)
+    }
+
     /// Create a new view for a table
     pub fn create_view(&mut self, config: ViewConfig) -> Result<Vec<CellUpdate>> {
         // Verify the table exists

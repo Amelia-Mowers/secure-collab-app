@@ -252,9 +252,44 @@
 }
 
 /* Sortable header */
-.col-sortable { cursor: pointer; user-select: none; }
+/* Reserve room on the right for the absolutely-positioned rename button so the
+   header's clickable centre stays over the name (a click there sorts). */
+.col-sortable { cursor: pointer; user-select: none; position: relative; padding-right: 24px; }
 .col-sortable:hover .col-name { color: var(--text); }
 .col-sort-indicator { font-size: 9px; color: var(--accent, #6366f1); }
+
+/* Rename affordance: a pencil pinned to the header's right edge, revealed on
+   hover. pointer-events stay off until hover so it never intercepts the
+   sort-click on the rest of the header. */
+.col-rename-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  padding: 2px;
+  color: var(--text-tertiary);
+  border-radius: 3px;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
+}
+.col-sortable:hover .col-rename-btn { opacity: 0.7; pointer-events: auto; }
+.col-rename-btn:hover { opacity: 1; color: var(--text); background: var(--bg-hover); }
+
+.col-rename-input {
+  width: 100%;
+  min-width: 80px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 6px;
+  border: 1px solid var(--accent, #6366f1);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
 
 /* Select dropdown cell */
 .cell-select {
