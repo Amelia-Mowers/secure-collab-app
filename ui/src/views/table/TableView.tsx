@@ -128,6 +128,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       column_type: def.columnType,
       required: false,
       ...(def.options.length > 0 ? { options: def.options } : {}),
+      ...(def.defaultValue !== undefined && def.defaultValue !== ''
+        ? { default_value: def.defaultValue }
+        : {}),
     }
     try {
       await workspace.addColumn(tableId, JSON.stringify(columnDef))
