@@ -365,6 +365,24 @@
   background-color: transparent;
 }
 
+/* Faded "shadow" quick-add row: prefilled with defaults, brightens on hover,
+   becomes a real entry when a cell is edited. */
+.row-shadow {
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.row-shadow:hover {
+  opacity: 0.85;
+}
+.cell-shadow {
+  color: var(--text-tertiary);
+}
+.cell-shadow-plus {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+}
+
 .empty-cta-btn {
   display: block;
   width: 100%;
