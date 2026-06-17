@@ -171,9 +171,13 @@ export function useTable(
           notifyWorkspaceChanged(workspaceId)
         }
       } catch (err) {
-        // Revert optimistic update on failure by re-reading from WASM
+        // A failed *mutation* must not take over the whole view — that full-page
+        // error state is reserved for load failures. Roll back the optimistic
+        // change by re-reading from WASM, then re-throw so the caller can surface
+        // a toast. (With the background send queue, transient errors like a 429
+        // rate-limit never reach here: they're retried with backoff and the local
+        // change simply stays until it syncs.)
         await fetchRows(false)
-        setError(err instanceof Error ? err : new Error(String(err)))
         throw err
       } finally {
         pendingMutationsRef.current--
@@ -200,9 +204,9 @@ export function useTable(
           notifyWorkspaceChanged(workspaceId)
         }
       } catch (err) {
-        // Revert on failure
+        // Roll back the optimistic removal and re-throw for a toast — a failed
+        // delete shouldn't take over the view (see updateCell above).
         await fetchRows(false)
-        setError(err instanceof Error ? err : new Error(String(err)))
         throw err
       } finally {
         pendingMutationsRef.current--
