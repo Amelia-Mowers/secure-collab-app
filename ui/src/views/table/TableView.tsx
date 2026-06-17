@@ -230,6 +230,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const [isAddingColumn, setIsAddingColumn] = useState(false)
   /** Which cell is being edited: "rowId:colId" or null */
   const [editing, setEditing] = useState<string | null>(null)
+  /** Stable id for the faded "shadow" quick-add row; rotated once it's promoted
+   *  to a real entry so the next ghost row gets a fresh id. */
+  const [shadowId, setShadowId] = useState(() => `row_${Date.now()}`)
   const [deletingRows, setDeletingRows] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<string | null>(null)
   const [sorting, setSorting] = useState<SortingState>([])
@@ -359,6 +362,32 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       if (workspaceId) notifyWorkspaceChanged(workspaceId)
     } catch (err) {
       console.error('Failed to add column:', err)
+    }
+  }
+
+  // Promote the faded shadow row to a real entry: editing one of its cells
+  // persists the prefilled column defaults plus the edited value under the
+  // shadow id, then rotates the shadow id so a fresh ghost row appears. Mirrors
+  // the new-entry default-flush in EntryView, but inline.
+  const handleShadowCommit = async (colId: string, value: any) => {
+    if (!tableId || !workspace) return
+    const id = shadowId
+    setShadowId(`row_${Date.now()}`)
+    setEditing(null)
+    try {
+      for (const col of columnsMeta) {
+        if (col.id === colId) continue
+        const def = schema?.columns?.[col.id]?.default_value
+        if (def !== undefined && def !== null && def !== '') {
+          await updateCell(id, col.id, def)
+        }
+      }
+      await updateCell(id, colId, value)
+      // The new row lives in WASM now; re-read so it materializes in the grid
+      // (the hook's optimistic update only touches existing rows).
+      refresh()
+    } catch (err) {
+      showCellError(err)
     }
   }
 
@@ -639,6 +668,49 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
 
               {paddingBottom > 0 && (
                 <tr aria-hidden="true"><td colSpan={totalColSpan} style={{ height: paddingBottom, padding: 0 }} /></tr>
+              )}
+
+              {/* Shadow row: a faded, prefilled-with-defaults ghost row for quick
+                  inline adds. Editing any cell promotes it to a real entry. */}
+              {tableRows.length > 0 && columnsMeta.length > 0 && (
+                <tr className="row-shadow" style={{ height: ROW_HEIGHT }} title="Add a new entry">
+                  <td className="cell-open" aria-hidden="true">
+                    <span className="cell-shadow-plus">+</span>
+                  </td>
+                  {columnsMeta.map(col => {
+                    const cellKey = `${shadowId}:${col.id}`
+                    const cellColumn: CellColumn = {
+                      id: col.id,
+                      name: col.name,
+                      column_type: col.column_type,
+                      options: col.options,
+                    }
+                    const value = schema?.columns?.[col.id]?.default_value ?? null
+                    if (editing === cellKey) {
+                      return (
+                        <td key={col.id}>
+                          <CellEditor
+                            column={cellColumn}
+                            value={value}
+                            autoFocus
+                            lookup={referenceLookup}
+                            commit={v => handleShadowCommit(col.id, v)}
+                            onDone={() => setEditing(null)}
+                          />
+                        </td>
+                      )
+                    }
+                    return (
+                      <td key={col.id}>
+                        <div className="cell-click cell-shadow" onClick={() => setEditing(cellKey)}>
+                          <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} />
+                        </div>
+                      </td>
+                    )
+                  })}
+                  <td aria-hidden="true" />
+                  <td className="cell-actions" aria-hidden="true" />
+                </tr>
               )}
             </tbody>
           </table>
