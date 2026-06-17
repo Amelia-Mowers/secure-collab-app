@@ -107,6 +107,27 @@ impl WasmWorkspace {
         Ok(())
     }
 
+    /// Reorder a table's columns. `ordered_ids_json` is a JSON array of column
+    /// ids in the new left-to-right order.
+    #[wasm_bindgen(js_name = reorderColumns)]
+    pub fn reorder_columns(
+        &mut self,
+        table_id: String,
+        ordered_ids_json: &str,
+    ) -> Result<(), JsValue> {
+        let ordered: Vec<String> = serde_json::from_str(ordered_ids_json)
+            .map_err(|_| JsValue::from_str("Invalid column id list"))?;
+
+        self.workspace
+            .reorder_columns(&table_id, &ordered)
+            .map_err(|e| match e {
+                crate::Error::TableNotFound => JsValue::from_str("Table not found"),
+                _ => JsValue::from_str("Failed to reorder columns"),
+            })?;
+
+        Ok(())
+    }
+
     /// Apply a cell update from the network
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&mut self, update_json: &str) -> Result<(), JsValue> {

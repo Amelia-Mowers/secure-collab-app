@@ -224,8 +224,16 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
     )
   }
 
-  // TODO: use schema-defined sort_order when available
-  const columns = Object.values(schema.columns).sort((a, b) => a.name.localeCompare(b.name))
+  // Order fields by the schema's explicit column order; columns without one
+  // (legacy tables) fall to the end, alphabetically.
+  const columns = (Object.values(schema.columns) as any[]).sort((a, b) => {
+    const ao = typeof a.order === 'number' ? a.order : null
+    const bo = typeof b.order === 'number' ? b.order : null
+    if (ao != null && bo != null) return ao - bo
+    if (ao != null) return -1
+    if (bo != null) return 1
+    return a.name.localeCompare(b.name)
+  })
   const titleCol = columns.find(c => c.column_type === 'text')
   const entryTitle = titleCol ? (rowData[titleCol.id] || 'Untitled') : 'Untitled'
   // "new" is the sentinel rowId used by the /entry/new route and the route pattern /entry/:rowId

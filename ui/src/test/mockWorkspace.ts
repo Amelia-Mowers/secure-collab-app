@@ -17,6 +17,7 @@ export interface ColumnDef {
   required: boolean
   options?: string[]
   reference_table?: string
+  order?: number
 }
 
 export interface TableDef {
@@ -97,6 +98,16 @@ export class MockWorkspace {
     if (!schema) throw new Error('Table not found')
     const col: ColumnDef = JSON.parse(columnJson)
     schema.columns[col.id] = col
+  }
+
+  reorderColumns(tableId: string, orderedIdsJson: string): void {
+    const schema = this.schemas.get(tableId)
+    if (!schema) throw new Error('Table not found')
+    const ordered: string[] = JSON.parse(orderedIdsJson)
+    ordered.forEach((colId, idx) => {
+      const col = schema.columns[colId]
+      if (col) col.order = idx
+    })
   }
 
   // ── Cell operations ───────────────────────────────────────────────────────
