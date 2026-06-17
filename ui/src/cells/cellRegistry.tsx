@@ -42,6 +42,10 @@ export interface CellEditorProps {
   autoFocus?: boolean
   /** Editing finished (commit already fired if the value changed). */
   onDone?: () => void
+  /** Move edit focus to an adjacent cell after committing — Enter→down,
+   *  Tab→right, Shift+Tab→left. When provided, editors call this instead of
+   *  `onDone` on those keys so the grid can keep editing the next cell. */
+  onNavigate?: (direction: 'up' | 'down' | 'left' | 'right') => void
   /** Resolve referenced records (used by `reference` columns). */
   lookup?: ReferenceLookup
 }
@@ -95,11 +99,26 @@ function useDraft<T>(value: T): [T, (v: T) => void] {
   return [draft, setDraft]
 }
 
-function TextEditor({ column, value, commit, autoFocus, onDone }: CellEditorProps) {
+/** Shared key handling for text-like editors: Enter→commit+down,
+ *  Tab/Shift+Tab→commit+right/left (so editing flows to the next cell), and
+ *  Escape→cancel. `finish(nav)` commits the value, then navigates if a direction
+ *  is given (else exits via onDone). Structurally typed so no React import. */
+function handleEditKeys(
+  e: { key: string; shiftKey: boolean; preventDefault: () => void },
+  finish: (nav?: 'down' | 'left' | 'right') => void,
+  onDone?: () => void,
+) {
+  if (e.key === 'Enter') { e.preventDefault(); finish('down') }
+  else if (e.key === 'Tab') { e.preventDefault(); finish(e.shiftKey ? 'left' : 'right') }
+  else if (e.key === 'Escape') onDone?.()
+}
+
+function TextEditor({ column, value, commit, autoFocus, onDone, onNavigate }: CellEditorProps) {
   const [draft, setDraft] = useDraft(value ?? '')
-  const finish = () => {
+  const finish = (nav?: 'down' | 'left' | 'right') => {
     if (draft !== (value ?? '')) commit(draft)
-    onDone?.()
+    if (nav && onNavigate) onNavigate(nav)
+    else onDone?.()
   }
   return (
     <input
@@ -109,22 +128,20 @@ function TextEditor({ column, value, commit, autoFocus, onDone }: CellEditorProp
       autoFocus={autoFocus}
       placeholder={`Enter ${column.name.toLowerCase()}…`}
       onChange={e => setDraft(e.target.value)}
-      onBlur={finish}
-      onKeyDown={e => {
-        if (e.key === 'Enter') { e.preventDefault(); finish() }
-        if (e.key === 'Escape') onDone?.()
-      }}
+      onBlur={() => finish()}
+      onKeyDown={e => handleEditKeys(e, finish, onDone)}
     />
   )
 }
 
-function NumberEditor({ value, commit, autoFocus, onDone }: CellEditorProps) {
+function NumberEditor({ value, commit, autoFocus, onDone, onNavigate }: CellEditorProps) {
   const [draft, setDraft] = useDraft(value ?? '')
-  const finish = () => {
+  const finish = (nav?: 'down' | 'left' | 'right') => {
     const parsed = draft === '' || draft == null ? null : Number(draft)
     const next = parsed != null && !Number.isNaN(parsed) ? parsed : null
     if (next !== (value ?? null)) commit(next)
-    onDone?.()
+    if (nav && onNavigate) onNavigate(nav)
+    else onDone?.()
   }
   return (
     <input
@@ -133,11 +150,8 @@ function NumberEditor({ value, commit, autoFocus, onDone }: CellEditorProps) {
       value={draft as any}
       autoFocus={autoFocus}
       onChange={e => setDraft(e.target.value as any)}
-      onBlur={finish}
-      onKeyDown={e => {
-        if (e.key === 'Enter') { e.preventDefault(); finish() }
-        if (e.key === 'Escape') onDone?.()
-      }}
+      onBlur={() => finish()}
+      onKeyDown={e => handleEditKeys(e, finish, onDone)}
     />
   )
 }
@@ -156,11 +170,12 @@ function BooleanEditor({ column, value, commit, onDone }: CellEditorProps) {
   )
 }
 
-function DateEditor({ value, commit, autoFocus, onDone }: CellEditorProps) {
+function DateEditor({ value, commit, autoFocus, onDone, onNavigate }: CellEditorProps) {
   const [draft, setDraft] = useDraft(value ?? '')
-  const finish = () => {
+  const finish = (nav?: 'down' | 'left' | 'right') => {
     if (draft !== (value ?? '')) commit(draft)
-    onDone?.()
+    if (nav && onNavigate) onNavigate(nav)
+    else onDone?.()
   }
   return (
     <input
@@ -169,13 +184,13 @@ function DateEditor({ value, commit, autoFocus, onDone }: CellEditorProps) {
       value={draft as string}
       autoFocus={autoFocus}
       onChange={e => setDraft(e.target.value)}
-      onBlur={finish}
-      onKeyDown={e => { if (e.key === 'Escape') onDone?.() }}
+      onBlur={() => finish()}
+      onKeyDown={e => handleEditKeys(e, finish, onDone)}
     />
   )
 }
 
-function SelectEditor({ column, value, commit, autoFocus, onDone }: CellEditorProps) {
+function SelectEditor({ column, value, commit, autoFocus, onDone, onNavigate }: CellEditorProps) {
   return (
     <select
       className="cell-input cell-input--select"
@@ -183,6 +198,15 @@ function SelectEditor({ column, value, commit, autoFocus, onDone }: CellEditorPr
       autoFocus={autoFocus}
       onChange={e => { commit(e.target.value === '' ? null : e.target.value); onDone?.() }}
       onBlur={onDone}
+      onKeyDown={e => {
+        // Native select handles Enter/arrows; only intercept Tab to flow to the
+        // next cell instead of leaving the grid.
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          if (onNavigate) onNavigate(e.shiftKey ? 'left' : 'right')
+          else onDone?.()
+        }
+      }}
     >
       <option value="">Select {column.name}...</option>
       {(column.options ?? []).map(opt => (
