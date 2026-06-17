@@ -149,7 +149,9 @@
 /* Body rows */
 .data-table tbody tr {
   border-bottom: 1px solid var(--border-subtle);
-  cursor: pointer;
+  /* The row is no longer clickable — cells edit inline, the leading button opens
+     the full entry. */
+  cursor: default;
   transition: background-color 0.1s;
 }
 
@@ -302,6 +304,36 @@
 }
 
 /* Actions cell */
+/* Leading "open full entry" button column (replaces the old whole-row click). */
+.col-open-header {
+  width: 36px;
+}
+
+.cell-open {
+  width: 36px;
+  text-align: center;
+  padding: 6px;
+}
+
+.cell-open-btn {
+  /* Faintly visible by default so it's discoverable as the way to open the
+     entry, brightening on row hover. */
+  opacity: 0.4;
+  padding: 4px;
+  color: var(--text-tertiary);
+  border-radius: 4px;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
+}
+
+.data-table tbody tr:hover .cell-open-btn {
+  opacity: 1;
+}
+
+.cell-open-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
 .cell-actions {
   width: 40px;
   text-align: center;

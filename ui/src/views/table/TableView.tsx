@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   useReactTable,
   getCoreRowModel,
@@ -34,9 +34,44 @@ interface TableRow {
 
 const ROW_HEIGHT = 40
 
+/**
+ * Global filter that searches every column's value as text — including select
+ * options and multi-select arrays.
+ *
+ * TanStack's built-in `includesString` is paired with a default
+ * `getColumnCanGlobalFilter` that samples only the *first row's* value and
+ * excludes a column from global search when that value isn't a string/number.
+ * An empty select cell in the first row therefore made the whole column
+ * unsearchable — which is why filtering by a selection option didn't work. We
+ * force every column filterable (see the table config) and match here against a
+ * string form of any value type.
+ */
+function globalTextFilter(row: any, columnId: string, filterValue: string): boolean {
+  const v = row.getValue(columnId)
+  if (v == null || v === '') return false
+  const hay = Array.isArray(v)
+    ? v.join(' ')
+    : typeof v === 'object'
+      ? JSON.stringify(v)
+      : String(v)
+  return hay.toLowerCase().includes(String(filterValue).toLowerCase())
+}
+
 export function TableView({ workspace, syncCount }: TableViewProps) {
   const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Navigate to an entry, recording the view we came from so the entry's "back"
+  // returns here (a kanban/card view records itself the same way). See EntryView.
+  const openEntry = (rowId: string) =>
+    navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${rowId}`, {
+      state: { from: location.pathname },
+    })
+  const newEntry = () =>
+    navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, {
+      state: { from: location.pathname },
+    })
   const { rows, loading, error, updateCell, deleteRow, refresh } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [schema, setSchema] = useState<any>(null)
   const [isAddingColumn, setIsAddingColumn] = useState(false)
@@ -172,7 +207,11 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     state: { sorting, globalFilter },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
-    globalFilterFn: 'includesString',
+    globalFilterFn: globalTextFilter,
+    // Search all columns, not just those whose first-row value is a string —
+    // otherwise an empty first-row select cell excludes the column (see
+    // globalTextFilter).
+    getColumnCanGlobalFilter: () => true,
     getRowId: (row: TableRow) => row._row_id,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -200,8 +239,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const paddingBottom = useVirtual ? totalSize - virtualRows[virtualRows.length - 1].end : 0
   const displayRows = useVirtual ? virtualRows.map(v => tableRows[v.index]) : tableRows
 
-  // total columns including the add-column spacer and the actions column
-  const totalColSpan = columnsMeta.length + 2
+  // total columns including the leading open button, the add-column spacer, and
+  // the actions column
+  const totalColSpan = columnsMeta.length + 3
 
   if (!tableId) {
     return <div className="table-view"><div className="state-empty"><p>No table selected</p></div></div>
@@ -235,7 +275,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" active={showFilter} onClick={() => setShowFilter(s => !s)} />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
-            <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}>New entry</ToolbarPrimaryButton>
+            <ToolbarPrimaryButton onClick={newEntry}>New entry</ToolbarPrimaryButton>
           </>
         }
       />
@@ -265,6 +305,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           <table className="data-table">
             <thead>
               <tr>
+                <th className="col-open-header" />
                 {table.getHeaderGroups()[0]?.headers.map(header => {
                   const sorted = header.column.getIsSorted()
                   return (
@@ -293,10 +334,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               {tableRows.length === 0 && (
                 <tr className="row-empty-cta">
                   <td colSpan={totalColSpan}>
-                    <button
-                      className="empty-cta-btn"
-                      onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}
-                    >
+                    <button className="empty-cta-btn" onClick={newEntry}>
                       + Add your first entry
                     </button>
                   </td>
@@ -310,11 +348,20 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               {displayRows.map(row => {
                 const rowId = row.original._row_id
                 return (
-                  <tr
-                    key={row.id}
-                    style={{ height: ROW_HEIGHT }}
-                    onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${rowId}`)}
-                  >
+                  <tr key={row.id} style={{ height: ROW_HEIGHT }}>
+                    <td className="cell-open">
+                      <button
+                        className="ghost cell-open-btn"
+                        onClick={() => openEntry(rowId)}
+                        title="Open full entry"
+                        aria-label="Open full entry"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
+                          <path d="M2 2h4M2 2v4M2 2l4.5 4.5" />
+                          <path d="M11 11H7M11 11V7M11 11L6.5 6.5" />
+                        </svg>
+                      </button>
+                    </td>
                     {row.getVisibleCells().map(cell => (
                       <td key={cell.id}>
                         {(cell.column.columnDef.cell as any)(cell.getContext())}

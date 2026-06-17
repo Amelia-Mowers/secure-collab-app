@@ -69,8 +69,10 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const navigate = useNavigate()
   const location = useLocation()
 
-  // Entry counter carried through navigation state
-  const locationState = (location.state as { entryCount?: number } | null) ?? {}
+  // Entry counter + originating view carried through navigation state. `from` is
+  // the path of the view that opened this entry (table / kanban / card) so the
+  // back action returns there instead of always the default table.
+  const locationState = (location.state as { entryCount?: number; from?: string } | null) ?? {}
   const [entryCount] = useState<number>(locationState.entryCount ?? 0)
 
   const [schema, setSchema] = useState<TableSchema | null>(null)
@@ -154,10 +156,10 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   }, [workspace])
 
   const handleReturn = () => {
-    // If we're still on /entry/new and nothing was written, no row exists — just go back.
-    // If a real rowId exists and we're in new-entry mode, the first field write already
-    // navigated us away from /new, so isNewEntry is false by then. Either way, navigate back.
-    if (tableId) navigate(`/workspace/${workspaceId}/table/${tableId}`)
+    // Return to the view we came from (kanban / card / table) when the opening
+    // view recorded it in navigation state; otherwise fall back to the table.
+    if (locationState.from) navigate(locationState.from)
+    else if (tableId) navigate(`/workspace/${workspaceId}/table/${tableId}`)
     else navigate('/')
   }
 
@@ -170,7 +172,9 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const handleCreateNext = () => {
     const nextCount = entryCount + 1
     showToast(`Entry ${nextCount} saved`)
-    navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, { state: { entryCount: nextCount } })
+    navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, {
+      state: { entryCount: nextCount, from: locationState.from },
+    })
   }
 
   if (loading) {
