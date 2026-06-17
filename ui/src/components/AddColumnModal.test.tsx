@@ -81,10 +81,13 @@ describe('AddColumnModal', () => {
     it('renders option preview chips from the options input', () => {
       renderModal()
       fireEvent.click(screen.getByDisplayValue('select'))
-      // Default value "Option 1, Option 2, Option 3" should render 3 chips
-      expect(screen.getByText('Option 1')).toBeInTheDocument()
-      expect(screen.getByText('Option 2')).toBeInTheDocument()
-      expect(screen.getByText('Option 3')).toBeInTheDocument()
+      // Default "Option 1, Option 2, Option 3" should render 3 chips. Scope to the
+      // preview container — the option text also appears in the default-value
+      // <select> below it.
+      const preview = document.querySelector('.acm__option-preview')!
+      expect(preview).toHaveTextContent('Option 1')
+      expect(preview).toHaveTextContent('Option 2')
+      expect(preview).toHaveTextContent('Option 3')
     })
 
     it('calls onClose when the close button is clicked', () => {
@@ -123,6 +126,7 @@ describe('AddColumnModal', () => {
         name: 'Tags',
         columnType: 'text',
         options: [],
+        defaultValue: undefined,
       })
     })
 
@@ -139,6 +143,7 @@ describe('AddColumnModal', () => {
         name: 'Score',
         columnType: 'number',
         options: [],
+        defaultValue: undefined,
       })
     })
 
@@ -158,6 +163,8 @@ describe('AddColumnModal', () => {
         name: 'Priority',
         columnType: 'select',
         options: ['Low', 'Medium', 'High'],
+        // Single-select defaults to its first option.
+        defaultValue: 'Low',
       })
     })
 
@@ -177,6 +184,7 @@ describe('AddColumnModal', () => {
         name: 'Status',
         columnType: 'select',
         options: ['Todo', 'In Progress', 'Done'],
+        defaultValue: 'Todo',
       })
     })
 

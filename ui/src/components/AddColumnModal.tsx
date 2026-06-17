@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import './AddColumnModal.css'
 
 export type ColumnType =
@@ -30,6 +30,10 @@ export interface NewColumnDef {
   name: string
   columnType: ColumnType
   options: string[]  // only used for select / multiselect
+  /** Default value applied to new entries. Currently surfaced for `select`
+   *  columns (defaults to the first option) so single-selects start on a value
+   *  instead of blank. */
+  defaultValue?: string
 }
 
 interface AddColumnModalProps {
@@ -41,20 +45,39 @@ export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
   const [name, setName] = useState('')
   const [columnType, setColumnType] = useState<ColumnType>('text')
   const [optionsRaw, setOptionsRaw] = useState('Option 1, Option 2, Option 3')
+  const [defaultValue, setDefaultValue] = useState('')
   const [adding, setAdding] = useState(false)
 
   const isSelectType = columnType === 'select' || columnType === 'multiselect'
   const canSubmit = name.trim().length > 0
 
+  const options = useMemo(
+    () => optionsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0),
+    [optionsRaw],
+  )
+
+  // A single-select defaults to its first option (the user's ask), but the
+  // choice is editable here — including "(no default)". Keep the picked default
+  // valid as options/type change; non-select types carry no default.
+  useEffect(() => {
+    if (columnType === 'select') {
+      setDefaultValue(prev => (prev && options.includes(prev) ? prev : options[0] ?? ''))
+    } else {
+      setDefaultValue('')
+    }
+  }, [columnType, options])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!canSubmit || adding) return
-    const options = isSelectType
-      ? optionsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0)
-      : []
     setAdding(true)
     try {
-      await onAdd({ name: name.trim(), columnType, options })
+      await onAdd({
+        name: name.trim(),
+        columnType,
+        options: isSelectType ? options : [],
+        defaultValue: columnType === 'select' && defaultValue ? defaultValue : undefined,
+      })
     } finally {
       setAdding(false)
     }
@@ -121,10 +144,29 @@ export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
               />
               {/* Preview pills */}
               <div className="acm__option-preview">
-                {optionsRaw.split(',').map(s => s.trim()).filter(s => s).map(opt => (
+                {options.map(opt => (
                   <span key={opt} className="acm__option-chip">{opt}</span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Default value — single-select starts on a value instead of blank */}
+          {columnType === 'select' && options.length > 0 && (
+            <div className="acm__form-group">
+              <label className="acm__label">
+                Default value <span className="acm__label-hint">(new entries)</span>
+              </label>
+              <select
+                className="acm__input"
+                value={defaultValue}
+                onChange={e => setDefaultValue(e.target.value)}
+              >
+                <option value="">(no default)</option>
+                {options.map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
             </div>
           )}
 

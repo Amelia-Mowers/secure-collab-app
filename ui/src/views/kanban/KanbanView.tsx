@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   DndContext,
   DragOverlay,
@@ -133,6 +133,7 @@ function DroppableColumn({
 export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const { workspaceId, tableId, viewId } = useParams<{ workspaceId: string; tableId: string; viewId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { rows, loading, error, updateCell } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [viewConfig, setViewConfig] = useState<any>(null)
   const [viewError, setViewError] = useState<Error | null>(null)
@@ -283,7 +284,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
                         <SortableCard
                           key={card.id}
                           card={card}
-                          onOpen={(c) => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${c._row_id ?? c.id}`)}
+                          onOpen={(c) => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${c._row_id ?? c.id}`, { state: { from: location.pathname } })}
                         />
                       ))}
                     </div>
@@ -293,7 +294,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
                 {/* Add entry — pre-fills status column via query param */}
                 <button
                   className="kcol__add"
-                  onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new?status=${encodeURIComponent(column.id)}`)}
+                  onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new?status=${encodeURIComponent(column.id)}`, { state: { from: location.pathname } })}
                 >
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <line x1="6" y1="1.5" x2="6" y2="10.5" />

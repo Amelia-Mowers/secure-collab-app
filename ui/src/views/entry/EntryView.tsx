@@ -69,8 +69,10 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const navigate = useNavigate()
   const location = useLocation()
 
-  // Entry counter carried through navigation state
-  const locationState = (location.state as { entryCount?: number } | null) ?? {}
+  // Entry counter + originating view carried through navigation state. `from` is
+  // the path of the view that opened this entry (table / kanban / card) so the
+  // back action returns there instead of always the default table.
+  const locationState = (location.state as { entryCount?: number; from?: string } | null) ?? {}
   const [entryCount] = useState<number>(locationState.entryCount ?? 0)
 
   const [schema, setSchema] = useState<TableSchema | null>(null)
@@ -81,6 +83,9 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Stable row ID for new entries — created on first keystroke, never changes URL
   const stableRowId = useRef<string>(rowId && rowId !== 'new' ? rowId : `row_${Date.now()}`)
+  // Whether a new entry's row has been persisted yet — gates flushing prefilled
+  // column defaults alongside the first user write (rows are created lazily).
+  const establishedRef = useRef(!!rowId && rowId !== 'new')
   // Comments are local-only for now (no WASM storage yet)
   const [comments] = useState<Comment[]>([])
   const [commentDraft, setCommentDraft] = useState('')
@@ -94,6 +99,17 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
         const rows = JSON.parse(workspace.getTableRows(tableId))
         const row = rows.find((r: any) => r._row_id === rowId)
         if (row) setRowData(row)
+      } else {
+        // New entry: prefill column defaults (e.g. a single-select starts on its
+        // first option) so the form isn't blank. Persisted on the first write —
+        // see handleFieldChange.
+        const defaults: Record<string, any> = {}
+        for (const col of Object.values(parsedSchema.columns ?? {}) as any[]) {
+          if (col.default_value !== undefined && col.default_value !== null) {
+            defaults[col.id] = col.default_value
+          }
+        }
+        if (Object.keys(defaults).length > 0) setRowData(defaults)
       }
       setLoading(false)
     } catch (err) {
@@ -126,6 +142,16 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const handleFieldChange = async (columnId: string, value: any) => {
     if (!workspace || !tableId) return
     try {
+      // On a new entry's first write, also persist the prefilled defaults so they
+      // aren't lost (the row is created lazily, on the first write).
+      if (!establishedRef.current) {
+        establishedRef.current = true
+        for (const [cid, dval] of Object.entries(rowData)) {
+          if (cid !== columnId && dval !== undefined && dval !== null && dval !== '') {
+            workspace.updateCell(tableId, stableRowId.current, cid, JSON.stringify(dval))
+          }
+        }
+      }
       workspace.updateCell(tableId, stableRowId.current, columnId, JSON.stringify(value))
       setRowData(prev => ({ ...prev, [columnId]: value }))
     } catch (err) {
@@ -154,10 +180,10 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   }, [workspace])
 
   const handleReturn = () => {
-    // If we're still on /entry/new and nothing was written, no row exists — just go back.
-    // If a real rowId exists and we're in new-entry mode, the first field write already
-    // navigated us away from /new, so isNewEntry is false by then. Either way, navigate back.
-    if (tableId) navigate(`/workspace/${workspaceId}/table/${tableId}`)
+    // Return to the view we came from (kanban / card / table) when the opening
+    // view recorded it in navigation state; otherwise fall back to the table.
+    if (locationState.from) navigate(locationState.from)
+    else if (tableId) navigate(`/workspace/${workspaceId}/table/${tableId}`)
     else navigate('/')
   }
 
@@ -170,7 +196,9 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const handleCreateNext = () => {
     const nextCount = entryCount + 1
     showToast(`Entry ${nextCount} saved`)
-    navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, { state: { entryCount: nextCount } })
+    navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, {
+      state: { entryCount: nextCount, from: locationState.from },
+    })
   }
 
   if (loading) {
