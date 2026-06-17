@@ -11,6 +11,7 @@
 //! for each joined room.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -1026,6 +1027,9 @@ impl DeviceVerification {
 
 // ── Connected Workspace ─────────────────────────────────────────────
 
+/// Key for coalescing pending cell updates: (table_id, row_id, column_id).
+type CellKey = (String, String, String);
+
 /// A workspace backed by a Matrix room with real-time sync.
 ///
 /// This wraps the local `Workspace` and adds:
@@ -1044,6 +1048,15 @@ pub struct ConnectedWorkspace {
     /// start / sync. Surfaced to the UI instead of being silently dropped —
     /// see `docs/adr/0001-e2e-key-management.md` / review §4.2.
     undecryptable: Rc<Cell<u32>>,
+    /// Coalescing send queue: the latest pending `CellUpdate` per cell, keyed by
+    /// (table, row, column). Rapid edits to the same cell (e.g. repeatedly
+    /// dragging a kanban card) collapse to a single send, and a debounced
+    /// background task drains this so write bursts don't trip the homeserver
+    /// rate limit (`M_LIMIT_EXCEEDED`). Local state is applied immediately, so
+    /// queueing the network send never delays the UI.
+    pending: Rc<RefCell<HashMap<CellKey, CellUpdate>>>,
+    /// Guard: whether a debounced flush task is currently scheduled/running.
+    flushing: Rc<Cell<bool>>,
 }
 
 #[wasm_bindgen]
@@ -1123,6 +1136,8 @@ impl ConnectedWorkspace {
             client,
             room_id,
             undecryptable: Rc::new(Cell::new(undecryptable_count)),
+            pending: Rc::new(RefCell::new(HashMap::new())),
+            flushing: Rc::new(Cell::new(false)),
         })
     }
 
@@ -1248,7 +1263,14 @@ impl ConnectedWorkspace {
         serde_json::to_string(&updates).map_err(|_| JsValue::from_str("Serialization failed"))
     }
 
-    /// Update a cell. Applies locally and sends to Matrix.
+    /// Update a cell. Applies locally immediately (optimistic) and enqueues the
+    /// resulting updates for a debounced, coalesced background send.
+    ///
+    /// The network send is intentionally *not* awaited here: it would otherwise
+    /// block the write path and, under rapid edits (e.g. dragging kanban cards),
+    /// fire a burst of one-event-per-change requests that trips the homeserver
+    /// rate limit. The flush task in [`Self::schedule_flush`] coalesces repeated
+    /// writes to the same cell and paces sends with backoff instead.
     #[wasm_bindgen(js_name = updateCell)]
     pub async fn update_cell(
         &self,
@@ -1268,8 +1290,8 @@ impl ConnectedWorkspace {
                 .map_err(|_| JsValue::from_str("Update failed"))?
         };
 
-        // Send to Matrix (user write + bump).
-        self.send_updates(&updates).await?;
+        // Enqueue for the debounced background flush rather than sending now.
+        self.enqueue_updates(updates);
 
         Ok(())
     }
@@ -1396,6 +1418,40 @@ impl ConnectedWorkspace {
 // ── Private helpers (not exported to JS) ────────────────────────────
 
 impl ConnectedWorkspace {
+    /// Merge `updates` into the coalescing send queue (highest timestamp wins
+    /// per cell, since values are LWW) and ensure a flush task is running.
+    fn enqueue_updates(&self, updates: Vec<CellUpdate>) {
+        {
+            let mut pending = self.pending.borrow_mut();
+            for update in updates {
+                merge_pending(&mut pending, update);
+            }
+        }
+        self.schedule_flush();
+    }
+
+    /// Start the debounced background flush task, unless one is already running.
+    ///
+    /// WASM is single-threaded and cooperative, so there is no interleaving
+    /// between this guard check and the task's `flushing.set(false)` on exit:
+    /// any [`enqueue_updates`](Self::enqueue_updates) after the task ends sees
+    /// `flushing == false` and schedules a fresh task.
+    fn schedule_flush(&self) {
+        if self.flushing.get() {
+            return;
+        }
+        self.flushing.set(true);
+
+        let client = self.client.clone();
+        let room_id = self.room_id.clone();
+        let pending = Rc::clone(&self.pending);
+        let flushing = Rc::clone(&self.flushing);
+
+        spawn_local(async move {
+            flush_pending(client, room_id, pending, flushing).await;
+        });
+    }
+
     /// Send a batch of CellUpdates to the Matrix room.
     async fn send_updates(&self, updates: &[CellUpdate]) -> Result<(), JsValue> {
         let room = self
@@ -1421,5 +1477,101 @@ impl ConnectedWorkspace {
         }
 
         Ok(())
+    }
+}
+
+/// Insert `update` into the coalescing queue, keeping the entry with the highest
+/// timestamp per cell. Values are last-writer-wins, so only the latest write to
+/// a cell needs to reach the server — superseded intermediate writes (and stale
+/// compaction bumps) are dropped.
+fn merge_pending(pending: &mut HashMap<CellKey, CellUpdate>, update: CellUpdate) {
+    let key = (
+        update.table_id.clone(),
+        update.row_id.clone(),
+        update.column_id.clone(),
+    );
+    match pending.get(&key) {
+        Some(existing) if existing.timestamp >= update.timestamp => {}
+        _ => {
+            pending.insert(key, update);
+        }
+    }
+}
+
+/// Debounced, coalescing flush loop for the pending send queue.
+///
+/// Each iteration sleeps a short window (so a flurry of edits coalesces), then
+/// drains and sends the queue. On send failure — notably a `429`
+/// `M_LIMIT_EXCEEDED` rate-limit — the failed updates are re-queued and the next
+/// window backs off exponentially, so the burst is paced out and the error is
+/// never surfaced to the user. The loop exits once the queue is empty; a later
+/// enqueue starts a fresh task (see [`ConnectedWorkspace::schedule_flush`]).
+async fn flush_pending(
+    client: Client,
+    room_id: OwnedRoomId,
+    pending: Rc<RefCell<HashMap<CellKey, CellUpdate>>>,
+    flushing: Rc<Cell<bool>>,
+) {
+    const DEBOUNCE_MS: u64 = 300;
+    const MAX_BACKOFF_MS: u64 = 8_000;
+    let mut backoff_ms = DEBOUNCE_MS;
+
+    loop {
+        matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
+
+        let batch: Vec<CellUpdate> = {
+            let mut p = pending.borrow_mut();
+            p.drain().map(|(_, v)| v).collect()
+        };
+
+        if batch.is_empty() {
+            flushing.set(false);
+            return;
+        }
+
+        match send_batch(&client, &room_id, batch).await {
+            Ok(()) => backoff_ms = DEBOUNCE_MS,
+            Err(failed) => {
+                let mut p = pending.borrow_mut();
+                for update in failed {
+                    merge_pending(&mut p, update);
+                }
+                backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
+            }
+        }
+    }
+}
+
+/// Send a coalesced batch of updates, returning the ones that failed (so the
+/// caller can re-queue and retry). Fails closed on a non-encrypted room.
+async fn send_batch(
+    client: &Client,
+    room_id: &OwnedRoomId,
+    batch: Vec<CellUpdate>,
+) -> Result<(), Vec<CellUpdate>> {
+    let Some(room) = client.get_room(room_id) else {
+        // Room not available yet; retry the whole batch on the next pass.
+        return Err(batch);
+    };
+
+    // Fail closed: never emit workspace data into a non-encrypted room. This is
+    // a permanent condition (not a transient send error), so drop rather than
+    // retry forever. See ARCHITECTURE_REVIEW.md §4.2.
+    if !room.encryption_state().is_encrypted() {
+        return Ok(());
+    }
+
+    let mut failed = Vec::new();
+    for update in batch {
+        let content: tables_over_matrix::CellUpdateEventContent = update.clone().into();
+        if room.send(content).await.is_err() {
+            failed.push(update);
+        }
+    }
+
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed)
     }
 }
