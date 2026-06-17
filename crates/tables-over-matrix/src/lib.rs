@@ -41,7 +41,7 @@ pub mod matrix;
 pub use cell::{Cell, CellId, CellUpdate, CELL_UPDATE_VERSION};
 pub use coldstart::{materialize_from_timeline, ColdStartResult, TimelinePaginator};
 pub use compaction::CompactionManager;
-pub use table::Table;
+pub use table::{Table, ROW_DELETED_COLUMN};
 
 // Re-export Matrix types only when the matrix feature is enabled
 #[cfg(feature = "matrix")]

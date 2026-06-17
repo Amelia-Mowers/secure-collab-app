@@ -229,14 +229,11 @@ test('core journey: table, typed cells, sort/filter, views, reload persistence',
   })
 })
 
-// Known gap: `deleteRow` only mutates local state — the bridge never emits
-// anything to Matrix (bridge_matrix.rs `delete_row`), so a deleted row
-// resurrects from the timeline on the next cold start and other devices never
-// learn of the deletion. The architecture's deletion-as-decay story
-// (architecture.md "Deletion as Natural Decay") covers cells of *schema-deleted*
-// rows/columns, but nothing records a user row deletion. Un-fixme once row
-// deletion is persisted.
-test.fixme('a deleted row stays deleted after reload', async ({ page }) => {
+// Regression guard for row-deletion persistence: deleting a row writes a
+// row-level tombstone cell (`_deleted = true`) that syncs to Matrix, so the
+// deletion survives a cold-start reload instead of resurrecting from the
+// timeline. See bridge_matrix.rs `delete_row` / ROW_DELETED_COLUMN.
+test('a deleted row stays deleted after reload', async ({ page }) => {
   test.setTimeout(300_000)
   await registerDevice(page, homeserverUrl(), uniqueUser('del'))
   await captureMasterKey(page)
@@ -253,6 +250,13 @@ test.fixme('a deleted row stays deleted after reload', async ({ page }) => {
   await expect(row).toBeVisible({ timeout: 30_000 })
   await row.getByTitle('Delete row').click()
   await expect(row).toBeHidden({ timeout: 30_000 })
+
+  // The grid removes the row optimistically and sends the `_deleted` tombstone
+  // to Matrix in the background. Let those background sends drain before we
+  // reload — otherwise we'd race the network (reloading mid-send) and the cold
+  // start would legitimately not yet see the tombstone. This is a property of
+  // the optimistic write model, not of the deletion itself.
+  await page.waitForTimeout(4000)
 
   await page.reload()
   await expect(page.locator('th', { hasText: 'Name' })).toBeVisible({ timeout: 120_000 })

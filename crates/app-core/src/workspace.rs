@@ -4,7 +4,7 @@ use crate::schema::{SchemaManager, TableDefinition};
 use crate::views::{ViewConfig, ViewManager};
 use crate::Result;
 use std::collections::HashMap;
-use tables_over_matrix::{CellUpdate, CompactionManager, Table};
+use tables_over_matrix::{CellUpdate, CompactionManager, Table, ROW_DELETED_COLUMN};
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::info;
 
@@ -396,17 +396,40 @@ impl Workspace {
         self.view_manager.list_views_for_table(table_id)
     }
 
-    /// Delete a row from a table
-    pub fn delete_row(&mut self, table_id: &str, row_id: &str) -> Result<()> {
+    /// Delete a row by writing a row-level **tombstone** cell.
+    ///
+    /// Rather than dropping the row from local memory, this writes a normal LWW
+    /// `CellUpdate` (`_deleted = true`) — applied locally *and* returned so the
+    /// caller can sync it to Matrix. Deletion is therefore durable: it survives
+    /// a cold-start replay (the tombstone replays from the timeline and hides
+    /// the row) and propagates to other devices like any other cell. The row's
+    /// data cells are left in place and decay naturally. See
+    /// [`tables_over_matrix::ROW_DELETED_COLUMN`] for the conflict semantics.
+    pub fn delete_row(&mut self, table_id: &str, row_id: &str) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+
+        let timestamp = self.next_timestamp();
+        let tombstone = CellUpdate::new(
+            table_id,
+            row_id,
+            ROW_DELETED_COLUMN,
+            serde_json::json!(true),
+            timestamp,
+        );
+
+        // Apply locally so our materialized table matches what we send.
         let table = self
             .tables
             .get_mut(table_id)
             .ok_or(crate::Error::TableNotFound)?;
+        table.apply_update(tombstone.clone());
 
-        table.remove_row(row_id);
         #[cfg(not(target_arch = "wasm32"))]
-        info!("Deleted row: {} from table: {}", row_id, table_id);
-        Ok(())
+        info!("Tombstoned row: {} in table: {}", row_id, table_id);
+
+        Ok(vec![tombstone])
     }
 
     /// Get all rows from a table as JSON
@@ -499,13 +522,57 @@ mod tests {
             .update_cell("tasks", "row2", "title", json!("Task 2"))
             .unwrap();
 
-        // Delete row1
-        workspace.delete_row("tasks", "row1").unwrap();
+        // Delete row1 — returns the tombstone update(s) to sync.
+        let updates = workspace.delete_row("tasks", "row1").unwrap();
+        assert!(updates
+            .iter()
+            .any(|u| u.row_id == "row1" && u.column_id == ROW_DELETED_COLUMN));
 
-        let table = workspace.get_table("tasks").unwrap();
-        assert_eq!(table.rows().len(), 1);
-        assert!(table.get_value("row1", "title").is_none());
-        assert!(table.get_value("row2", "title").is_some());
+        // The deleted row drops out of the materialized view; the other remains.
+        let rows = workspace.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("_row_id"), Some(&json!("row2")));
+    }
+
+    #[test]
+    fn test_delete_row_tombstone_hides_row_on_replay() {
+        // delete_row emits a tombstone CellUpdate; replaying it into another
+        // workspace (a cold-start reload or a second device that already synced
+        // the row) hides the row there too. This is the regression guard for
+        // "deleted rows resurrect on reload".
+        let mut source = Workspace::new("src");
+        let def = TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+            "title",
+            "Title",
+            ColumnType::Text,
+        ));
+        source.create_table(def).unwrap();
+        source
+            .update_cell("tasks", "r1", "title", json!("Keep"))
+            .unwrap();
+        source
+            .update_cell("tasks", "r2", "title", json!("Doomed"))
+            .unwrap();
+
+        let tombstone = source.delete_row("tasks", "r2").unwrap();
+        assert_eq!(source.get_table_rows("tasks").unwrap().len(), 1);
+
+        // Replica already materialized both rows; now it receives the tombstone.
+        let mut replica = Workspace::new("replica");
+        replica
+            .apply_update(CellUpdate::new("tasks", "r1", "title", json!("Keep"), 1))
+            .unwrap();
+        replica
+            .apply_update(CellUpdate::new("tasks", "r2", "title", json!("Doomed"), 2))
+            .unwrap();
+        assert_eq!(replica.get_table_rows("tasks").unwrap().len(), 2);
+
+        for u in tombstone {
+            replica.apply_update(u).unwrap();
+        }
+        let rows = replica.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows.iter().all(|r| r.get("_row_id") != Some(&json!("r2"))));
     }
 
     #[test]
@@ -643,9 +710,9 @@ mod tests {
 
         // Delete a task
         workspace.delete_row("tasks", "t2").unwrap();
-        let tasks = workspace.get_table("tasks").unwrap();
-        assert_eq!(tasks.rows().len(), 1);
-        assert!(tasks.get_value("t2", "title").is_none());
+        let rows = workspace.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows.iter().all(|r| r.get("_row_id") != Some(&json!("t2"))));
     }
 
     #[test]

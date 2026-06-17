@@ -236,17 +236,20 @@ impl WasmWorkspace {
         serde_json::to_string(&views).unwrap_or_else(|_| "[]".to_string())
     }
 
-    /// Delete a row from a table
+    /// Delete a row from a table.
+    ///
+    /// Applies the row-level tombstone to local state. This is the local-only
+    /// workspace (no Matrix), so the returned updates are not sent anywhere;
+    /// the tombstone simply hides the row from `getTableRows`.
     #[wasm_bindgen(js_name = deleteRow)]
     pub fn delete_row(&mut self, table_id: String, row_id: String) -> Result<(), JsValue> {
         self.workspace
             .delete_row(&table_id, &row_id)
+            .map(|_| ())
             .map_err(|e| match e {
                 crate::Error::TableNotFound => JsValue::from_str("Table not found"),
                 _ => JsValue::from_str("Failed to delete row"),
-            })?;
-
-        Ok(())
+            })
     }
 }
 
