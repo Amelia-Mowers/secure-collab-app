@@ -256,6 +256,34 @@
 .col-sortable:hover .col-name { color: var(--text); }
 .col-sort-indicator { font-size: 9px; color: var(--accent, #6366f1); }
 
+/* Rename affordance: a pencil button revealed on header hover. */
+.col-rename-btn {
+  opacity: 0;
+  margin-left: 6px;
+  padding: 2px;
+  vertical-align: middle;
+  color: var(--text-tertiary);
+  border-radius: 3px;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
+}
+.col-sortable:hover .col-rename-btn { opacity: 0.7; }
+.col-rename-btn:hover { opacity: 1; color: var(--text); background: var(--bg-hover); }
+
+.col-rename-input {
+  width: 100%;
+  min-width: 80px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 6px;
+  border: 1px solid var(--accent, #6366f1);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+
 /* Select dropdown cell */
 .cell-select {
   display: block;

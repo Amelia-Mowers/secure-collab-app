@@ -1426,6 +1426,30 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Update mutable fields of a column (rename / retype / options / default).
+    /// `patch_json` is a JSON object with any of `name`/`column_type`/`options`/
+    /// `default_value`.
+    #[wasm_bindgen(js_name = updateColumn)]
+    pub async fn update_column(
+        &self,
+        table_id: String,
+        column_id: String,
+        patch_json: &str,
+    ) -> Result<(), JsValue> {
+        let patch: serde_json::Value = serde_json::from_str(patch_json)
+            .map_err(|_| JsValue::from_str("Invalid column patch"))?;
+
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.update_column(&table_id, &column_id, &patch)
+                .map_err(|_| JsValue::from_str("Failed to update column"))?
+        };
+
+        self.send_updates(&updates).await?;
+
+        Ok(())
+    }
+
     /// Apply a cell update from the network (manual).
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&self, update_json: &str) -> Result<(), JsValue> {

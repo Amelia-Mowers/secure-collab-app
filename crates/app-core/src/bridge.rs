@@ -128,6 +128,29 @@ impl WasmWorkspace {
         Ok(())
     }
 
+    /// Update mutable fields of a column (rename / retype / options / default).
+    /// `patch_json` is a JSON object with any of `name`/`column_type`/`options`/
+    /// `default_value`.
+    #[wasm_bindgen(js_name = updateColumn)]
+    pub fn update_column(
+        &mut self,
+        table_id: String,
+        column_id: String,
+        patch_json: &str,
+    ) -> Result<(), JsValue> {
+        let patch: serde_json::Value = serde_json::from_str(patch_json)
+            .map_err(|_| JsValue::from_str("Invalid column patch"))?;
+
+        self.workspace
+            .update_column(&table_id, &column_id, &patch)
+            .map_err(|e| match e {
+                crate::Error::TableNotFound => JsValue::from_str("Table not found"),
+                _ => JsValue::from_str("Failed to update column"),
+            })?;
+
+        Ok(())
+    }
+
     /// Apply a cell update from the network
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&mut self, update_json: &str) -> Result<(), JsValue> {

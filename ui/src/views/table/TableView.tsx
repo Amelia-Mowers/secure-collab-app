@@ -81,19 +81,51 @@ function SortableHeader({
   label,
   sorted,
   onSort,
+  onRename,
 }: {
   id: string
   label: string
   sorted: false | 'asc' | 'desc'
   onSort: ((event: unknown) => void) | undefined
+  onRename: (name: string) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState(label)
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    cursor: 'grab',
+    cursor: renaming ? 'text' : 'grab',
   }
+
+  const commit = () => {
+    const next = draft.trim()
+    if (next && next !== label) onRename(next)
+    setRenaming(false)
+  }
+
+  // While renaming we drop the drag listeners so the input behaves normally.
+  if (renaming) {
+    return (
+      <th ref={setNodeRef} style={style} className="col-sortable col-renaming">
+        <input
+          className="col-rename-input"
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onClick={e => e.stopPropagation()}
+          onKeyDown={e => {
+            e.stopPropagation()
+            if (e.key === 'Enter') commit()
+            else if (e.key === 'Escape') setRenaming(false)
+          }}
+          onBlur={commit}
+        />
+      </th>
+    )
+  }
+
   return (
     <th
       ref={setNodeRef}
@@ -108,6 +140,21 @@ function SortableHeader({
       <span className="col-sort-indicator">
         {sorted === 'asc' ? ' ▲' : sorted === 'desc' ? ' ▼' : ''}
       </span>
+      <button
+        className="col-rename-btn ghost"
+        title="Rename column"
+        aria-label="Rename column"
+        onPointerDown={e => e.stopPropagation()}
+        onClick={e => {
+          e.stopPropagation()
+          setDraft(label)
+          setRenaming(true)
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
+          <path d="M8.5 1.5l2 2L4 10l-2.5.5L2 8z" />
+        </svg>
+      </button>
     </th>
   )
 }
@@ -201,6 +248,20 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     // send, so re-reading the schema right away reflects the new order instantly
     // while the send happens in the background.
     const result = workspace.reorderColumns(tableId, JSON.stringify(reordered))
+    try {
+      setSchema(JSON.parse(workspace.getTableSchema(tableId)))
+    } catch {
+      /* keep current schema */
+    }
+    Promise.resolve(result).catch(showCellError)
+    if (workspaceId) notifyWorkspaceChanged(workspaceId)
+  }
+
+  // Apply a column-schema change (e.g. rename). Optimistic like reorder: the
+  // local schema updates synchronously, the network send runs in the background.
+  const handleUpdateColumn = (colId: string, patch: Record<string, any>) => {
+    if (!tableId || !workspace) return
+    const result = workspace.updateColumn(tableId, colId, JSON.stringify(patch))
     try {
       setSchema(JSON.parse(workspace.getTableSchema(tableId)))
     } catch {
@@ -416,6 +477,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                       label={String(header.column.columnDef.header)}
                       sorted={header.column.getIsSorted()}
                       onSort={header.column.getToggleSortingHandler()}
+                      onRename={name => handleUpdateColumn(header.column.id, { name })}
                     />
                   ))}
                 </SortableContext>
