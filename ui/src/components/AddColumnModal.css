@@ -5,6 +5,14 @@
   width: 100%;
 }
 
+.acm__autodetect {
+  margin-top: 6px;
+  font-size: 12px;
+  padding: 4px 8px;
+  color: var(--accent, #6366f1);
+}
+.acm__autodetect:hover { text-decoration: underline; }
+
 .acm__header {
   display: flex;
   align-items: center;

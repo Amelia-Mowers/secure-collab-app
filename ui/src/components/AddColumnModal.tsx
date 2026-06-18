@@ -36,16 +36,32 @@ export interface NewColumnDef {
   defaultValue?: string
 }
 
-interface AddColumnModalProps {
-  onAdd: (def: NewColumnDef) => Promise<void> | void
-  onClose: () => void
+export interface EditColumnInitial {
+  name: string
+  columnType: ColumnType
+  options: string[]
+  defaultValue?: string
 }
 
-export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
-  const [name, setName] = useState('')
-  const [columnType, setColumnType] = useState<ColumnType>('text')
-  const [optionsRaw, setOptionsRaw] = useState('Option 1, Option 2, Option 3')
-  const [defaultValue, setDefaultValue] = useState('')
+interface AddColumnModalProps {
+  /** Submit handler. In edit mode the parent routes this to an update. */
+  onAdd: (def: NewColumnDef) => Promise<void> | void
+  onClose: () => void
+  /** When present, the modal edits an existing column (prefilled, "Save"). */
+  initial?: EditColumnInitial
+  /** Distinct existing values of the column, used to auto-fill Select options
+   *  when changing a column to select/multiselect (#6). */
+  existingValues?: string[]
+}
+
+export function AddColumnModal({ onAdd, onClose, initial, existingValues }: AddColumnModalProps) {
+  const isEdit = !!initial
+  const [name, setName] = useState(initial?.name ?? '')
+  const [columnType, setColumnType] = useState<ColumnType>(initial?.columnType ?? 'text')
+  const [optionsRaw, setOptionsRaw] = useState(
+    initial?.options?.length ? initial.options.join(', ') : 'Option 1, Option 2, Option 3',
+  )
+  const [defaultValue, setDefaultValue] = useState(initial?.defaultValue ?? '')
   const [adding, setAdding] = useState(false)
 
   const isSelectType = columnType === 'select' || columnType === 'multiselect'
@@ -87,7 +103,7 @@ export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal acm" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="acm__header">
-          <h2 className="acm__title">Add column</h2>
+          <h2 className="acm__title">{isEdit ? 'Edit column' : 'Add column'}</h2>
           <button className="acm__close ghost" onClick={onClose} aria-label="Close">×</button>
         </div>
 
@@ -142,6 +158,15 @@ export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
                 onChange={e => setOptionsRaw(e.target.value)}
                 placeholder="Todo, In Progress, Done"
               />
+              {existingValues && existingValues.length > 0 && (
+                <button
+                  type="button"
+                  className="ghost acm__autodetect"
+                  onClick={() => setOptionsRaw(existingValues.join(', '))}
+                >
+                  Auto-detect from data ({existingValues.length} value{existingValues.length === 1 ? '' : 's'})
+                </button>
+              )}
               {/* Preview pills */}
               <div className="acm__option-preview">
                 {options.map(opt => (
@@ -173,7 +198,9 @@ export function AddColumnModal({ onAdd, onClose }: AddColumnModalProps) {
           <div className="modal-actions">
             <button type="button" className="ghost" onClick={onClose} disabled={adding}>Cancel</button>
             <button type="submit" className="primary" disabled={!canSubmit || adding}>
-              {adding ? 'Adding...' : 'Add column'}
+              {adding
+                ? (isEdit ? 'Saving…' : 'Adding...')
+                : (isEdit ? 'Save changes' : 'Add column')}
             </button>
           </div>
         </form>
