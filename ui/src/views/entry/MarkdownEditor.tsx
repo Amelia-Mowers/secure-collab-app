@@ -6,9 +6,10 @@ interface MarkdownEditorProps {
   onChange: (value: string) => void
   onBlur?: () => void
   onFocus?: () => void
+  autoFocus?: boolean
 }
 
-export function MarkdownEditor({ value, onChange, onBlur, onFocus }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, onBlur, onFocus, autoFocus }: MarkdownEditorProps) {
   const [showPreview, setShowPreview] = useState(false)
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -58,6 +59,7 @@ export function MarkdownEditor({ value, onChange, onBlur, onFocus }: MarkdownEdi
           onChange={handleChange}
           onBlur={onBlur}
           onFocus={onFocus}
+          autoFocus={autoFocus}
           className="markdown-textarea"
           placeholder="Start writing... Use markdown syntax:
 # Heading

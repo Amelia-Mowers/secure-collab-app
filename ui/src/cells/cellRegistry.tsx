@@ -10,7 +10,7 @@
  * change for select/boolean) — never per keystroke — so each edit maps to one
  * `updateCell` / `CellUpdate`.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MarkdownEditor } from '@/views/entry/MarkdownEditor'
 import './cells.css'
 
@@ -48,6 +48,10 @@ export interface CellEditorProps {
   onNavigate?: (direction: 'up' | 'down' | 'left' | 'right') => void
   /** Resolve referenced records (used by `reference` columns). */
   lookup?: ReferenceLookup
+  /** Render large editors (e.g. `document`) in a floating popover instead of
+   *  inline, so they don't distend a grid cell. The entry/detail view leaves
+   *  this off and edits inline. */
+  popover?: boolean
 }
 
 // ── Display: compact, read-only rendering for a grid cell ──────────────────
@@ -315,15 +319,39 @@ function ReferenceEditor({ column, value, commit, autoFocus, onDone, lookup }: C
   )
 }
 
-function DocumentEditor({ value, commit, onDone }: CellEditorProps) {
-  const draftRef = useRef<string>(value ?? '')
-  return (
+function DocumentEditor({ column, value, commit, onDone, popover }: CellEditorProps) {
+  // A controlled draft (not a ref) — binding MarkdownEditor's `value` to the
+  // upstream value let only the first keystroke "stick"; the draft state lets
+  // text accumulate normally.
+  const [draft, setDraft] = useDraft<string>(value ?? '')
+  const finish = () => {
+    if (draft !== (value ?? '')) commit(draft)
+    onDone?.()
+  }
+
+  const editor = (
     <MarkdownEditor
-      value={value ?? ''}
-      onChange={(v: string) => { draftRef.current = v }}
-      onBlur={() => { if (draftRef.current !== (value ?? '')) commit(draftRef.current); onDone?.() }}
-      onFocus={() => {}}
+      value={draft}
+      onChange={setDraft}
+      autoFocus={popover}
+      // In a popover we commit on close (Done / click-off), not on textarea
+      // blur — otherwise toggling Preview would commit and dismiss.
+      onBlur={popover ? undefined : finish}
     />
+  )
+
+  if (!popover) return editor
+
+  return (
+    <div className="doc-popover__overlay" onMouseDown={finish}>
+      <div className="doc-popover" onMouseDown={e => e.stopPropagation()}>
+        <div className="doc-popover__header">
+          <span className="doc-popover__title">{column.name}</span>
+          <button type="button" className="doc-popover__done" onClick={finish}>Done</button>
+        </div>
+        {editor}
+      </div>
+    </div>
   )
 }
 

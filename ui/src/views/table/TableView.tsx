@@ -110,6 +110,19 @@ function SortableHeader({
   const [renaming, setRenaming] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [draft, setDraft] = useState(label)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close the ⋯ menu on any click outside it. A document listener is robust to
+  // z-index/stacking (a fixed backdrop could sit under the sticky header row),
+  // so "click off to dismiss" works anywhere on the page.
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -160,6 +173,7 @@ function SortableHeader({
       </span>
       <div
         className="col-menu"
+        ref={menuRef}
         onPointerDown={e => e.stopPropagation()}
         onClick={e => e.stopPropagation()}
       >
@@ -173,7 +187,6 @@ function SortableHeader({
         </button>
         {menuOpen && (
           <>
-            <div className="col-menu__backdrop" onClick={() => setMenuOpen(false)} />
             <div className="col-menu__dropdown" role="menu">
               <button
                 className="col-menu__item"
@@ -465,6 +478,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               column={cellColumn}
               value={value}
               autoFocus
+              popover
               lookup={referenceLookup}
               commit={v => updateCell(rowId, col.id, v).catch(showCellError)}
               onNavigate={dir => moveEditing(rowId, col.id, dir)}
