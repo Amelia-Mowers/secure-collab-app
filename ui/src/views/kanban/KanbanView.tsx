@@ -19,7 +19,7 @@ import {
 } from '@dnd-kit/sortable'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useTable } from '@/hooks/useTable'
+import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import { resolveTargetColumn } from './kanbanUtils'
 import './KanbanView.css'
@@ -66,7 +66,7 @@ function statusColor(colTitle: string) {
   return 'var(--text-tertiary)'
 }
 
-function SortableCard({ card, onOpen }: { card: KanbanCard; onOpen: (card: KanbanCard) => void }) {
+function SortableCard({ card, hiddenKeys, onOpen }: { card: KanbanCard; hiddenKeys: Set<string>; onOpen: (card: KanbanCard) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id })
 
   const style = {
@@ -75,8 +75,10 @@ function SortableCard({ card, onOpen }: { card: KanbanCard; onOpen: (card: Kanba
     opacity: isDragging ? 0.4 : 1,
   }
 
+  // Skip internal keys and any deleted column whose values still linger in the
+  // row data (decay model) — they must not resurface on the card.
   const extraFields = Object.entries(card).filter(
-    ([k]) => k !== 'id' && k !== 'title' && k !== '_row_id' && k !== 'status'
+    ([k]) => k !== 'id' && k !== 'title' && k !== '_row_id' && k !== 'status' && !hiddenKeys.has(k)
   )
 
   return (
@@ -137,8 +139,10 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const { rows, loading, error, updateCell } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [viewConfig, setViewConfig] = useState<any>(null)
   const [viewError, setViewError] = useState<Error | null>(null)
+  const [schema, setSchema] = useState<any>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+  const [regroupCol, setRegroupCol] = useState('')
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -156,6 +160,60 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
       }
     }
   }, [workspace, viewId])
+
+  // Load the table schema so we can (a) drop deleted columns from cards and
+  // (b) detect when the board groups by a column that no longer exists.
+  useEffect(() => {
+    if (workspace && tableId) {
+      try { setSchema(JSON.parse(workspace.getTableSchema(tableId))) } catch { /* keep prior */ }
+    }
+  }, [workspace, tableId, syncCount])
+
+  const deletedCols = useMemo<Set<string>>(
+    () => new Set<string>(schema?.deleted_columns ?? []),
+    [schema],
+  )
+
+  // Columns still present in the schema (for the "group by" picker).
+  const availableColumns = useMemo<Array<{ id: string; name: string; column_type?: string; options?: string[] }>>(() => {
+    const cols = schema?.columns ? (Object.values(schema.columns) as any[]) : []
+    return cols.filter(c => !deletedCols.has(c.id))
+  }, [schema, deletedCols])
+
+  const groupByColumn: string | undefined = viewConfig?.kanban_config?.group_by_column
+  // Only flag a missing group-by once the schema has actually loaded.
+  const groupByMissing =
+    !!viewConfig?.kanban_config &&
+    !!schema &&
+    (deletedCols.has(groupByColumn as string) || !availableColumns.some(c => c.id === groupByColumn))
+
+  const handleRegroup = async () => {
+    if (!regroupCol || !viewConfig || !viewId || !tableId) return
+    const chosen = availableColumns.find(c => c.id === regroupCol)
+    const newConfig = {
+      id: viewId,
+      name: viewConfig.name,
+      table_id: tableId,
+      view_type: 'kanban',
+      sort: viewConfig.sort ?? [],
+      filters: viewConfig.filters ?? [],
+      kanban_config: {
+        group_by_column: regroupCol,
+        title_column: viewConfig.kanban_config?.title_column,
+        display_columns: viewConfig.kanban_config?.display_columns ?? [],
+        column_options: chosen?.options ?? [],
+      },
+    }
+    try {
+      await workspace.createView(JSON.stringify(newConfig))
+      setViewConfig(JSON.parse(workspace.getView(viewId)))
+      setRegroupCol('')
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+    } catch (err) {
+      setToast(`Could not update board: ${err instanceof Error ? err.message : String(err)}`)
+      setTimeout(() => setToast(null), 4000)
+    }
+  }
 
   const columns: KanbanColumn[] = useMemo(() => {
     if (!viewConfig?.kanban_config || !rows) return []
@@ -252,6 +310,30 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
         }
       />
 
+      {groupByMissing && (
+        <div className="kanban-reconfig" role="alert">
+          <div className="kanban-reconfig__msg">
+            This board groups by <strong>{String(groupByColumn)}</strong>, which no longer exists.
+            Pick a column to group by:
+          </div>
+          <div className="kanban-reconfig__actions">
+            <select
+              className="kanban-reconfig__select"
+              value={regroupCol}
+              onChange={e => setRegroupCol(e.target.value)}
+            >
+              <option value="">Choose a column…</option>
+              {availableColumns.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button className="primary" disabled={!regroupCol} onClick={handleRegroup}>
+              Use this column
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="kanban-board-wrap">
         <DndContext
           sensors={sensors}
@@ -284,6 +366,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
                         <SortableCard
                           key={card.id}
                           card={card}
+                          hiddenKeys={deletedCols}
                           onOpen={(c) => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${c._row_id ?? c.id}`, { state: { from: location.pathname } })}
                         />
                       ))}

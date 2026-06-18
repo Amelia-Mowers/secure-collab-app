@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useTable } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import './CardView.css'
@@ -27,6 +27,7 @@ function avatarColor(str: string): string {
 export function CardView({ workspace, syncCount }: CardViewProps) {
   const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const { rows, loading, error } = useTable(workspace, tableId!, workspaceId, syncCount)
 
   if (!tableId) {
@@ -68,7 +69,7 @@ export function CardView({ workspace, syncCount }: CardViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
-            <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}>
+            <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, { state: { from: location.pathname } })}>
               New entry
             </ToolbarPrimaryButton>
           </>
@@ -93,7 +94,7 @@ export function CardView({ workspace, syncCount }: CardViewProps) {
               <div
                 key={row._row_id}
                 className="entry-card"
-                onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${row._row_id}`)}
+                onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${row._row_id}`, { state: { from: location.pathname } })}
               >
                 {/* Top row: status + assignee */}
                 <div className="entry-card__top">

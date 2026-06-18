@@ -54,3 +54,48 @@
 .cell-multiselect__input::placeholder {
   color: var(--text-tertiary);
 }
+
+/* Document cell editor — a floating popover so a long Markdown field doesn't
+   distend the grid row. Click-off (the overlay) or "Done" commits and closes. */
+.doc-popover__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 24px;
+}
+.doc-popover {
+  width: min(720px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  cursor: default;
+}
+.doc-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle, #e5e7eb);
+}
+.doc-popover__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #111);
+}
+.doc-popover__done {
+  font-size: 13px;
+  padding: 4px 12px;
+  border-radius: 5px;
+  background: var(--accent, #6366f1);
+  color: #fff;
+}
+.doc-popover__done:hover { filter: brightness(1.05); }

@@ -103,6 +103,37 @@ describe('cellRegistry', () => {
     })
   })
 
+  describe('CellEditor — document', () => {
+    const docCol = col({ id: 'notes', name: 'Notes', column_type: 'document' })
+
+    it('renders a floating popover (not inline) when popover is set', () => {
+      render(<CellEditor column={docCol} value="" commit={vi.fn()} popover />)
+      expect(document.querySelector('.doc-popover')).toBeInTheDocument()
+      expect(screen.getByText('Done')).toBeInTheDocument()
+    })
+
+    it('binds to a draft so input accumulates, and commits the value on Done', () => {
+      // Regression guard for the "only one character sticks" bug: the editor
+      // must bind the Markdown textarea to its own draft, not the static
+      // upstream value.
+      const commit = vi.fn()
+      const onDone = vi.fn()
+      render(<CellEditor column={docCol} value="" commit={commit} onDone={onDone} popover />)
+      const textarea = screen.getByPlaceholderText(/Start writing/i) as HTMLTextAreaElement
+      fireEvent.change(textarea, { target: { value: 'Hello world' } })
+      expect(textarea.value).toBe('Hello world')
+      fireEvent.click(screen.getByText('Done'))
+      expect(commit).toHaveBeenCalledWith('Hello world')
+      expect(onDone).toHaveBeenCalled()
+    })
+
+    it('edits inline (no popover) for the entry/detail view', () => {
+      render(<CellEditor column={docCol} value="x" commit={vi.fn()} />)
+      expect(document.querySelector('.doc-popover')).not.toBeInTheDocument()
+      expect(screen.getByPlaceholderText(/Start writing/i)).toBeInTheDocument()
+    })
+  })
+
   describe('CellDisplay', () => {
     it('renders a boolean check only when true', () => {
       const { rerender, container } = render(<CellDisplay column={col({ column_type: 'boolean' })} value={true} />)

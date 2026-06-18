@@ -243,3 +243,28 @@
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* Prompt shown when a board groups by a column that has been deleted. */
+.kanban-reconfig {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 16px 0;
+  padding: 12px 16px;
+  background: var(--amber-muted, #fef3c7);
+  border: 1px solid var(--amber, #f59e0b);
+  border-radius: 8px;
+  color: var(--text, #111);
+}
+.kanban-reconfig__msg { font-size: 13px; }
+.kanban-reconfig__actions { display: flex; align-items: center; gap: 8px; }
+.kanban-reconfig__select {
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: 5px;
+  background: var(--bg, #fff);
+  color: var(--text, #111);
+}

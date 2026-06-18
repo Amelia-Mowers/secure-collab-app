@@ -197,6 +197,37 @@ describe('KanbanView', () => {
     })
   })
 
+  describe('deleted columns', () => {
+    it('hides a deleted column\'s lingering values from cards', async () => {
+      // Cards carry a due_date value (2026-01-15). After the column is deleted,
+      // that lingering value must not resurface on the card even though its cell
+      // still exists in the row data (decay model).
+      const ws = makeKanbanWorkspace()
+      ws.deleteColumn('tasks', 'due_date')
+      renderKanban(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(screen.queryByText('2026-01-15')).not.toBeInTheDocument()
+    })
+
+    it('prompts to re-group when the board groups by a deleted column', async () => {
+      const ws = makeKanbanWorkspace() // groups by "status"
+      ws.deleteColumn('tasks', 'status')
+      renderKanban(ws)
+      await waitFor(() =>
+        expect(screen.getByText(/no longer exists/i)).toBeInTheDocument(),
+      )
+      // The picker offers a still-present column to group by instead.
+      expect(screen.getByText('Use this column')).toBeInTheDocument()
+    })
+
+    it('does not prompt when the group-by column still exists', async () => {
+      const ws = makeKanbanWorkspace()
+      renderKanban(ws)
+      await waitFor(() => expect(screen.getByText('Task Board')).toBeInTheDocument())
+      expect(screen.queryByText(/no longer exists/i)).not.toBeInTheDocument()
+    })
+  })
+
   describe('drag and drop — resolveTargetColumn integration', () => {
     // Full D&D is impractical in jsdom; the column resolution logic is already
     // unit-tested in kanbanUtils.test.ts.  This test verifies that
