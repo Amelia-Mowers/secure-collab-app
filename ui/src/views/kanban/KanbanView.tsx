@@ -90,6 +90,19 @@ function SortableCard({ card, hiddenKeys, onOpen }: { card: KanbanCard; hiddenKe
       className="kcard"
       onClick={() => onOpen(card)}
     >
+      <button
+        type="button"
+        className="kcard__expand"
+        title="Open full entry"
+        aria-label="Open full entry"
+        onPointerDown={e => e.stopPropagation()}
+        onClick={e => { e.stopPropagation(); onOpen(card) }}
+      >
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
+          <path d="M2 2h4M2 2v4M2 2l4.5 4.5" />
+          <path d="M11 11H7M11 11V7M11 11L6.5 6.5" />
+        </svg>
+      </button>
       <div className="kcard__title">{card.title || 'Untitled'}</div>
       {extraFields.length > 0 && (
         <div className="kcard__fields">

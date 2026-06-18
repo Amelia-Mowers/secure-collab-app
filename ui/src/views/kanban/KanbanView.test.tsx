@@ -174,6 +174,13 @@ describe('KanbanView', () => {
       await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
     })
 
+    it('shows an "open full entry" expand button on each card', async () => {
+      const ws = makeKanbanWorkspace() // 4 seeded tasks
+      renderKanban(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(screen.getAllByLabelText('Open full entry')).toHaveLength(4)
+    })
+
     it('shows "Untitled" for cards with no title value', async () => {
       const ws = makeTasksWorkspace()
       // A row with status but no title
