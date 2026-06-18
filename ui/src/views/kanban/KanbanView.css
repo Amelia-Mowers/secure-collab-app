@@ -120,6 +120,7 @@
 
 /* ── Card ───────────────────────────────────────────────────── */
 .kcard {
+  position: relative;
   padding: 12px 14px;
   border-radius: 8px;
   background: var(--bg-elevated);
@@ -127,6 +128,22 @@
   cursor: grab;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
+
+/* Explicit, discoverable "open full entry" affordance (the whole card is also
+   a drag handle, so a dedicated button avoids click-vs-drag ambiguity). */
+.kcard__expand {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  padding: 3px;
+  color: var(--text-tertiary);
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
+}
+.kcard:hover .kcard__expand { opacity: 0.7; }
+.kcard__expand:hover { opacity: 1; color: var(--text); background: var(--bg-hover); }
 
 .kcard:hover {
   border-color: var(--accent);
@@ -148,6 +165,7 @@
   font-size: 13px;
   font-weight: 450;
   line-height: 1.4;
+  padding-right: 18px;
   color: var(--text);
   margin-bottom: 8px;
 }
