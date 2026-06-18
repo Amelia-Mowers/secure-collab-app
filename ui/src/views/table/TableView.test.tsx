@@ -151,6 +151,44 @@ describe('TableView', () => {
         expect.stringContaining('"id":"tags"'),
       ))
     })
+
+    it('Edit column opens a prefilled modal and saves changes via updateColumn', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      const spy = vi.spyOn(ws, 'updateColumn')
+      renderTable(ws)
+      await waitFor(() => screen.getByText('Assignee'))
+      // Open the first column's ⋯ menu and choose Edit.
+      fireEvent.click(screen.getAllByLabelText('Column options')[0])
+      fireEvent.click(await screen.findByText('Edit column…'))
+      // The modal is prefilled with the column's current name.
+      const nameInput = (await screen.findByPlaceholderText('e.g. Priority')) as HTMLInputElement
+      expect(nameInput.value.length).toBeGreaterThan(0)
+      fireEvent.change(nameInput, { target: { value: 'Renamed' } })
+      fireEvent.click(screen.getByText('Save changes'))
+      await waitFor(() => expect(spy).toHaveBeenCalledWith(
+        'tasks',
+        expect.any(String),
+        expect.stringContaining('"name":"Renamed"'),
+      ))
+    })
+
+    it('Auto-detect fills Select options from the column\'s existing values', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      // First column by id order is "assignee" (text), with Alice/Bob/Charlie.
+      await waitFor(() => screen.getByText('Assignee'))
+      fireEvent.click(screen.getAllByLabelText('Column options')[0])
+      fireEvent.click(await screen.findByText('Edit column…'))
+      // Switch the type to Select, then auto-detect options from the data.
+      fireEvent.click(screen.getByText('Select'))
+      fireEvent.click(await screen.findByText(/Auto-detect from data/i))
+      const optionsInput = screen.getByPlaceholderText('Todo, In Progress, Done') as HTMLInputElement
+      expect(optionsInput.value).toContain('Alice')
+      expect(optionsInput.value).toContain('Bob')
+      expect(optionsInput.value).toContain('Charlie')
+    })
   })
 
   describe('toolbar', () => {

@@ -32,9 +32,9 @@ async function createTable(page: Page, name: string) {
   await expect(page).toHaveURL(new RegExp(`/table/${name.toLowerCase()}`), { timeout: 90_000 })
 }
 
-/** Add a column via the grid's "+ Add Column" modal. */
+/** Add a column via the toolbar "Add column" button + modal. */
 async function addColumn(page: Page, name: string, typeLabel: string, options?: string) {
-  await page.getByRole('button', { name: '+ Add Column' }).click()
+  await page.getByRole('button', { name: 'Add column' }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByPlaceholder('e.g. Priority').fill(name)
   // Anchored: a plain "Select" substring would also match the "Multi-select" row.

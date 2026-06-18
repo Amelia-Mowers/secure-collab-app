@@ -25,8 +25,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
-import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
-import { AddColumnModal, type NewColumnDef } from '@/components/AddColumnModal'
+import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
+import { AddColumnModal, type NewColumnDef, type EditColumnInitial } from '@/components/AddColumnModal'
 import { CellDisplay, CellEditor, type CellColumn } from '@/cells/cellRegistry'
 import './TableView.css'
 
@@ -73,43 +73,28 @@ function globalTextFilter(row: any, columnId: string, filterValue: string): bool
   return hay.toLowerCase().includes(String(filterValue).toLowerCase())
 }
 
-/** Types a column can be changed to in-place. Select/multiselect/reference are
- *  omitted — they need extra config (options / target table). */
-const RETYPE_TYPES: { value: string; label: string }[] = [
-  { value: 'text', label: 'Text' },
-  { value: 'number', label: 'Number' },
-  { value: 'date', label: 'Date' },
-  { value: 'boolean', label: 'Checkbox' },
-  { value: 'document', label: 'Document' },
-]
-
-/** A draggable, sortable column header with a ⋯ menu (rename / change type /
- *  delete). A small drag distance is required to start a reorder (see the
- *  PointerSensor), so a plain click still toggles the TanStack sort; the ⋯
- *  trigger sits at the right edge so it never intercepts that click. */
+/** A draggable, sortable column header with a ⋯ menu (edit / delete). A small
+ *  drag distance is required to start a reorder (see the PointerSensor), so a
+ *  plain click still toggles the TanStack sort; the ⋯ trigger sits at the right
+ *  edge so it never intercepts that click. Full column editing (rename, type,
+ *  options, default) happens in the Edit-column modal opened via `onEdit`. */
 function SortableHeader({
   id,
   label,
   sorted,
-  colType,
   onSort,
-  onRename,
-  onRetype,
+  onEdit,
   onDelete,
 }: {
   id: string
   label: string
   sorted: false | 'asc' | 'desc'
-  colType: string
   onSort: ((event: unknown) => void) | undefined
-  onRename: (name: string) => void
-  onRetype: (type: string) => void
+  onEdit: () => void
   onDelete: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-  const [renaming, setRenaming] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [draft, setDraft] = useState(label)
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close the ⋯ menu on any click outside it. A document listener is robust to
@@ -123,38 +108,12 @@ function SortableHeader({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [menuOpen])
+
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    cursor: renaming ? 'text' : 'grab',
-  }
-
-  const commit = () => {
-    const next = draft.trim()
-    if (next && next !== label) onRename(next)
-    setRenaming(false)
-  }
-
-  // While renaming we drop the drag listeners so the input behaves normally.
-  if (renaming) {
-    return (
-      <th ref={setNodeRef} style={style} className="col-sortable col-renaming">
-        <input
-          className="col-rename-input"
-          autoFocus
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onClick={e => e.stopPropagation()}
-          onKeyDown={e => {
-            e.stopPropagation()
-            if (e.key === 'Enter') commit()
-            else if (e.key === 'Escape') setRenaming(false)
-          }}
-          onBlur={commit}
-        />
-      </th>
-    )
+    cursor: 'grab',
   }
 
   return (
@@ -186,37 +145,20 @@ function SortableHeader({
           ⋯
         </button>
         {menuOpen && (
-          <>
-            <div className="col-menu__dropdown" role="menu">
-              <button
-                className="col-menu__item"
-                onClick={() => { setMenuOpen(false); setDraft(label); setRenaming(true) }}
-              >
-                Rename
-              </button>
-              <div className="col-menu__section">
-                <span className="col-menu__label">Type</span>
-                <select
-                  className="col-menu__type"
-                  value={colType}
-                  onChange={e => { setMenuOpen(false); onRetype(e.target.value) }}
-                >
-                  {!RETYPE_TYPES.some(t => t.value === colType) && (
-                    <option value={colType}>{colType}</option>
-                  )}
-                  {RETYPE_TYPES.map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </select>
-              </div>
-              <button
-                className="col-menu__item col-menu__delete"
-                onClick={() => { setMenuOpen(false); onDelete() }}
-              >
-                Delete column
-              </button>
-            </div>
-          </>
+          <div className="col-menu__dropdown" role="menu">
+            <button
+              className="col-menu__item"
+              onClick={() => { setMenuOpen(false); onEdit() }}
+            >
+              Edit column…
+            </button>
+            <button
+              className="col-menu__item col-menu__delete"
+              onClick={() => { setMenuOpen(false); onDelete() }}
+            >
+              Delete column
+            </button>
+          </div>
         )}
       </div>
     </th>
@@ -241,6 +183,12 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const { rows, loading, error, updateCell, deleteRow, refresh } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [schema, setSchema] = useState<any>(null)
   const [isAddingColumn, setIsAddingColumn] = useState(false)
+  /** The column being edited in the Edit-column modal, or null. */
+  const [editingColumn, setEditingColumn] = useState<{
+    id: string
+    initial: EditColumnInitial
+    existingValues: string[]
+  } | null>(null)
   /** Which cell is being edited: "rowId:colId" or null */
   const [editing, setEditing] = useState<string | null>(null)
   /** Stable id for the faded "shadow" quick-add row; rotated once it's promoted
@@ -353,6 +301,49 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     }
     Promise.resolve(result).catch(showCellError)
     if (workspaceId) notifyWorkspaceChanged(workspaceId)
+  }
+
+  // Open the Edit-column modal, prefilled from the column's current schema and
+  // seeded with the column's distinct existing values (so changing the type to
+  // Select can auto-detect options).
+  const openEditColumn = (colId: string) => {
+    const meta = columnsMeta.find(c => c.id === colId)
+    if (!meta) return
+    const schemaCol = schema?.columns?.[colId]
+    const seen = new Set<string>()
+    for (const row of rows) {
+      const v = (row as any)[colId]
+      const vals = Array.isArray(v) ? v : [v]
+      for (const item of vals) {
+        if (item == null) continue
+        const s = String(item).trim()
+        if (s) seen.add(s)
+      }
+    }
+    setEditingColumn({
+      id: colId,
+      initial: {
+        name: meta.name,
+        columnType: (meta.column_type as any) ?? 'text',
+        options: meta.options ?? [],
+        defaultValue: schemaCol?.default_value != null ? String(schemaCol.default_value) : undefined,
+      },
+      existingValues: Array.from(seen).sort().slice(0, 50),
+    })
+  }
+
+  // Save edits from the modal: rename / retype / options / default in one patch.
+  const handleSaveColumn = (def: NewColumnDef) => {
+    if (!editingColumn) return
+    const patch: Record<string, any> = { name: def.name, column_type: def.columnType }
+    if (def.columnType === 'select' || def.columnType === 'multiselect') {
+      patch.options = def.options
+    }
+    if (def.columnType === 'select' && def.defaultValue) {
+      patch.default_value = def.defaultValue
+    }
+    handleUpdateColumn(editingColumn.id, patch)
+    setEditingColumn(null)
   }
 
   const handleAddColumn = async (def: NewColumnDef) => {
@@ -540,7 +531,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
 
   // total columns including the leading open button, the add-column spacer, and
   // the actions column
-  const totalColSpan = columnsMeta.length + 3
+  // Leading open-entry column + trailing actions column flank the data columns.
+  const totalColSpan = columnsMeta.length + 2
 
   if (!tableId) {
     return <div className="table-view"><div className="state-empty"><p>No table selected</p></div></div>
@@ -574,6 +566,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" active={showFilter} onClick={() => setShowFilter(s => !s)} />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
+            <ToolbarButton icon={<PlusIcon />} label="Add column" title="Add column" onClick={() => setIsAddingColumn(true)} />
             <ToolbarPrimaryButton onClick={newEntry}>New entry</ToolbarPrimaryButton>
           </>
         }
@@ -616,30 +609,19 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                 >
                   {table.getHeaderGroups()[0]?.headers.map(header => {
                     const label = String(header.column.columnDef.header)
-                    const colType =
-                      columnsMeta.find(c => c.id === header.column.id)?.column_type ?? 'text'
                     return (
                       <SortableHeader
                         key={header.id}
                         id={header.column.id}
                         label={label}
                         sorted={header.column.getIsSorted()}
-                        colType={colType}
                         onSort={header.column.getToggleSortingHandler()}
-                        onRename={name => handleUpdateColumn(header.column.id, { name })}
-                        onRetype={type => handleUpdateColumn(header.column.id, { column_type: type })}
+                        onEdit={() => openEditColumn(header.column.id)}
                         onDelete={() => handleDeleteColumn(header.column.id, label)}
                       />
                     )
                   })}
                 </SortableContext>
-                <th className="col-add-header">
-                  <button
-                    className="col-add-btn ghost"
-                    onClick={() => setIsAddingColumn(true)}
-                    title="Add column"
-                  >+ Add Column</button>
-                </th>
                 <th className="col-actions-header" />
               </tr>
             </thead>
@@ -681,7 +663,6 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                         {(cell.column.columnDef.cell as any)(cell.getContext())}
                       </td>
                     ))}
-                    <td onClick={e => e.stopPropagation()} />
                     <td className="cell-actions" onClick={e => e.stopPropagation()}>
                       <button
                         className="ghost cell-delete-btn"
@@ -755,7 +736,6 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                       </td>
                     )
                   })}
-                  <td aria-hidden="true" />
                   <td className="cell-actions" aria-hidden="true" />
                 </tr>
               )}
@@ -769,6 +749,17 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         <AddColumnModal
           onAdd={handleAddColumn}
           onClose={() => setIsAddingColumn(false)}
+        />
+      )}
+
+      {/* Edit column modal (rename / retype / options / default) */}
+      {editingColumn && (
+        <AddColumnModal
+          key={editingColumn.id}
+          onAdd={handleSaveColumn}
+          onClose={() => setEditingColumn(null)}
+          initial={editingColumn.initial}
+          existingValues={editingColumn.existingValues}
         />
       )}
 

@@ -53,9 +53,9 @@ export function Toolbar({ title, subtitle, breadcrumb, actions }: ToolbarProps) 
   )
 }
 
-export function ToolbarButton({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick?: () => void; active?: boolean }) {
+export function ToolbarButton({ icon, label, onClick, active, title }: { icon: React.ReactNode; label: string; onClick?: () => void; active?: boolean; title?: string }) {
   return (
-    <button className={`toolbar__btn${active ? ' toolbar__btn--active' : ''}`} onClick={onClick}>
+    <button className={`toolbar__btn${active ? ' toolbar__btn--active' : ''}`} onClick={onClick} title={title}>
       {icon}
       {label}
     </button>
