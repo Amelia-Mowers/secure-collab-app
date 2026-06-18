@@ -62,7 +62,7 @@ export interface WorkspaceHandle {
   getView(viewId: string): string
   listTables(): string
   listViewsForTable(tableId: string): string
-  deleteRow(tableId: string, rowId: string): void
+  deleteRow(tableId: string, rowId: string): void | Promise<void>
   // ConnectedWorkspace-only methods (optional)
   startSync?(onChange: () => void): void
   inviteUser?(userId: string): Promise<void>
@@ -200,7 +200,9 @@ export function useTable(
         // Optimistically remove the row from React state
         setRows(prev => prev.filter(row => row._row_id !== rowId))
 
-        workspace.deleteRow(tableId, rowId)
+        // Awaited: the connected workspace sends the tombstone to Matrix, so a
+        // failed delete rejects here and is rolled back + surfaced as a toast.
+        await workspace.deleteRow(tableId, rowId)
 
         // Signal sibling tabs that something changed (no data sent)
         if (workspaceId) {

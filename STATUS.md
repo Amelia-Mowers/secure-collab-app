@@ -55,8 +55,6 @@ the structural review that drove the last quarter's work is
 
 See TODO.md for the full prioritized backlog; the load-bearing items:
 
-- **Row deletion is local-only** (P0): `deleteRow` emits nothing to Matrix —
-  deleted rows resurrect on reload and never propagate.
 - **Legacy unencrypted rooms** (P0): the fail-closed guard makes them
   read-only with no migrate path or UI explanation.
 - **At-rest encryption** (P1): the session blob (access token) and IndexedDB

@@ -1297,11 +1297,24 @@ impl ConnectedWorkspace {
     }
 
     /// Delete a row from a table.
+    ///
+    /// Writes a row-level tombstone cell (`_deleted = true`) locally and syncs
+    /// it to Matrix so the deletion is durable (survives reload) and propagates
+    /// to other devices. Unlike rapid cell edits, a delete is a discrete action,
+    /// so it is sent immediately (awaited) rather than through the coalescing
+    /// queue — matching `delete_column` and giving the UI a real success/failure
+    /// to surface. See [`crate::workspace::Workspace::delete_row`].
     #[wasm_bindgen(js_name = deleteRow)]
-    pub fn delete_row(&self, table_id: String, row_id: String) -> Result<(), JsValue> {
-        let mut ws = self.inner.borrow_mut();
-        ws.delete_row(&table_id, &row_id)
-            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    pub async fn delete_row(&self, table_id: String, row_id: String) -> Result<(), JsValue> {
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.delete_row(&table_id, &row_id)
+                .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        };
+
+        self.send_updates(&updates).await?;
+
+        Ok(())
     }
 
     /// Get all rows from a table as JSON.

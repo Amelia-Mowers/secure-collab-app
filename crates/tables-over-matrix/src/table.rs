@@ -5,6 +5,21 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+/// Reserved column id used as a **row-level tombstone**. A row whose
+/// [`ROW_DELETED_COLUMN`] cell resolves to a truthy value is treated as deleted
+/// and is excluded from materialization ([`Table::get_all_rows`]).
+///
+/// Deletion is therefore an ordinary LWW cell write rather than an in-memory
+/// `remove_row`: it syncs over Matrix, survives a cold-start replay, and
+/// propagates to other devices like any other cell. The row's data cells are
+/// left in place and decay naturally (see `architecture.md` —
+/// "Deletion as Natural Decay"). A concurrent edit to one of the row's *data*
+/// cells does not resurrect it; only a newer `_deleted = false` write does.
+///
+/// The leading underscore marks it as a reserved field (cf. `_row_id`); column
+/// ids derived from user-supplied names are slugified and never start with `_`.
+pub const ROW_DELETED_COLUMN: &str = "_deleted";
+
 /// A materialized table containing LWW-resolved cells.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
@@ -105,16 +120,27 @@ impl Table {
         row
     }
 
-    /// Get all rows as a structured dataset.
+    /// Get all rows as a structured dataset, excluding any row that carries a
+    /// truthy [`ROW_DELETED_COLUMN`] tombstone.
     pub fn get_all_rows(&self) -> Vec<IndexMap<String, serde_json::Value>> {
         self.rows()
             .iter()
+            .filter(|row_id| !self.is_row_deleted(row_id))
             .map(|row_id| {
                 let mut row = self.get_row(row_id);
                 row.insert("_row_id".to_string(), serde_json::json!(row_id));
                 row
             })
             .collect()
+    }
+
+    /// Whether `row_id` carries a truthy row-level tombstone
+    /// ([`ROW_DELETED_COLUMN`]). Such rows are hidden from materialization but
+    /// their underlying cells remain (and decay naturally).
+    pub fn is_row_deleted(&self, row_id: &str) -> bool {
+        self.get_value(row_id, ROW_DELETED_COLUMN)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     }
 
     /// Remove a row from the table (for deletion).
@@ -251,6 +277,100 @@ mod tests {
         assert_eq!(table.rows().len(), 1);
         assert!(table.get_cell("row1", "col1").is_none());
         assert!(table.get_cell("row2", "col1").is_some());
+    }
+
+    #[test]
+    fn test_row_tombstone_excluded_from_materialization() {
+        let mut table = Table::new("t");
+        table.apply_update(CellUpdate::new("t", "r1", "title", json!("Keep"), 100));
+        table.apply_update(CellUpdate::new("t", "r2", "title", json!("Doomed"), 100));
+        assert_eq!(table.get_all_rows().len(), 2);
+
+        // Tombstone r2.
+        table.apply_update(CellUpdate::new(
+            "t",
+            "r2",
+            ROW_DELETED_COLUMN,
+            json!(true),
+            200,
+        ));
+        assert!(table.is_row_deleted("r2"));
+        assert!(!table.is_row_deleted("r1"));
+
+        let rows = table.get_all_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("_row_id"), Some(&json!("r1")));
+        // The reserved tombstone field never leaks into materialized output.
+        assert!(rows.iter().all(|r| !r.contains_key(ROW_DELETED_COLUMN)));
+    }
+
+    #[test]
+    fn test_data_edit_does_not_resurrect_tombstoned_row() {
+        // A deletion dominates concurrent edits to the row's *data* cells: those
+        // edits don't touch `_deleted`, so the row stays hidden.
+        let mut table = Table::new("t");
+        table.apply_update(CellUpdate::new("t", "r1", "title", json!("Doomed"), 100));
+        table.apply_update(CellUpdate::new(
+            "t",
+            "r1",
+            ROW_DELETED_COLUMN,
+            json!(true),
+            200,
+        ));
+        table.apply_update(CellUpdate::new(
+            "t",
+            "r1",
+            "title",
+            json!("Edited later"),
+            300,
+        ));
+
+        assert!(table.is_row_deleted("r1"));
+        assert!(table.get_all_rows().is_empty());
+    }
+
+    #[test]
+    fn test_undelete_via_newer_tombstone_clear() {
+        // Explicitly clearing the tombstone with a newer write restores the row
+        // (LWW on the `_deleted` cell).
+        let mut table = Table::new("t");
+        table.apply_update(CellUpdate::new("t", "r1", "title", json!("Row"), 100));
+        table.apply_update(CellUpdate::new(
+            "t",
+            "r1",
+            ROW_DELETED_COLUMN,
+            json!(true),
+            200,
+        ));
+        assert!(table.get_all_rows().is_empty());
+
+        table.apply_update(CellUpdate::new(
+            "t",
+            "r1",
+            ROW_DELETED_COLUMN,
+            json!(false),
+            300,
+        ));
+        assert_eq!(table.get_all_rows().len(), 1);
+        assert!(!table.is_row_deleted("r1"));
+    }
+
+    #[test]
+    fn test_stale_tombstone_loses_to_newer_clear_order_independent() {
+        // An older tombstone must never win over a newer un-delete, regardless of
+        // apply order (mirrors test_lww_resolution_in_table for the `_deleted` cell).
+        let del = CellUpdate::new("t", "r1", ROW_DELETED_COLUMN, json!(true), 100);
+        let undel = CellUpdate::new("t", "r1", ROW_DELETED_COLUMN, json!(false), 200);
+
+        let mut a = Table::new("t");
+        a.apply_update(del.clone());
+        a.apply_update(undel.clone());
+        assert!(!a.is_row_deleted("r1"));
+
+        let mut b = Table::new("t");
+        b.apply_update(undel);
+        b.apply_update(del);
+        assert!(!b.is_row_deleted("r1"));
     }
 
     #[test]

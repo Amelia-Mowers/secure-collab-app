@@ -284,14 +284,19 @@ async fn test_workspace_delete_row_and_verify() {
 
     assert_eq!(ws.get_table("users").unwrap().rows().len(), 3);
 
-    // Delete middle row
+    // Delete middle row (writes a row-level tombstone).
     ws.delete_row("users", "u2").unwrap();
 
-    let table = ws.get_table("users").unwrap();
-    assert_eq!(table.rows().len(), 2);
-    assert!(table.get_value("u2", "name").is_none());
-    assert_eq!(table.get_value("u1", "name"), Some(&json!("Alice")));
-    assert_eq!(table.get_value("u3", "name"), Some(&json!("Charlie")));
+    // The tombstoned row drops out of the materialized view; the rest remain.
+    let rows = ws.get_table_rows("users").unwrap();
+    assert_eq!(rows.len(), 2);
+    let ids: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get("_row_id").and_then(|v| v.as_str()))
+        .collect();
+    assert!(!ids.contains(&"u2"));
+    assert!(ids.contains(&"u1"));
+    assert!(ids.contains(&"u3"));
 
     eprintln!("[PASS] workspace_delete_row_and_verify");
 }
@@ -650,15 +655,19 @@ async fn test_edge_case_many_rows() {
     assert_eq!(table.get_value("row-0", "name"), Some(&json!("Item 0")));
     assert_eq!(table.get_value("row-99", "name"), Some(&json!("Item 99")));
 
-    // Delete half
+    // Delete half (rows 0..50)
     for i in 0..50 {
         ws.delete_row("bulk", &format!("row-{}", i)).unwrap();
     }
 
-    let table = ws.get_table("bulk").unwrap();
-    assert_eq!(table.rows().len(), 50);
-    assert!(table.get_value("row-0", "name").is_none());
-    assert_eq!(table.get_value("row-50", "name"), Some(&json!("Item 50")));
+    let rows = ws.get_table_rows("bulk").unwrap();
+    assert_eq!(rows.len(), 50);
+    let ids: std::collections::HashSet<String> = rows
+        .iter()
+        .filter_map(|r| r.get("_row_id").and_then(|v| v.as_str()).map(String::from))
+        .collect();
+    assert!(!ids.contains("row-0"));
+    assert!(ids.contains("row-50"));
 
     eprintln!("[PASS] edge_case_many_rows");
 }

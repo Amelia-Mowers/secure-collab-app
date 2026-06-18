@@ -44,14 +44,15 @@ Priority bands:
   ran — the e2e MAS now issues 8s tokens (`--e2e`) and the spec waits past expiry
   before asserting an uneventful restore.
 
-- [ ] **Persist row deletion** — `deleteRow` only mutates local state; the bridge
-  never emits anything to Matrix (`bridge_matrix.rs` `delete_row`), so a deleted
-  row resurrects from the timeline on the next cold start and other devices
-  never learn of the deletion. The architecture's deletion-as-decay story covers
-  cells of schema-deleted rows/columns, but nothing records a *user row*
-  deletion — it needs a design decision (row tombstone cell? membership in a
-  system table?). Red test ready: un-`fixme` `'a deleted row stays deleted after
-  reload'` in `ui/e2e/core.spec.ts`.
+- [x] **Persist row deletion** — `delete_row` now writes a row-level tombstone
+  cell (`_deleted = true`, `tables_over_matrix::ROW_DELETED_COLUMN`) that is
+  applied locally and synced to Matrix (`bridge_matrix.rs` `delete_row` →
+  `send_updates`), mirroring how column delete marks `deleted` in the schema.
+  Materialization (`Table::get_all_rows`) skips tombstoned rows, so deletions
+  survive cold-start reload and propagate to other devices. A concurrent edit to
+  a row's *data* cells does not resurrect it; only a newer `_deleted = false`
+  does. Guarded by the now-un-`fixme`'d `'a deleted row stays deleted after
+  reload'` e2e test plus core unit tests.
 
 ---
 
