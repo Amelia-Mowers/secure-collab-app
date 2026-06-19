@@ -20,6 +20,7 @@ import {
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
+import { computeReorderWrites } from '@/fractionalIndex'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import { resolveTargetColumn } from './kanbanUtils'
 import './KanbanView.css'
@@ -149,7 +150,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const { workspaceId, tableId, viewId } = useParams<{ workspaceId: string; tableId: string; viewId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const { rows, loading, error, updateCell } = useTable(workspace, tableId!, workspaceId, syncCount)
+  const { rows, loading, error, updateCell, refresh } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [viewConfig, setViewConfig] = useState<any>(null)
   const [viewError, setViewError] = useState<Error | null>(null)
   const [schema, setSchema] = useState<any>(null)
@@ -250,6 +251,16 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
 
   const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id))
 
+  const onSendError = (err: any) => {
+    const msg = err?.message ?? String(err)
+    if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('M_LIMIT_EXCEEDED')) {
+      setToast('Rate limited — change will retry. Slow down a bit.')
+    } else {
+      setToast(`Update failed: ${msg}`)
+    }
+    setTimeout(() => setToast(null), 4000)
+  }
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
     if (!over || !viewConfig?.kanban_config) { setActiveId(null); return }
@@ -269,19 +280,34 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
     const targetColumnId = resolveTargetColumn(overId, columns)
     if (!targetColumnId) { setActiveId(null); return }
 
+    let changed = false
+
+    // Drag to a different column → update the group-by cell.
     if (sourceColumn.id !== targetColumnId) {
       const { group_by_column } = viewConfig.kanban_config
-      updateCell(cardData.id, group_by_column, targetColumnId)
-        .catch(err => {
-          const msg = err?.message ?? String(err)
-          if (msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('M_LIMIT_EXCEEDED')) {
-            setToast('Rate limited — change will retry. Slow down a bit.')
-          } else {
-            setToast(`Update failed: ${msg}`)
-          }
-          setTimeout(() => setToast(null), 4000)
-        })
+      updateCell(activeCardId, group_by_column, targetColumnId).catch(onSendError)
+      changed = true
     }
+
+    // Dropped onto a specific card → write the row's `_order` key for the new
+    // position. Kanban groups are slices of one global `_order`, so reusing the
+    // global row order keeps the card between its target-column neighbours.
+    const droppedOnCard =
+      overId !== activeCardId && columns.some(c => c.cards.some(cc => cc.id === overId))
+    if (droppedOnCard) {
+      let keyMap: Record<string, string> = {}
+      try {
+        keyMap = JSON.parse(workspace.getRowOrderKeys?.(tableId!) ?? '{}')
+      } catch {
+        /* no keys yet — computeReorderWrites will backfill */
+      }
+      const globalRows = rows.map(r => ({ id: r._row_id, key: keyMap[r._row_id] ?? null }))
+      const writes = computeReorderWrites(globalRows, activeCardId, overId)
+      for (const w of writes) updateCell(w.id, '_order', w.key).catch(onSendError)
+      if (writes.length) changed = true
+    }
+
+    if (changed) refresh()
     setActiveId(null)
   }
 
