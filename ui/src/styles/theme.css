@@ -15,14 +15,17 @@
   --bg-hover:     #1e1e22;
   --bg-active:    #252529;
 
-  /* Borders */
-  --border:        #27272a;
-  --border-subtle: #1c1c1f;
+  /* Borders — raised for clearer structure/separators in dark mode. */
+  --border:        #33333a;
+  --border-subtle: #29292e;
 
-  /* Text */
+  /* Text — muted tones raised for legibility. The old --text-tertiary
+     (#55555c) sat at ~2.4:1 on --bg, well under the 4.5:1 AA threshold;
+     these reach AA for normal text while preserving the primary > secondary
+     > tertiary hierarchy. */
   --text:           #ececef;
-  --text-secondary: #8b8b92;
-  --text-tertiary:  #55555c;
+  --text-secondary: #a1a1aa;
+  --text-tertiary:  #7c7c85;
 
   /* Accent (blue) */
   --accent:       #6d9fff;
