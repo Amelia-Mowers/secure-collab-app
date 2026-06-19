@@ -13,6 +13,7 @@ import { ViewRouter } from './views/ViewRouter'
 import { SignInPage } from './views/auth/SignInPage'
 import { OauthCallbackPage } from './views/auth/OauthCallbackPage'
 import { TrialGate } from './components/TrialStatus'
+import { OfflineOverlay } from './components/OfflineOverlay'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
 import './App.css'
 
@@ -133,6 +134,10 @@ export default function App() {
       {/* Full-page subscribe prompt when the hosted account is locked
           (trial over / lapsed) — ADR 0002 trial-first flow. */}
       <TrialGate />
+      {/* Interim offline guard (#2): block interaction (except reload) while the
+          browser reports no connection, since offline edits queue in memory and
+          are lost on reload before reconnect. */}
+      <OfflineOverlay />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
         {/* OAuth popup redirect target — posts the callback URL to the opener
