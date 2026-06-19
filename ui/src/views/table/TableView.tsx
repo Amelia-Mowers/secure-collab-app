@@ -20,10 +20,12 @@ import {
 import {
   SortableContext,
   horizontalListSortingStrategy,
+  verticalListSortingStrategy,
   arrayMove,
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial } from '@/components/AddColumnModal'
@@ -165,6 +167,58 @@ function SortableHeader({
   )
 }
 
+/** A table body row that can be dragged to reorder (when `reorderable`). The
+ *  leading cell doubles as the drag handle — a plain click still opens the entry
+ *  (the 6px activation distance distinguishes click from drag), matching the
+ *  kanban card. The data/action cells are passed as `children`. */
+function SortableTableRow({
+  rowId,
+  reorderable,
+  onOpen,
+  children,
+}: {
+  rowId: string
+  reorderable: boolean
+  onOpen: () => void
+  children: React.ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: rowId,
+    disabled: !reorderable,
+  })
+  const style: React.CSSProperties = {
+    height: ROW_HEIGHT,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+  return (
+    <tr ref={setNodeRef} style={style} className={isDragging ? 'row-dragging' : undefined}>
+      <td className="cell-open">
+        <div
+          className={`cell-open-inner${reorderable ? ' cell-open-inner--draggable' : ''}`}
+          {...(reorderable ? attributes : {})}
+          {...(reorderable ? listeners : {})}
+          title={reorderable ? 'Drag to reorder · click to open' : undefined}
+        >
+          <button
+            className="ghost cell-open-btn"
+            onClick={onOpen}
+            title="Open full entry"
+            aria-label="Open full entry"
+          >
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M2 2h4M2 2v4M2 2l4.5 4.5" />
+              <path d="M11 11H7M11 11V7M11 11L6.5 6.5" />
+            </svg>
+          </button>
+        </div>
+      </td>
+      {children}
+    </tr>
+  )
+}
+
 export function TableView({ workspace, syncCount }: TableViewProps) {
   const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
   const navigate = useNavigate()
@@ -274,6 +328,30 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     }
     Promise.resolve(result).catch(showCellError)
     if (workspaceId) notifyWorkspaceChanged(workspaceId)
+  }
+
+  // Row drag-to-reorder. Writes a fractional-index `_order` key (one cell for an
+  // already-ordered table; a one-time backfill on the first reorder). Optimistic
+  // like the column reorder: apply + re-read, send in the background.
+  const handleRowDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id || !tableId || !workspace) return
+    let keyMap: Record<string, string> = {}
+    try {
+      keyMap = JSON.parse(workspace.getRowOrderKeys?.(tableId) ?? '{}')
+    } catch {
+      /* no keys yet — computeReorderWrites will backfill */
+    }
+    const orderRows: OrderRow[] = tableRows.map(r => ({
+      id: r.original._row_id,
+      key: keyMap[r.original._row_id] ?? null,
+    }))
+    const writes = computeReorderWrites(orderRows, String(active.id), String(over.id))
+    for (const w of writes) {
+      updateCell(w.id, '_order', w.key).catch(showCellError)
+    }
+    if (workspaceId) notifyWorkspaceChanged(workspaceId)
+    refresh()
   }
 
   const handleDeleteColumn = (colId: string, colName: string) => {
@@ -510,6 +588,11 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // Expose the displayed rows to the stable moveEditing callback (keyboard nav).
   tableRowsRef.current = tableRows
 
+  // Manual row reordering applies only to the natural (unsorted, unfiltered)
+  // view — a column sort or filter defines its own order, so drag is disabled
+  // then to avoid an ambiguous result.
+  const rowsReorderable = sorting.length === 0 && !globalFilter
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: tableRows.length,
@@ -641,58 +724,61 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                 <tr aria-hidden="true"><td colSpan={totalColSpan} style={{ height: paddingTop, padding: 0 }} /></tr>
               )}
 
-              {displayRows.map(row => {
-                const rowId = row.original._row_id
-                return (
-                  <tr key={row.id} style={{ height: ROW_HEIGHT }}>
-                    <td className="cell-open">
-                      <button
-                        className="ghost cell-open-btn"
-                        onClick={() => openEntry(rowId)}
-                        title="Open full entry"
-                        aria-label="Open full entry"
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleRowDragEnd}
+              >
+                <SortableContext
+                  items={tableRows.map(r => r.original._row_id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {displayRows.map(row => {
+                    const rowId = row.original._row_id
+                    return (
+                      <SortableTableRow
+                        key={row.id}
+                        rowId={rowId}
+                        reorderable={rowsReorderable}
+                        onOpen={() => openEntry(rowId)}
                       >
-                        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
-                          <path d="M2 2h4M2 2v4M2 2l4.5 4.5" />
-                          <path d="M11 11H7M11 11V7M11 11L6.5 6.5" />
-                        </svg>
-                      </button>
-                    </td>
-                    {row.getVisibleCells().map(cell => (
-                      <td key={cell.id}>
-                        {(cell.column.columnDef.cell as any)(cell.getContext())}
-                      </td>
-                    ))}
-                    <td className="cell-actions" onClick={e => e.stopPropagation()}>
-                      <button
-                        className="ghost cell-delete-btn"
-                        disabled={deletingRows.has(rowId)}
-                        onClick={() => {
-                          setDeletingRows(prev => new Set(prev).add(rowId))
-                          deleteRow(rowId)
-                            .catch(console.error)
-                            .finally(() => setDeletingRows(prev => {
-                              const next = new Set(prev)
-                              next.delete(rowId)
-                              return next
-                            }))
-                        }}
-                        title="Delete row"
-                      >
-                        {deletingRows.has(rowId) ? (
-                          <span className="cell-delete-spinner" />
-                        ) : (
-                          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
-                            <polyline points="1,3 12,3" />
-                            <path d="M4.5 3V2a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1" />
-                            <rect x="2.5" y="3" width="8" height="8.5" rx="1" />
-                          </svg>
-                        )}
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
+                        {row.getVisibleCells().map(cell => (
+                          <td key={cell.id}>
+                            {(cell.column.columnDef.cell as any)(cell.getContext())}
+                          </td>
+                        ))}
+                        <td className="cell-actions" onClick={e => e.stopPropagation()}>
+                          <button
+                            className="ghost cell-delete-btn"
+                            disabled={deletingRows.has(rowId)}
+                            onClick={() => {
+                              setDeletingRows(prev => new Set(prev).add(rowId))
+                              deleteRow(rowId)
+                                .catch(console.error)
+                                .finally(() => setDeletingRows(prev => {
+                                  const next = new Set(prev)
+                                  next.delete(rowId)
+                                  return next
+                                }))
+                            }}
+                            title="Delete row"
+                          >
+                            {deletingRows.has(rowId) ? (
+                              <span className="cell-delete-spinner" />
+                            ) : (
+                              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
+                                <polyline points="1,3 12,3" />
+                                <path d="M4.5 3V2a.5.5 0 01.5-.5h3a.5.5 0 01.5.5v1" />
+                                <rect x="2.5" y="3" width="8" height="8.5" rx="1" />
+                              </svg>
+                            )}
+                          </button>
+                        </td>
+                      </SortableTableRow>
+                    )
+                  })}
+                </SortableContext>
+              </DndContext>
 
               {paddingBottom > 0 && (
                 <tr aria-hidden="true"><td colSpan={totalColSpan} style={{ height: paddingBottom, padding: 0 }} /></tr>

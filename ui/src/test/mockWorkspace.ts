@@ -84,15 +84,40 @@ export class MockWorkspace {
   getTableRows(tableId: string): string {
     const table = this.cellStore.get(tableId)
     if (!table) throw new Error('Table not found')
-    const rows: Record<string, any>[] = []
+    // Mirror the Rust core: reserved fields (_order/_deleted) are control
+    // metadata, and rows materialize sorted by the _order key (keyed rows first,
+    // then unkeyed by id).
+    const built: Array<{ row: Record<string, any>; key: string | null }> = []
     for (const [rowId, cols] of table) {
       const row: Record<string, any> = { _row_id: rowId }
+      let key: string | null = null
       for (const [colId, val] of cols) {
+        if (colId === '_order') { if (typeof val === 'string') key = val; continue }
+        if (colId === '_deleted') continue
         row[colId] = val
       }
-      rows.push(row)
+      built.push({ row, key })
     }
-    return JSON.stringify(rows)
+    built.sort((a, b) => {
+      if (a.key != null && b.key != null) {
+        return a.key < b.key ? -1 : a.key > b.key ? 1 : a.row._row_id.localeCompare(b.row._row_id)
+      }
+      if (a.key != null) return -1
+      if (b.key != null) return 1
+      return a.row._row_id.localeCompare(b.row._row_id)
+    })
+    return JSON.stringify(built.map(b => b.row))
+  }
+
+  getRowOrderKeys(tableId: string): string {
+    const table = this.cellStore.get(tableId)
+    if (!table) throw new Error('Table not found')
+    const map: Record<string, string> = {}
+    for (const [rowId, cols] of table) {
+      const v = cols.get('_order')
+      if (typeof v === 'string') map[rowId] = v
+    }
+    return JSON.stringify(map)
   }
 
   deleteRow(tableId: string, rowId: string): void {
