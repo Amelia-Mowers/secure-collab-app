@@ -215,20 +215,6 @@
   opacity: 1;
 }
 
-/* ── New table form ─────────────────────────────────────────── */
-.sidebar__new-table-form {
-  padding: 4px 8px;
-}
-
-.sidebar__new-table-form input {
-  width: 100%;
-  padding: 5px 8px;
-  font-size: 12px;
-  border-radius: 5px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--accent);
-}
-
 .sidebar__empty {
   padding: 8px 10px;
   font-size: 12px;
