@@ -3,9 +3,11 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
+import { NewTableModal } from '@/components/NewTableModal'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { notifyWorkspaceChanged } from '@/hooks/useTable'
 import { TrialBadge } from '@/components/TrialStatus'
+import { buildTableDefinition, type TableTemplate } from '@/tableTemplates'
 import './Sidebar.css'
 
 interface SidebarProps {
@@ -208,7 +210,6 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [tables, setTables] = useState<TableInfo[]>([])
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
-  const [newTableName, setNewTableName] = useState('')
   const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
@@ -298,20 +299,12 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
     }
   }
 
-  const handleCreateTable = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newTableName.trim() || creatingTable) return
+  const handleCreateTable = async (name: string, template: TableTemplate) => {
+    if (!name.trim() || creatingTable) return
     setCreatingTable(true)
     try {
-      const tableId = newTableName.toLowerCase().replace(/\s+/g, '-')
-      await workspace.createTable(JSON.stringify({
-        id: tableId,
-        name: newTableName,
-        columns: {
-          name: { id: 'name', name: 'Name', column_type: 'text', required: false },
-        },
-      }))
-      setNewTableName('')
+      const tableId = name.toLowerCase().replace(/\s+/g, '-')
+      await workspace.createTable(JSON.stringify(buildTableDefinition(tableId, name, template)))
       setIsCreatingTable(false)
       refreshData()
       notifyWorkspaceChanged(workspaceId)
@@ -397,27 +390,13 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
               )
             })}
 
-            {isCreatingTable ? (
-              <form className="sidebar__new-table-form" onSubmit={handleCreateTable}>
-                <input
-                  type="text"
-                  value={creatingTable ? 'Creating...' : newTableName}
-                  onChange={e => setNewTableName(e.target.value)}
-                  placeholder="Table name..."
-                  autoFocus
-                  disabled={creatingTable}
-                  onBlur={() => { if (!newTableName.trim() && !creatingTable) setIsCreatingTable(false) }}
-                />
-              </form>
-            ) : (
-              <button
-                className="sidebar__item sidebar__item--add"
-                onClick={() => setIsCreatingTable(true)}
-              >
-                <PlusIcon />
-                <span>New table</span>
-              </button>
-            )}
+            <button
+              className="sidebar__item sidebar__item--add"
+              onClick={() => setIsCreatingTable(true)}
+            >
+              <PlusIcon />
+              <span>New table</span>
+            </button>
 
             {tables.length === 0 && !isCreatingTable && (
               <p className="sidebar__empty">No tables yet</p>
@@ -525,6 +504,14 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
         <ShareModal
           workspace={workspace}
           onClose={() => { setShowShareModal(false); loadMembers() }}
+        />
+      )}
+
+      {isCreatingTable && (
+        <NewTableModal
+          onCreate={handleCreateTable}
+          onClose={() => setIsCreatingTable(false)}
+          creating={creatingTable}
         />
       )}
     </aside>
