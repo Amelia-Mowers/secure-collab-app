@@ -444,6 +444,22 @@ impl Workspace {
 
         Ok(table.get_all_rows())
     }
+
+    /// Map of `row_id -> manual-ordering key` for rows that have one. The
+    /// `_order` key is stripped from materialized rows (it's control metadata),
+    /// so the UI reads it here to compute fractional-index keys when
+    /// drag-reordering.
+    pub fn get_row_order_keys(&self, table_id: &str) -> Result<Vec<(String, String)>> {
+        let table = self
+            .tables
+            .get(table_id)
+            .ok_or(crate::Error::TableNotFound)?;
+        Ok(table
+            .rows()
+            .into_iter()
+            .filter_map(|id| table.row_order(&id).map(|key| (id, key)))
+            .collect())
+    }
 }
 
 #[cfg(test)]

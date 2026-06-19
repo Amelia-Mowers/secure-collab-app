@@ -58,6 +58,7 @@ export interface WorkspaceHandle {
   updateCell(tableId: string, rowId: string, columnId: string, value: string): void | Promise<void>
   applyUpdate(update: string): void
   getTableRows(tableId: string): string
+  getRowOrderKeys?(tableId: string): string
   getTableSchema(tableId: string): string
   getView(viewId: string): string
   listTables(): string

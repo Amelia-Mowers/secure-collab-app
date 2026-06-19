@@ -194,6 +194,17 @@ impl WasmWorkspace {
         Ok(rows_json)
     }
 
+    /// Map of `row_id -> manual-ordering key` as a JSON object.
+    #[wasm_bindgen(js_name = getRowOrderKeys)]
+    pub fn get_row_order_keys(&self, table_id: String) -> Result<String, JsValue> {
+        let keys = self
+            .workspace
+            .get_row_order_keys(&table_id)
+            .map_err(|_| JsValue::from_str("Table not found"))?;
+        let map: std::collections::HashMap<String, String> = keys.into_iter().collect();
+        serde_json::to_string(&map).map_err(|_| JsValue::from_str("Serialization failed"))
+    }
+
     /// Get table schema as JSON
     #[wasm_bindgen(js_name = getTableSchema)]
     pub fn get_table_schema(&self, table_id: String) -> Result<String, JsValue> {

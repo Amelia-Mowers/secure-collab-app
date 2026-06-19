@@ -359,6 +359,22 @@
   padding: 6px;
 }
 
+/* The leading cell doubles as the row drag handle when reordering is allowed. */
+.cell-open-inner {
+  display: inline-flex;
+}
+.cell-open-inner--draggable {
+  cursor: grab;
+  touch-action: none;
+}
+.cell-open-inner--draggable:active {
+  cursor: grabbing;
+}
+.data-table tbody tr.row-dragging {
+  background: var(--bg-hover);
+  box-shadow: var(--shadow);
+}
+
 .cell-open-btn {
   /* Faintly visible by default so it's discoverable as the way to open the
      entry, brightening on row hover. */

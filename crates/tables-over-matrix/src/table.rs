@@ -20,6 +20,19 @@ use std::collections::{HashMap, HashSet};
 /// ids derived from user-supplied names are slugified and never start with `_`.
 pub const ROW_DELETED_COLUMN: &str = "_deleted";
 
+/// Reserved column id holding a row's **manual-ordering key** — a
+/// fractional-index string. [`Table::get_all_rows`] returns rows sorted by this
+/// key (rows that have one first, in key order; unkeyed rows after, by id), so
+/// reordering a row is a single LWW cell write with no neighbour rewrites and
+/// every view that reads `get_all_rows` shows the same order.
+pub const ROW_ORDER_COLUMN: &str = "_order";
+
+/// Reserved row-level fields that are not user data and must not surface as
+/// columns in materialized output.
+fn is_reserved_column(column_id: &str) -> bool {
+    column_id == ROW_DELETED_COLUMN || column_id == ROW_ORDER_COLUMN
+}
+
 /// A materialized table containing LWW-resolved cells.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
@@ -109,10 +122,14 @@ impl Table {
         cols
     }
 
-    /// Get a complete row as a map of column_id -> value.
+    /// Get a complete row as a map of column_id -> value. Reserved fields
+    /// (`_deleted`, `_order`) are control metadata and are excluded.
     pub fn get_row(&self, row_id: &str) -> IndexMap<String, serde_json::Value> {
         let mut row = IndexMap::new();
         for column_id in &self.columns {
+            if is_reserved_column(column_id) {
+                continue;
+            }
             if let Some(cell) = self.get_cell(row_id, column_id) {
                 row.insert(column_id.clone(), cell.value.clone());
             }
@@ -121,13 +138,24 @@ impl Table {
     }
 
     /// Get all rows as a structured dataset, excluding any row that carries a
-    /// truthy [`ROW_DELETED_COLUMN`] tombstone.
+    /// truthy [`ROW_DELETED_COLUMN`] tombstone and sorted by the manual-ordering
+    /// key ([`ROW_ORDER_COLUMN`]): rows with a key first (in key order, ties by
+    /// id), then unkeyed rows by id.
     pub fn get_all_rows(&self) -> Vec<IndexMap<String, serde_json::Value>> {
-        self.rows()
-            .iter()
+        let mut ids: Vec<String> = self
+            .rows()
+            .into_iter()
             .filter(|row_id| !self.is_row_deleted(row_id))
+            .collect();
+        ids.sort_by(|a, b| match (self.row_order(a), self.row_order(b)) {
+            (Some(ka), Some(kb)) => ka.cmp(&kb).then_with(|| a.cmp(b)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(b),
+        });
+        ids.into_iter()
             .map(|row_id| {
-                let mut row = self.get_row(row_id);
+                let mut row = self.get_row(&row_id);
                 row.insert("_row_id".to_string(), serde_json::json!(row_id));
                 row
             })
@@ -141,6 +169,13 @@ impl Table {
         self.get_value(row_id, ROW_DELETED_COLUMN)
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
+    }
+
+    /// A row's manual-ordering key ([`ROW_ORDER_COLUMN`]), if set to a string.
+    pub fn row_order(&self, row_id: &str) -> Option<String> {
+        self.get_value(row_id, ROW_ORDER_COLUMN)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
 
     /// Remove a row from the table (for deletion).
@@ -371,6 +406,53 @@ mod tests {
         b.apply_update(undel);
         b.apply_update(del);
         assert!(!b.is_row_deleted("r1"));
+    }
+
+    fn row_ids(table: &Table) -> Vec<String> {
+        table
+            .get_all_rows()
+            .into_iter()
+            .map(|r| r.get("_row_id").unwrap().as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_get_all_rows_sorted_by_order_key() {
+        let mut table = Table::new("t");
+        table.apply_update(CellUpdate::new("t", "a", "title", json!("A"), 1));
+        table.apply_update(CellUpdate::new("t", "b", "title", json!("B"), 1));
+        table.apply_update(CellUpdate::new("t", "c", "title", json!("C"), 1));
+        // Keys place c < a < b (lexicographically).
+        table.apply_update(CellUpdate::new("t", "a", ROW_ORDER_COLUMN, json!("V"), 2));
+        table.apply_update(CellUpdate::new("t", "b", ROW_ORDER_COLUMN, json!("l"), 2));
+        table.apply_update(CellUpdate::new("t", "c", ROW_ORDER_COLUMN, json!("G"), 2));
+
+        assert_eq!(row_ids(&table), vec!["c", "a", "b"]);
+        // The reserved _order field is never exposed as a column.
+        assert!(table
+            .get_all_rows()
+            .iter()
+            .all(|r| !r.contains_key(ROW_ORDER_COLUMN)));
+    }
+
+    #[test]
+    fn test_keyed_rows_sort_before_unkeyed() {
+        let mut table = Table::new("t");
+        table.apply_update(CellUpdate::new("t", "z", "title", json!("Z"), 1)); // unkeyed
+        table.apply_update(CellUpdate::new("t", "a", "title", json!("A"), 1)); // unkeyed
+        table.apply_update(CellUpdate::new("t", "m", "title", json!("M"), 1));
+        table.apply_update(CellUpdate::new("t", "m", ROW_ORDER_COLUMN, json!("V"), 2)); // keyed
+
+        // Keyed row first, then the unkeyed rows by id.
+        assert_eq!(row_ids(&table), vec!["m", "a", "z"]);
+    }
+
+    #[test]
+    fn test_no_order_keys_preserves_id_order() {
+        let mut table = Table::new("t");
+        table.apply_update(CellUpdate::new("t", "b", "x", json!(1), 1));
+        table.apply_update(CellUpdate::new("t", "a", "x", json!(1), 1));
+        assert_eq!(row_ids(&table), vec!["a", "b"]);
     }
 
     #[test]
