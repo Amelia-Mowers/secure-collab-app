@@ -350,24 +350,42 @@
 /* Actions cell */
 /* Leading "open full entry" button column (replaces the old whole-row click). */
 .col-open-header {
-  width: 36px;
+  width: 56px;
 }
 
 .cell-open {
-  width: 36px;
+  width: 56px;
   text-align: center;
-  padding: 6px;
+  padding: 6px 4px;
 }
 
-/* The leading cell doubles as the row drag handle when reordering is allowed. */
+/* Leading cell hosts two distinct controls: a grip drag-handle and the
+   open-entry button. */
 .cell-open-inner {
   display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
-.cell-open-inner--draggable {
+
+/* Dedicated drag handle (separate from the open-entry button). */
+.cell-drag-handle {
+  opacity: 0;
+  padding: 4px 2px;
+  color: var(--text-tertiary);
+  border-radius: 4px;
   cursor: grab;
   touch-action: none;
+  transition: opacity 0.15s, color 0.15s, background-color 0.15s;
 }
-.cell-open-inner--draggable:active {
+.data-table tbody tr:hover .cell-drag-handle {
+  opacity: 0.55;
+}
+.cell-drag-handle:hover {
+  opacity: 1;
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.cell-drag-handle:active {
   cursor: grabbing;
 }
 .data-table tbody tr.row-dragging {
