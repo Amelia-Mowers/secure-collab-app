@@ -107,6 +107,14 @@ mod matrix_impl {
     /// the room timeline.
     pub const CELL_UPDATE_EVENT_TYPE: &str = "io.tidework.cell.update";
 
+    /// Event type for a **batch** of cell updates sent as a single timeline
+    /// event. Discrete multi-cell operations (creating a table — ~30 cells for a
+    /// template — adding a column, a coalesced flush of rapid edits) send one
+    /// batch event instead of one event per cell, so they don't burst past the
+    /// homeserver's `rc_message` rate limit (Synapse defaults to 0.2/s, burst
+    /// 10; ~30 single events take ~120s and a mid-flush reload loses the rest).
+    pub const CELL_BATCH_EVENT_TYPE: &str = "io.tidework.cell.batch";
+
     /// Matrix event content for a cell update.
     ///
     /// This struct is the canonical wire format for cell updates sent
@@ -199,6 +207,31 @@ mod matrix_impl {
                 column_id: column_id.into(),
                 value,
                 timestamp,
+            }
+        }
+    }
+
+    /// Matrix event content for a **batch** of cell updates (see
+    /// [`CELL_BATCH_EVENT_TYPE`]). Carries the same per-cell payloads as
+    /// [`CellUpdateEventContent`], just many in one event. The receiver applies
+    /// each cell with LWW exactly as if they had arrived as individual events;
+    /// all cells share the event's `origin_server_ts` tiebreaker.
+    #[derive(Clone, Debug, Deserialize, Serialize, EventContent)]
+    #[ruma_event(type = "io.tidework.cell.batch", kind = MessageLike)]
+    pub struct CellBatchEventContent {
+        /// Wire format version for forward compatibility.
+        #[serde(default = "default_version")]
+        pub version: u8,
+        /// The cells in this batch.
+        pub cells: Vec<CellUpdateEventContent>,
+    }
+
+    impl CellBatchEventContent {
+        /// Build a batch event content from cell updates.
+        pub fn from_updates(updates: &[CellUpdate]) -> Self {
+            Self {
+                version: CELL_UPDATE_VERSION,
+                cells: updates.iter().cloned().map(Into::into).collect(),
             }
         }
     }
@@ -363,10 +396,88 @@ mod matrix_impl {
             Ok(event_ids)
         }
 
-        /// Parse a raw Matrix event JSON into a `CellUpdate`, if it is
-        /// a `io.tidework.cell.update` event.
+        /// Send many cell updates as a **single** batch event
+        /// ([`CellBatchEventContent`]). One event regardless of cell count, so a
+        /// big multi-cell operation doesn't burst past `rc_message`.
+        pub async fn send_cell_batch(&self, updates: &[CellUpdate]) -> Result<OwnedEventId> {
+            let room = self.get_room()?;
+            let content = CellBatchEventContent::from_updates(updates);
+            debug!("Sending cell batch: {} cells", updates.len());
+            let response = room
+                .send(content)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to send cell batch: {e}"))?;
+            Ok(response.event_id)
+        }
+
+        /// Parse a raw Matrix event JSON into the cell updates it carries.
         ///
-        /// Returns `None` if the event is a different type or fails to parse.
+        /// Handles both a single [`CELL_UPDATE_EVENT_TYPE`] event (→ one update)
+        /// and a [`CELL_BATCH_EVENT_TYPE`] event (→ one per cell, all sharing the
+        /// event's `origin_server_ts` tiebreaker). Returns an empty vec for any
+        /// other event type or a parse failure. This is the read path used by
+        /// cold start and sync.
+        pub fn extract_cell_updates(event_json: &str) -> Vec<ReceivedCellUpdate> {
+            let Ok(raw) = serde_json::from_str::<serde_json::Value>(event_json) else {
+                return Vec::new();
+            };
+            let Some(event_type) = raw.get("type").and_then(|t| t.as_str()) else {
+                return Vec::new();
+            };
+            if event_type != CELL_UPDATE_EVENT_TYPE && event_type != CELL_BATCH_EVENT_TYPE {
+                return Vec::new();
+            }
+
+            // Shared envelope metadata (event id + server timestamp tiebreaker).
+            let Some(event_id) = raw
+                .get("event_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| OwnedEventId::try_from(s).ok())
+            else {
+                return Vec::new();
+            };
+            let origin_server_ts = raw
+                .get("origin_server_ts")
+                .and_then(|v| v.as_u64())
+                .and_then(|ms| UInt::try_from(ms).ok())
+                .map(MilliSecondsSinceUnixEpoch)
+                .unwrap_or_else(|| MilliSecondsSinceUnixEpoch(UInt::from(0u32)));
+
+            let Some(content) = raw.get("content") else {
+                return Vec::new();
+            };
+
+            if event_type == CELL_BATCH_EVENT_TYPE {
+                let Ok(batch) = serde_json::from_value::<CellBatchEventContent>(content.clone())
+                else {
+                    return Vec::new();
+                };
+                return batch
+                    .cells
+                    .into_iter()
+                    .map(|c| ReceivedCellUpdate {
+                        update: c.into(),
+                        event_id: event_id.clone(),
+                        origin_server_ts,
+                    })
+                    .collect();
+            }
+
+            // Single cell update.
+            match serde_json::from_value::<CellUpdateEventContent>(content.clone()) {
+                Ok(cell) => vec![ReceivedCellUpdate {
+                    update: cell.into(),
+                    event_id,
+                    origin_server_ts,
+                }],
+                Err(_) => Vec::new(),
+            }
+        }
+
+        /// Parse a raw Matrix event JSON into a single `CellUpdate`, if it is a
+        /// single `io.tidework.cell.update` event. (Batch events return `None`;
+        /// use [`extract_cell_updates`] for the read path.) Retained for callers
+        /// that only ever deal with single events.
         pub fn extract_cell_update(event_json: &str) -> Option<ReceivedCellUpdate> {
             // Parse the outer event envelope
             let raw: serde_json::Value = serde_json::from_str(event_json).ok()?;
@@ -637,6 +748,78 @@ mod matrix_impl {
 
             let received = MatrixClient::extract_cell_update(&event_json.to_string()).unwrap();
             assert_eq!(received.update.value, json!(2.72));
+        }
+
+        #[test]
+        fn test_extract_cell_updates_from_batch_event() {
+            let updates = vec![
+                CellUpdate::new("tasks", "r1", "title", json!("A"), 1),
+                CellUpdate::new("tasks", "r1", "status", json!("todo"), 2),
+                CellUpdate::new("tasks", "r2", "value", json!(3.5), 3), // float survives
+            ];
+            let content = CellBatchEventContent::from_updates(&updates);
+            let event = json!({
+                "type": "io.tidework.cell.batch",
+                "event_id": "$batch:example.com",
+                "origin_server_ts": 1_709_312_400_000u64,
+                "content": serde_json::to_value(&content).unwrap(),
+                "sender": "@alice:example.com",
+            });
+
+            let received = MatrixClient::extract_cell_updates(&event.to_string());
+            assert_eq!(received.len(), 3);
+            // All cells share the one event's envelope metadata.
+            assert!(received
+                .iter()
+                .all(|r| r.event_id.as_str() == "$batch:example.com"));
+            assert_eq!(received[0].update.value, json!("A"));
+            assert_eq!(received[1].update.column_id, "status");
+            assert_eq!(received[2].update.value, json!(3.5));
+            // origin_server_ts is attached as the LWW tiebreaker on each cell.
+            assert_eq!(
+                received[2].clone().into_update().server_timestamp,
+                Some(1_709_312_400_000)
+            );
+        }
+
+        #[test]
+        fn test_extract_cell_updates_handles_single_event() {
+            let event = json!({
+                "type": "io.tidework.cell.update",
+                "event_id": "$one:example.com",
+                "origin_server_ts": 100,
+                "content": {
+                    "version": 1, "table_id": "t", "row_id": "r",
+                    "column_id": "c", "value": "\"v\"", "timestamp": 5
+                },
+            });
+            let received = MatrixClient::extract_cell_updates(&event.to_string());
+            assert_eq!(received.len(), 1);
+            assert_eq!(received[0].update.value, json!("v"));
+        }
+
+        #[test]
+        fn test_extract_cell_update_singular_ignores_batch() {
+            let content = CellBatchEventContent::from_updates(&[CellUpdate::new(
+                "t",
+                "r",
+                "c",
+                json!("v"),
+                1,
+            )]);
+            let event = json!({
+                "type": "io.tidework.cell.batch",
+                "event_id": "$b:example.com",
+                "origin_server_ts": 1,
+                "content": serde_json::to_value(&content).unwrap(),
+            });
+            // The singular extractor only understands single events.
+            assert!(MatrixClient::extract_cell_update(&event.to_string()).is_none());
+            // The plural extractor reads the batch.
+            assert_eq!(
+                MatrixClient::extract_cell_updates(&event.to_string()).len(),
+                1
+            );
         }
 
         #[test]

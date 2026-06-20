@@ -39,8 +39,26 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    /// Start a real Synapse homeserver for testing.
+    /// Start a real Synapse homeserver for testing (rate limits relaxed so the
+    /// suite can register users and send events fast).
     pub async fn new() -> Result<Self> {
+        // 1000/1000 ≈ effectively unlimited message throughput.
+        Self::new_with_message_rate_limit(1000.0, 1000).await
+    }
+
+    /// Like [`new`], but with `rc_message` set to **Synapse's defaults**
+    /// (`per_second: 0.2`, `burst_count: 10`) — which is what production runs,
+    /// since prod sets no `rc_message` override. Used to reproduce the
+    /// rate-limit divergence that the relaxed default harness hides: a burst of
+    /// per-cell sends (e.g. creating a table from a template) gets throttled to
+    /// ~1 event / 5s after the first 10. Registration/login stay relaxed so test
+    /// setup isn't throttled.
+    pub async fn new_with_prod_message_rate_limit() -> Result<Self> {
+        Self::new_with_message_rate_limit(0.2, 10).await
+    }
+
+    /// Start a real Synapse homeserver with a specific `rc_message` rate limit.
+    pub async fn new_with_message_rate_limit(rc_ps: f64, rc_burst: u32) -> Result<Self> {
         let port = free_port();
         let homeserver_url = format!("http://localhost:{port}");
 
@@ -114,8 +132,8 @@ form_secret: "test_form_secret_do_not_use_in_prod"
 presence:
   enabled: false
 rc_message:
-  per_second: 1000
-  burst_count: 1000
+  per_second: {rc_ps}
+  burst_count: {rc_burst}
 rc_registration:
   per_second: 1000
   burst_count: 1000
@@ -147,6 +165,8 @@ rc_invites:
                 pid = data_dir.join("homeserver.pid").display(),
                 url = homeserver_url,
                 port = port,
+                rc_ps = rc_ps,
+                rc_burst = rc_burst,
                 db = data_dir.join("homeserver.db").display(),
                 log_config = log_config_path.display(),
                 media = data_dir.join("media_store").display(),

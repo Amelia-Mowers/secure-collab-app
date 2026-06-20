@@ -1114,9 +1114,13 @@ impl ConnectedWorkspace {
 
             for timeline_event in &response.chunk {
                 if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
-                    if let Some(received) = MatrixClient::extract_cell_update(&json_str) {
-                        // Attach origin_server_ts as the LWW tiebreaker.
-                        let _ = workspace.apply_update(received.into_update());
+                    // One timeline event may carry many cells (a batch event).
+                    let received = MatrixClient::extract_cell_updates(&json_str);
+                    if !received.is_empty() {
+                        for r in received {
+                            // Attach origin_server_ts as the LWW tiebreaker.
+                            let _ = workspace.apply_update(r.into_update());
+                        }
                     } else if MatrixClient::is_undecryptable_event(&json_str) {
                         // History we can't decrypt (no key) — count it so the UI
                         // can warn instead of silently materializing partial state.
@@ -1168,15 +1172,17 @@ impl ConnectedWorkspace {
                             let mut changed = false;
 
                             for raw_event in &joined.timeline.events {
-                                // Try to extract our custom event
+                                // Try to extract our custom event(s) — one event
+                                // may carry many cells (a batch event).
                                 if let Ok(json_str) = serde_json::to_string(raw_event.raw().json())
                                 {
-                                    if let Some(received) =
-                                        MatrixClient::extract_cell_update(&json_str)
-                                    {
+                                    let received = MatrixClient::extract_cell_updates(&json_str);
+                                    if !received.is_empty() {
                                         let mut ws = workspace.borrow_mut();
-                                        // Attach origin_server_ts as the LWW tiebreaker.
-                                        let _ = ws.apply_update(received.into_update());
+                                        for r in received {
+                                            // Attach origin_server_ts as the LWW tiebreaker.
+                                            let _ = ws.apply_update(r.into_update());
+                                        }
                                         changed = true;
                                     } else if MatrixClient::is_undecryptable_event(&json_str) {
                                         undecryptable.set(undecryptable.get() + 1);
@@ -1558,36 +1564,43 @@ impl ConnectedWorkspace {
             ));
         }
 
+        if updates.is_empty() {
+            return Ok(());
+        }
+
         // These discrete schema/delete writes are sent here (not via the
-        // coalescing edit queue). A burst — e.g. ~40 cells when creating a table
-        // from a template — can trip the homeserver rate limit, so each send
-        // retries with exponential backoff on failure (notably a 429
-        // `M_LIMIT_EXCEEDED`) instead of aborting the batch part-way, which
-        // previously left a table with only some of its columns persisted.
+        // coalescing edit queue). Sending one event per cell bursts past the
+        // homeserver's `rc_message` limit — a template create (~30 cells)
+        // throttles to ~1 event/5s on production Synapse (~120s; a mid-flush
+        // reload then loses the rest). So send the whole operation as ONE batch
+        // event when it's more than a single cell. A single retry-with-backoff
+        // still covers a transient 429 on that one send.
         const MAX_BACKOFF_MS: u64 = 8_000;
         const MAX_ATTEMPTS: u32 = 8;
-        for update in updates {
-            let mut backoff_ms = 300u64;
-            let mut attempts = 0u32;
-            loop {
-                let content: tables_over_matrix::CellUpdateEventContent = update.clone().into();
-                match room.send(content).await {
-                    Ok(_) => break,
-                    Err(e) => {
-                        attempts += 1;
-                        if attempts >= MAX_ATTEMPTS {
-                            return Err(JsValue::from_str(&format!(
-                                "Failed to send update after retries: {e}"
-                            )));
-                        }
-                        matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
-                        backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
+        let mut backoff_ms = 300u64;
+        let mut attempts = 0u32;
+        loop {
+            let result = if updates.len() == 1 {
+                let content: tables_over_matrix::CellUpdateEventContent = updates[0].clone().into();
+                room.send(content).await.map(|_| ())
+            } else {
+                let content = tables_over_matrix::CellBatchEventContent::from_updates(updates);
+                room.send(content).await.map(|_| ())
+            };
+            match result {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= MAX_ATTEMPTS {
+                        return Err(JsValue::from_str(&format!(
+                            "Failed to send updates after retries: {e}"
+                        )));
                     }
+                    matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
+                    backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
                 }
             }
         }
-
-        Ok(())
     }
 }
 
@@ -1672,17 +1685,25 @@ async fn send_batch(
         return Ok(());
     }
 
-    let mut failed = Vec::new();
-    for update in batch {
-        let content: tables_over_matrix::CellUpdateEventContent = update.clone().into();
-        if room.send(content).await.is_err() {
-            failed.push(update);
-        }
+    if batch.is_empty() {
+        return Ok(());
     }
 
-    if failed.is_empty() {
-        Ok(())
+    // Send the coalesced flush as ONE batch event (the queue already deduped to
+    // the latest value per cell, and each cell is independent LWW, so order
+    // doesn't matter). A flurry of edits — or a first-reorder `_order` backfill
+    // across many rows — is then a single event rather than one per cell, which
+    // keeps it under `rc_message`. All-or-nothing: on failure re-queue the lot.
+    let result = if batch.len() == 1 {
+        let content: tables_over_matrix::CellUpdateEventContent = batch[0].clone().into();
+        room.send(content).await.map(|_| ())
     } else {
-        Err(failed)
+        let content = tables_over_matrix::CellBatchEventContent::from_updates(&batch);
+        room.send(content).await.map(|_| ())
+    };
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(_) => Err(batch),
     }
 }
