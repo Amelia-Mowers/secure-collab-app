@@ -75,6 +75,20 @@ describe('TableView', () => {
         expect(deleteButtons).toHaveLength(4)
       })
     })
+
+    it('renders the drag handle and open-entry button as separate controls', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      await waitFor(() => {
+        // One of each per row, and they are distinct elements.
+        const handles = screen.getAllByLabelText('Drag to reorder')
+        const openers = screen.getAllByLabelText('Open full entry')
+        expect(handles).toHaveLength(4)
+        expect(openers).toHaveLength(4)
+        expect(handles[0]).not.toBe(openers[0])
+      })
+    })
   })
 
   describe('row operations', () => {

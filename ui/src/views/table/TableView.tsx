@@ -168,9 +168,9 @@ function SortableHeader({
 }
 
 /** A table body row that can be dragged to reorder (when `reorderable`). The
- *  leading cell doubles as the drag handle — a plain click still opens the entry
- *  (the 6px activation distance distinguishes click from drag), matching the
- *  kanban card. The data/action cells are passed as `children`. */
+ *  leading cell holds two *distinct* controls: a dedicated grip drag-handle
+ *  (carries the dnd-kit listeners) and a separate open-full-entry button. The
+ *  data/action cells are passed as `children`. */
 function SortableTableRow({
   rowId,
   reorderable,
@@ -195,13 +195,28 @@ function SortableTableRow({
   return (
     <tr ref={setNodeRef} style={style} className={isDragging ? 'row-dragging' : undefined}>
       <td className="cell-open">
-        <div
-          className={`cell-open-inner${reorderable ? ' cell-open-inner--draggable' : ''}`}
-          {...(reorderable ? attributes : {})}
-          {...(reorderable ? listeners : {})}
-          title={reorderable ? 'Drag to reorder · click to open' : undefined}
-        >
+        <div className="cell-open-inner">
+          {reorderable && (
+            <button
+              type="button"
+              className="ghost cell-drag-handle"
+              title="Drag to reorder"
+              aria-label="Drag to reorder"
+              {...attributes}
+              {...listeners}
+            >
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor" aria-hidden="true">
+                <circle cx="4.5" cy="2.5" r="1.1" />
+                <circle cx="8.5" cy="2.5" r="1.1" />
+                <circle cx="4.5" cy="6.5" r="1.1" />
+                <circle cx="8.5" cy="6.5" r="1.1" />
+                <circle cx="4.5" cy="10.5" r="1.1" />
+                <circle cx="8.5" cy="10.5" r="1.1" />
+              </svg>
+            </button>
+          )}
           <button
+            type="button"
             className="ghost cell-open-btn"
             onClick={onOpen}
             title="Open full entry"
@@ -807,6 +822,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                             column={cellColumn}
                             value={value}
                             autoFocus
+                            popover
                             lookup={referenceLookup}
                             commit={v => handleShadowCommit(col.id, v)}
                             onDone={() => setEditing(null)}
