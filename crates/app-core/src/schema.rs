@@ -469,6 +469,21 @@ impl SchemaManager {
         self.schema_table.apply_update(order_update.clone());
         updates.push(order_update);
 
+        // Clear any decay tombstone: if this column id was previously deleted,
+        // its schema row still carries `deleted = true`. Re-adding writes a
+        // newer `deleted = false` so LWW reactivates the row — otherwise the
+        // "new" column stays filtered out of the live schema (the
+        // re-create-a-deleted-name no-op bug). Harmless for a never-deleted id.
+        let undelete_update = CellUpdate::new(
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "deleted",
+            serde_json::json!(false),
+            timestamp + 9,
+        );
+        self.schema_table.apply_update(undelete_update.clone());
+        updates.push(undelete_update);
+
         updates
     }
 
@@ -542,15 +557,58 @@ impl SchemaManager {
         timestamp: u64,
     ) -> Vec<CellUpdate> {
         let row_id = format!("{table_id}.{column_id}");
-        let update = CellUpdate::new(
+        let deleted = CellUpdate::new(
             SCHEMA_TABLE_ID,
             &row_id,
             "deleted",
             serde_json::json!(true),
             timestamp,
         );
-        self.schema_table.apply_update(update.clone());
-        vec![update]
+        self.schema_table.apply_update(deleted.clone());
+
+        // Record *when* it was deleted. If the column id is later re-created,
+        // `add_column` flips `deleted` back to false but leaves `deleted_at`, and
+        // row materialization uses it as a cutoff so cell values written at/before
+        // the deletion don't resurrect in the new column (see
+        // `column_clear_cutoffs` + `Table::get_all_rows_excluding_stale`).
+        let deleted_at = CellUpdate::new(
+            SCHEMA_TABLE_ID,
+            &row_id,
+            "deleted_at",
+            serde_json::json!(timestamp),
+            timestamp,
+        );
+        self.schema_table.apply_update(deleted_at.clone());
+        vec![deleted, deleted_at]
+    }
+
+    /// Map of `column_id -> deleted_at` (the timestamp a column was last deleted)
+    /// for every column in `table_id` that carries a `deleted_at` marker. Row
+    /// materialization uses these as per-column cutoffs to hide cell values that
+    /// predate a deletion (so a re-created column starts blank).
+    pub fn column_clear_cutoffs(&self, table_id: &str) -> HashMap<String, u64> {
+        let mut cutoffs = HashMap::new();
+        for row_id in self.schema_table.rows() {
+            if self
+                .schema_table
+                .get_value(&row_id, "table_id")
+                .and_then(|v| v.as_str())
+                != Some(table_id)
+            {
+                continue;
+            }
+            if let (Some(col_id), Some(at)) = (
+                self.schema_table
+                    .get_value(&row_id, "column_id")
+                    .and_then(|v| v.as_str().map(String::from)),
+                self.schema_table
+                    .get_value(&row_id, "deleted_at")
+                    .and_then(|v| v.as_u64()),
+            ) {
+                cutoffs.insert(col_id, at);
+            }
+        }
+        cutoffs
     }
 
     /// Apply updates to the schema system tables
@@ -688,6 +746,52 @@ mod tests {
     fn test_schema_manager_returns_none_for_unknown_table() {
         let manager = SchemaManager::new();
         assert!(manager.get_table_schema("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_re_adding_a_deleted_column_reactivates_it() {
+        let mut manager = SchemaManager::new();
+        manager.create_table(
+            TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+                "priority",
+                "Priority",
+                ColumnType::Text,
+            )),
+            1000,
+        );
+        assert!(manager
+            .get_table_schema("tasks")
+            .unwrap()
+            .columns
+            .contains_key("priority"));
+
+        // Delete it (decay tombstone): excluded from live schema, reported deleted.
+        manager.delete_column("tasks", "priority", 2000);
+        let after_delete = manager.get_table_schema("tasks").unwrap();
+        assert!(!after_delete.columns.contains_key("priority"));
+        assert!(after_delete
+            .deleted_columns
+            .contains(&"priority".to_string()));
+
+        // Re-add the same id → reactivated, not stuck deleted, with the new def.
+        manager.add_column(
+            "tasks",
+            ColumnDefinition::new("priority", "Priority", ColumnType::Select)
+                .with_options(vec!["Low".to_string(), "High".to_string()]),
+            3000,
+        );
+        let after_readd = manager.get_table_schema("tasks").unwrap();
+        assert!(
+            after_readd.columns.contains_key("priority"),
+            "re-added column should be live again"
+        );
+        assert!(!after_readd
+            .deleted_columns
+            .contains(&"priority".to_string()));
+        assert_eq!(
+            after_readd.columns["priority"].column_type,
+            ColumnType::Select
+        );
     }
 
     #[test]

@@ -352,11 +352,31 @@ work (templates #51, row-reorder #52, shadow row #43) — prioritize these.
 - [ ] **Member / members value** — a column referencing a workspace member (or
   members) with selection semantics (pick from the room's member list).
 
+### Tables
+- [ ] **Delete & reorder tables themselves** — tables currently can't be deleted
+  or reordered (only columns/rows can). Add both, reusing the column patterns:
+  - Delete a table via a decay tombstone (a `deleted`/`deleted_at` marker on the
+    `_tables` row), excluded from `list_tables`/sidebar. Re-creating a same-named
+    table must NOT resurrect old data — apply the same "ignore cells at/before
+    `deleted_at`" cutoff used for columns (`get_all_rows_excluding_stale` +
+    `get_stalest_bumpable_cell` already take per-column cutoffs; extend the idea
+    to a whole-table cutoff), and the bump selector must skip a deleted table's
+    cells. (Also revisit: `create_table` currently hard-rejects a duplicate id —
+    a re-create-after-delete flow should be allowed.)
+  - Reorder tables in the sidebar via a fractional-index `_order` on the
+    `_tables` row (mirror the row-reorder mechanism in `fractionalIndex.ts`).
+  - Note: the bump mechanism already ignores deleted **cells/columns/rows** as of
+    the column-recreate fix; table-level deletion needs the analogous guard.
+
 ### Columns
-- [ ] 🐞 **Re-creating a deleted column's name is a no-op** — adding a column with
-  the same name/id as a previously-deleted column does nothing (the decay-model
-  `deleted=true` marker on that schema row still wins). Need to clear the
-  tombstone / re-activate on re-create.
+- [x] 🐞 **Re-creating a deleted column's name is a no-op** — `add_column` now
+  writes a newer `deleted = false`, so LWW reactivates the schema row.
+  Crucially, re-create also must NOT resurrect old data: `delete_column` records
+  `deleted_at`, and row materialization (`get_all_rows_excluding_stale`) +
+  the bump selector (`get_stalest_bumpable_cell`) both ignore cells at/before
+  that cutoff — so a re-created column starts blank and a bump can't refresh a
+  dead cell past the cutoff. See [[rate-limit-divergence-conduit-synapse]]'s
+  sibling decay work.
 - [ ] **Select default should initialize existing entries** — setting a default on
   a (new or existing) select column should apply it as the value of existing
   entries that have none. Avoid flooding with one message per row: consider

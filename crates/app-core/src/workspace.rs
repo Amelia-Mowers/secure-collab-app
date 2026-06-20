@@ -299,13 +299,17 @@ impl Workspace {
         let user_cell = user_update.cell_id();
 
         // Pick the stalest cell to bump from the table state *before* the user
-        // write, and never bump the cell we're about to write.
+        // write, and never bump the cell we're about to write. Exclude cells that
+        // should decay (deleted rows / columns past their deletion cutoff) so a
+        // bump can't keep dead data alive or resurrect it past a column delete.
+        let cutoffs = self.schema_manager.column_clear_cutoffs(table_id);
         let candidate = {
             let table = self
                 .tables
                 .get(table_id)
                 .ok_or(crate::Error::TableNotFound)?;
-            self.compaction_manager.select_bump_candidate(table)
+            self.compaction_manager
+                .select_bump_candidate_excluding(table, &cutoffs)
         }
         .filter(|c| *c != user_cell);
 
@@ -441,7 +445,12 @@ impl Workspace {
         Ok(vec![tombstone])
     }
 
-    /// Get all rows from a table as JSON
+    /// Get all rows from a table as JSON.
+    ///
+    /// Applies per-column "cleared at" cutoffs from the schema so that values
+    /// written at/before a column's deletion don't resurface if the column id is
+    /// later re-created (the data cells aren't tombstoned under the decay model,
+    /// so they're filtered at read time).
     pub fn get_table_rows(
         &self,
         table_id: &str,
@@ -451,7 +460,8 @@ impl Workspace {
             .get(table_id)
             .ok_or(crate::Error::TableNotFound)?;
 
-        Ok(table.get_all_rows())
+        let cutoffs = self.schema_manager.column_clear_cutoffs(table_id);
+        Ok(table.get_all_rows_excluding_stale(&cutoffs))
     }
 
     /// Map of `row_id -> manual-ordering key` for rows that have one. The
@@ -520,6 +530,51 @@ mod tests {
             workspace.create_table(def()),
             Err(crate::Error::TableAlreadyExists)
         ));
+    }
+
+    #[test]
+    fn test_recreated_column_does_not_resurrect_old_values() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(
+            TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+                "assignee",
+                "Assignee",
+                ColumnType::Text,
+            )),
+        )
+        .unwrap();
+        ws.update_cell("tasks", "r1", "assignee", json!("Alice"))
+            .unwrap();
+        assert_eq!(
+            ws.get_table_rows("tasks").unwrap()[0].get("assignee"),
+            Some(&json!("Alice"))
+        );
+
+        // Delete the column, then re-create the same id.
+        ws.delete_column("tasks", "assignee").unwrap();
+        ws.add_column(
+            "tasks",
+            ColumnDefinition::new("assignee", "Assignee", ColumnType::Text),
+        )
+        .unwrap();
+
+        // The pre-deletion value must NOT resurface in the re-created column.
+        let rows = ws.get_table_rows("tasks").unwrap();
+        let r1 = rows
+            .iter()
+            .find(|r| r.get("_row_id") == Some(&json!("r1")))
+            .unwrap();
+        assert_eq!(r1.get("assignee"), None, "old value must not resurrect");
+
+        // A value written after re-creation IS shown.
+        ws.update_cell("tasks", "r1", "assignee", json!("Bob"))
+            .unwrap();
+        let rows = ws.get_table_rows("tasks").unwrap();
+        let r1 = rows
+            .iter()
+            .find(|r| r.get("_row_id") == Some(&json!("r1")))
+            .unwrap();
+        assert_eq!(r1.get("assignee"), Some(&json!("Bob")));
     }
 
     #[test]
