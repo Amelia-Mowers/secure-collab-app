@@ -58,6 +58,9 @@ export class MockWorkspace {
 
   createTable(definitionJson: string): string {
     const def: TableDef = JSON.parse(definitionJson)
+    if (this.schemas.has(def.id) || this.cellStore.has(def.id)) {
+      throw new Error('A table with that name already exists')
+    }
     this.schemas.set(def.id, def)
     this.cellStore.set(def.id, new Map())
     return JSON.stringify({ success: true })

@@ -1253,8 +1253,12 @@ impl ConnectedWorkspace {
 
         let updates = {
             let mut ws = self.inner.borrow_mut();
-            ws.create_table(definition)
-                .map_err(|_| JsValue::from_str("Failed to create table"))?
+            ws.create_table(definition).map_err(|e| match e {
+                crate::Error::TableAlreadyExists => {
+                    JsValue::from_str("A table with that name already exists")
+                }
+                _ => JsValue::from_str("Failed to create table"),
+            })?
         };
 
         // Send updates to Matrix
@@ -1554,11 +1558,33 @@ impl ConnectedWorkspace {
             ));
         }
 
+        // These discrete schema/delete writes are sent here (not via the
+        // coalescing edit queue). A burst — e.g. ~40 cells when creating a table
+        // from a template — can trip the homeserver rate limit, so each send
+        // retries with exponential backoff on failure (notably a 429
+        // `M_LIMIT_EXCEEDED`) instead of aborting the batch part-way, which
+        // previously left a table with only some of its columns persisted.
+        const MAX_BACKOFF_MS: u64 = 8_000;
+        const MAX_ATTEMPTS: u32 = 8;
         for update in updates {
-            let content: tables_over_matrix::CellUpdateEventContent = update.clone().into();
-            room.send(content)
-                .await
-                .map_err(|e| JsValue::from_str(&format!("Failed to send update: {e}")))?;
+            let mut backoff_ms = 300u64;
+            let mut attempts = 0u32;
+            loop {
+                let content: tables_over_matrix::CellUpdateEventContent = update.clone().into();
+                match room.send(content).await {
+                    Ok(_) => break,
+                    Err(e) => {
+                        attempts += 1;
+                        if attempts >= MAX_ATTEMPTS {
+                            return Err(JsValue::from_str(&format!(
+                                "Failed to send update after retries: {e}"
+                            )));
+                        }
+                        matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
+                    }
+                }
+            }
         }
 
         Ok(())

@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 // The path alias resolver in vitest.config.ts maps '@/' → 'src/', so we can
 // use the normal import path.  vite-plugin-wasm handles the .wasm transform.
 import { initSync, WasmWorkspace } from '@/wasm/generated/app_core.js'
+import { buildTableDefinition, TABLE_TEMPLATES } from '@/tableTemplates'
 
 // ──────────────────────────────────────────────────────────────────────────────
 // One-time WASM initialisation
@@ -85,6 +86,26 @@ describe('User story: table lifecycle', () => {
     expect(tables).toContain('tasks')
     expect(tables).toContain('projects')
     expect(tables).toHaveLength(2)
+  })
+
+  it('rejects creating a table whose id already exists (no silent merge)', () => {
+    const ws = freshWorkspace()
+    ws.createTable(TASKS_DEF)
+    expect(() =>
+      ws.createTable(JSON.stringify({ id: 'tasks', name: 'Tasks', columns: {} })),
+    ).toThrow()
+  })
+
+  it('creates every column of a template definition', () => {
+    const ws = freshWorkspace()
+    const project = TABLE_TEMPLATES.find(t => t.id === 'project')!
+    ws.createTable(JSON.stringify(buildTableDefinition('proj', 'Project tracker', project)))
+    const schema = JSON.parse(ws.getTableSchema('proj'))
+    expect(Object.keys(schema.columns).sort()).toEqual(
+      ['assignee', 'due_date', 'priority', 'status', 'title'].sort(),
+    )
+    expect(schema.columns.status.column_type).toBe('select')
+    expect(schema.columns.status.options).toContain('In Progress')
   })
 })
 
