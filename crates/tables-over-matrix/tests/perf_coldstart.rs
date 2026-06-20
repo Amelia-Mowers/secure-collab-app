@@ -58,7 +58,10 @@ fn perf_coldstart_scaling() {
     // Cold start pays for *events scanned*, so this shows why the lookback must
     // be bounded by bumping (the engine still resolves to the live cell count).
     println!("\ncold-start with churn (5,000 cells, each rewritten N times):");
-    println!("  {:>6}  {:>10}  {:>10}  {:>10}", "rewrites", "events", "time", "cells");
+    println!(
+        "  {:>6}  {:>10}  {:>10}  {:>10}",
+        "rewrites", "events", "time", "cells"
+    );
     for &k in &[1usize, 5, 10, 20] {
         let base = 5_000usize;
         let mut events = Vec::with_capacity(base * k);
