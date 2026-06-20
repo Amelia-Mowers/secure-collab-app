@@ -107,6 +107,45 @@ describe('User story: table lifecycle', () => {
     expect(schema.columns.status.column_type).toBe('select')
     expect(schema.columns.status.options).toContain('In Progress')
   })
+
+  it('re-adding a column with a deleted id reactivates it', () => {
+    const ws = freshWorkspace()
+    ws.createTable(TASKS_DEF)
+    // Delete a column → gone from live schema, reported deleted.
+    ws.deleteColumn('tasks', 'assignee')
+    let schema = JSON.parse(ws.getTableSchema('tasks'))
+    expect(schema.columns.assignee).toBeUndefined()
+    expect(schema.deleted_columns).toContain('assignee')
+    // Re-add the same id → it comes back (not stuck behind the decay tombstone).
+    ws.addColumn('tasks', JSON.stringify({
+      id: 'assignee', name: 'Assignee', column_type: 'text', required: false,
+    }))
+    schema = JSON.parse(ws.getTableSchema('tasks'))
+    expect(schema.columns.assignee).toBeDefined()
+    expect(schema.deleted_columns ?? []).not.toContain('assignee')
+  })
+
+  it('a re-created column does not resurrect values from before its deletion', () => {
+    const ws = freshWorkspace()
+    ws.createTable(TASKS_DEF)
+    ws.updateCell('tasks', 'r1', 'assignee', '"Alice"')
+    const before = JSON.parse(ws.getTableRows('tasks')).find((r: any) => r._row_id === 'r1')
+    expect(before.assignee).toBe('Alice')
+
+    ws.deleteColumn('tasks', 'assignee')
+    ws.addColumn('tasks', JSON.stringify({
+      id: 'assignee', name: 'Assignee', column_type: 'text', required: false,
+    }))
+
+    // Old value is gone (filtered by the column's deletion cutoff).
+    let r1 = JSON.parse(ws.getTableRows('tasks')).find((r: any) => r._row_id === 'r1')
+    expect(r1?.assignee).toBeUndefined()
+
+    // A value written after re-creation shows up.
+    ws.updateCell('tasks', 'r1', 'assignee', '"Bob"')
+    r1 = JSON.parse(ws.getTableRows('tasks')).find((r: any) => r._row_id === 'r1')
+    expect(r1.assignee).toBe('Bob')
+  })
 })
 
 // ──────────────────────────────────────────────────────────────────────────────

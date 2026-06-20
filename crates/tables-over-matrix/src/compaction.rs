@@ -22,6 +22,19 @@ impl CompactionManager {
         table.get_stalest_cell()
     }
 
+    /// Like [`select_bump_candidate`](Self::select_bump_candidate), but skips
+    /// cells that should decay rather than be kept alive — data cells of deleted
+    /// rows and cells at/before a column's deletion cutoff. The connected write
+    /// path uses this so a bump never refreshes (and thereby resurrects) deleted
+    /// data. `cutoffs` maps `column_id -> deleted_at`.
+    pub fn select_bump_candidate_excluding(
+        &self,
+        table: &Table,
+        cutoffs: &std::collections::HashMap<String, u64>,
+    ) -> Option<CellId> {
+        table.get_stalest_bumpable_cell(cutoffs)
+    }
+
     /// Create a bump update for a given cell.
     /// A bump is just a regular cell update with the current value and a new timestamp.
     pub fn create_bump_update(

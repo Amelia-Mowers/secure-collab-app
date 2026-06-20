@@ -125,12 +125,29 @@ impl Table {
     /// Get a complete row as a map of column_id -> value. Reserved fields
     /// (`_deleted`, `_order`) are control metadata and are excluded.
     pub fn get_row(&self, row_id: &str) -> IndexMap<String, serde_json::Value> {
+        self.get_row_excluding_stale(row_id, &HashMap::new())
+    }
+
+    /// Like [`get_row`](Self::get_row), but also drops any cell for a column
+    /// listed in `cutoffs` whose timestamp is at or before that column's cutoff.
+    /// Used to hide values that predate a column's deletion when the column is
+    /// later re-created (the column starts blank rather than resurrecting old
+    /// data — the data cells aren't tombstoned under the decay model, so they're
+    /// filtered at read time instead).
+    fn get_row_excluding_stale(
+        &self,
+        row_id: &str,
+        cutoffs: &HashMap<String, u64>,
+    ) -> IndexMap<String, serde_json::Value> {
         let mut row = IndexMap::new();
         for column_id in &self.columns {
             if is_reserved_column(column_id) {
                 continue;
             }
             if let Some(cell) = self.get_cell(row_id, column_id) {
+                if cutoffs.get(column_id).is_some_and(|&c| cell.timestamp <= c) {
+                    continue; // stale: written at/before the column was deleted
+                }
                 row.insert(column_id.clone(), cell.value.clone());
             }
         }
@@ -142,6 +159,17 @@ impl Table {
     /// key ([`ROW_ORDER_COLUMN`]): rows with a key first (in key order, ties by
     /// id), then unkeyed rows by id.
     pub fn get_all_rows(&self) -> Vec<IndexMap<String, serde_json::Value>> {
+        self.get_all_rows_excluding_stale(&HashMap::new())
+    }
+
+    /// Like [`get_all_rows`](Self::get_all_rows), but drops cells that predate a
+    /// column's deletion cutoff (see [`get_row_excluding_stale`]). `cutoffs` maps
+    /// `column_id -> deleted_at` for columns that were deleted (and possibly
+    /// re-created); columns absent from the map are unfiltered.
+    pub fn get_all_rows_excluding_stale(
+        &self,
+        cutoffs: &HashMap<String, u64>,
+    ) -> Vec<IndexMap<String, serde_json::Value>> {
         let mut ids: Vec<String> = self
             .rows()
             .into_iter()
@@ -155,7 +183,7 @@ impl Table {
         });
         ids.into_iter()
             .map(|row_id| {
-                let mut row = self.get_row(&row_id);
+                let mut row = self.get_row_excluding_stale(&row_id, cutoffs);
                 row.insert("_row_id".to_string(), serde_json::json!(row_id));
                 row
             })
@@ -196,6 +224,34 @@ impl Table {
     pub fn get_stalest_cell(&self) -> Option<CellId> {
         self.cell_ages
             .iter()
+            .min_by_key(|(_, &timestamp)| timestamp)
+            .map(|((row_id, column_id), _)| CellId::new(&self.id, row_id, column_id))
+    }
+
+    /// The stalest cell that should still be kept alive by bumping — i.e.
+    /// excluding cells that are meant to decay. Without this, the bump (which
+    /// picks the *stalest* cell) would refresh exactly the dead pre-deletion
+    /// cells, defeating the decay model and the deletion cutoff (it would push a
+    /// deleted column's old value past its `deleted_at`, resurrecting it if the
+    /// column is re-created).
+    ///
+    /// Excluded: a deleted row's data cells (its [`ROW_DELETED_COLUMN`] tombstone
+    /// stays eligible, so cold start still learns of the deletion), and any cell
+    /// at or before a column's `cutoffs` deletion timestamp.
+    pub fn get_stalest_bumpable_cell(&self, cutoffs: &HashMap<String, u64>) -> Option<CellId> {
+        self.cell_ages
+            .iter()
+            .filter(|((row_id, column_id), &ts)| {
+                // Keep a deleted row's tombstone bumpable; drop its data cells.
+                if column_id != ROW_DELETED_COLUMN && self.is_row_deleted(row_id) {
+                    return false;
+                }
+                // Drop cells at/before a column's deletion cutoff.
+                match cutoffs.get(column_id.as_str()) {
+                    Some(&cutoff) => ts > cutoff,
+                    None => true,
+                }
+            })
             .min_by_key(|(_, &timestamp)| timestamp)
             .map(|((row_id, column_id), _)| CellId::new(&self.id, row_id, column_id))
     }
@@ -453,6 +509,62 @@ mod tests {
         table.apply_update(CellUpdate::new("t", "b", "x", json!(1), 1));
         table.apply_update(CellUpdate::new("t", "a", "x", json!(1), 1));
         assert_eq!(row_ids(&table), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_get_all_rows_excludes_cells_at_or_before_cutoff() {
+        let mut table = Table::new("t");
+        // Two cells in the same column, one before and one after the cutoff.
+        table.apply_update(CellUpdate::new("t", "r1", "col", json!("old"), 100));
+        table.apply_update(CellUpdate::new("t", "r2", "col", json!("new"), 300));
+        // A cell in an UNlisted column is never filtered.
+        table.apply_update(CellUpdate::new("t", "r1", "other", json!("keep"), 100));
+
+        let mut cutoffs = std::collections::HashMap::new();
+        cutoffs.insert("col".to_string(), 200u64);
+        let rows = table.get_all_rows_excluding_stale(&cutoffs);
+
+        let r1 = rows.iter().find(|r| r["_row_id"] == json!("r1")).unwrap();
+        let r2 = rows.iter().find(|r| r["_row_id"] == json!("r2")).unwrap();
+        // r1.col (ts 100 ≤ 200) is filtered out; r2.col (ts 300 > 200) stays.
+        assert!(r1.get("col").is_none());
+        assert_eq!(r2.get("col"), Some(&json!("new")));
+        // The unlisted column is untouched.
+        assert_eq!(r1.get("other"), Some(&json!("keep")));
+
+        // With no cutoffs, get_all_rows returns everything.
+        let all = table.get_all_rows();
+        let r1_all = all.iter().find(|r| r["_row_id"] == json!("r1")).unwrap();
+        assert_eq!(r1_all.get("col"), Some(&json!("old")));
+    }
+
+    #[test]
+    fn test_get_stalest_bumpable_cell_skips_dead_cells() {
+        let mut table = Table::new("t");
+        // Past a column cutoff (staler than the live cell).
+        table.apply_update(CellUpdate::new("t", "r1", "dead", json!("x"), 10));
+        table.apply_update(CellUpdate::new("t", "r1", "live", json!("y"), 20));
+        // A deleted row whose data cell is the stalest of all (ts 5).
+        table.apply_update(CellUpdate::new("t", "gone", "title", json!("z"), 5));
+        table.apply_update(CellUpdate::new(
+            "t",
+            "gone",
+            ROW_DELETED_COLUMN,
+            json!(true),
+            30,
+        ));
+
+        let mut cutoffs = std::collections::HashMap::new();
+        cutoffs.insert("dead".to_string(), 15u64);
+
+        // Plain stalest is the deleted row's data cell (ts 5).
+        assert_eq!(table.get_stalest_cell().unwrap().row_id, "gone");
+
+        // Bumpable stalest skips the deleted row's data cell and the past-cutoff
+        // 'dead' cell; the next live cell is r1/live (ts 20). The tombstone
+        // (_deleted, ts 30) stays eligible but is newer.
+        let c = table.get_stalest_bumpable_cell(&cutoffs).unwrap();
+        assert_eq!((c.row_id.as_str(), c.column_id.as_str()), ("r1", "live"));
     }
 
     #[test]
