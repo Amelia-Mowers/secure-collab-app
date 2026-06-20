@@ -21,6 +21,7 @@ const USER = process.env.PROD_USER
 const PASSWORD = process.env.PROD_PASSWORD
 const RECOVERY = process.env.PROD_RECOVERY_KEY
 const RELOADS = Number(process.env.PERF_RELOADS ?? 3)
+const WORKSPACE_NAME = process.env.PERF_WORKSPACE_NAME ?? 'testworkspace'
 if (!USER || !PASSWORD || !RECOVERY) {
   console.error('PROD_USER / PROD_PASSWORD / PROD_RECOVERY_KEY required')
   process.exit(2)
@@ -31,11 +32,13 @@ const context = await browser.newContext()
 const page = await context.newPage()
 const step = (m) => console.log(`==> ${m}`)
 
-// Capture cold-start markers with arrival timestamps.
+// Capture cold-start markers with arrival timestamps; remember the opened room.
 const marks = []
+let openedRoom = null
 page.on('console', (msg) => {
   const t = msg.text()
-  if (t.includes('Creating connected workspace for room:')) marks.push({ kind: 'start', t: Date.now() })
+  const m = t.match(/Creating connected workspace for room:\s*(\S+)/)
+  if (m) { openedRoom = m[1]; marks.push({ kind: 'start', t: Date.now() }) }
   else if (t.includes('Connected workspace initialized with sync')) marks.push({ kind: 'done', t: Date.now() })
 })
 function pairDurations() {
@@ -74,10 +77,10 @@ try {
   await page.locator('.verify__overlay').waitFor({ state: 'detached', timeout: 180_000 })
   await page.getByRole('heading', { name: 'Workspaces' }).waitFor({ timeout: 30_000 })
 
-  step('opening the workspace (triggers cold start: fetch + decrypt + materialize)')
-  // The real workspace cards are div.workspace-card[role="button"] (the
-  // "new workspace" tile shares the class but has no role).
-  await page.locator('.workspace-card[role="button"]').first().click({ timeout: 30_000 })
+  step(`opening workspace "${WORKSPACE_NAME}" (cold start: fetch + decrypt + materialize)`)
+  // Target the named workspace card (an account may have several).
+  await page.locator('.workspace-card', { has: page.locator('.workspace-card__name', { hasText: WORKSPACE_NAME }) })
+    .first().click({ timeout: 30_000 })
   await page.waitForURL(/\/workspace\//, { timeout: 30_000 }).catch(() => {})
 
   // Wait for the first cold-start pair, then reload to get warm-store numbers.
@@ -90,14 +93,13 @@ try {
   }
 
   const durations = pairDurations()
-  // Best-effort room event count via the access token (read-only).
-  const meta = await page.evaluate(async () => {
+  // Event count of the room we actually opened (from the cold-start marker),
+  // via the access token (read-only).
+  const meta = await page.evaluate(async (room) => {
     try {
       const acct = JSON.parse(localStorage.getItem('collab:accounts'))[0]
       const hs = acct.homeserverUrl.replace(/\/$/, '')
       const token = JSON.parse(acct.matrixSessionData).accessToken
-      const wss = JSON.parse(localStorage.getItem('collab:workspaces') || localStorage.getItem(`collab:workspaces:${acct.userId}`) || '[]')
-      const room = wss[0]?.id || wss[0]?.roomId
       if (!room) return { room: null }
       let from = '', events = 0, pages = 0
       for (;;) {
@@ -111,7 +113,7 @@ try {
       }
       return { room, events, pages }
     } catch (e) { return { error: String(e) } }
-  })
+  }, openedRoom)
 
   console.log('\n=== PROD COLD-START RESULTS ===')
   console.log(JSON.stringify({
