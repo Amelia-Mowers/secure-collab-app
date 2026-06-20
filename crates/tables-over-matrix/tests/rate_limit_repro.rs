@@ -79,8 +79,11 @@ async fn repro_template_create_burst_throttled_by_prod_rate_limits() {
     // proof of throttling (and keeps this out of the ~120s full-burst territory
     // in CI).
     let started = Instant::now();
-    let result =
-        tokio::time::timeout(Duration::from_secs(25), clients[0].send_cell_updates(&updates)).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(25),
+        clients[0].send_cell_updates(&updates),
+    )
+    .await;
     let elapsed = started.elapsed();
 
     match &result {
