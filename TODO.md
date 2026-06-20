@@ -333,6 +333,22 @@ work (templates #51, row-reorder #52, shadow row #43) — prioritize these.
   (batched `messages`) rather than per-message requests. (Verify: the bridge
   already uses backward `MessagesOptions` — confirm it's not degenerating to
   one-event fetches.)
+- [ ] **Capacity / load-testing scripts against prod** — scripted perf tests that
+  push the live stack (droplet Synapse + MAS + managed Postgres, see
+  [[tidework-production-ops]]) until performance degrades, so we know our
+  headroom. Measure where each dimension starts to hurt and what the limiter is
+  (homeserver rate limit vs CPU/RAM vs Postgres vs client cold-start):
+  - cells/events per workspace (cold-start materialization time + memory as the
+    timeline grows — the bump mechanism is supposed to bound the lookback);
+  - tables/columns/rows per workspace, and rows in one table (grid/virtualization);
+  - concurrent collaborators in a room (sync fan-out, Megolm key sharing);
+  - sustained + burst write throughput per client (now that multi-cell ops
+    batch — see [[rate-limit-divergence-conduit-synapse]] — re-measure the real
+    ceiling under prod `rc_message` defaults);
+  - number of workspaces/rooms per user and total per homeserver.
+  Run against a throwaway/dedicated prod-like environment (not the live tenant
+  data); capture baseline numbers + the degradation knee for each. Reuse the
+  prod-rate-limit harness pattern where it fits.
 
 ### Cells / editors
 - [ ] **Truncate document cell display to cell size** — long Markdown content
