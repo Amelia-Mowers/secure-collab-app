@@ -300,6 +300,98 @@ Independent of A–F (client-only — can ship before any infra exists):
 
 ---
 
+## FE — UX & feature backlog (2026-06-19 review)
+
+Captured from a product walk-through. 🐞 = regression/bug in recently-shipped
+work (templates #51, row-reorder #52, shadow row #43) — prioritize these.
+
+### Views
+- [ ] **Edit view settings any time** — let a view's settings (kanban group-by,
+  etc.) be re-opened and changed after creation, not only at creation.
+- [ ] **Force re-edit when view settings go invalid** — if a view's settings are
+  no longer valid (e.g. kanban grouped by a now-deleted column), push the view-
+  settings menu open and require a valid re-edit before showing the board.
+  (Builds on the existing kanban "reconfigure" banner — make it modal/required.)
+- [ ] **Restrict kanban regroup to Select columns** — the group-by picker should
+  only offer select-type columns (grouping by free text/number is ill-defined).
+
+### Security / onboarding
+- [ ] **Confirm before leaving the master-key dialog** — require an explicit
+  confirmation when dismissing the recovery/master-key screen (easy to skip and
+  lose access).
+- [ ] **Reduce/remove the master-key requirement** — investigate tying key
+  access to MAS or another identity provider, or a password-derived crypto key.
+  Concern: a password-based key is rough for users without a password manager.
+  (Relates to the P1 SSSS security-phrase + WebAuthn-PRF items above — fold in.)
+
+### History / performance
+- [ ] **Incremental history, not full re-gather** — fill history from the local
+  (persisted) store and apply only new updates on load, instead of re-gathering
+  all history every time. Show a spinner with a "loading history…" message while
+  gathering.
+- [ ] **Paginate history fetches** — ensure cold-start fetches history by pages
+  (batched `messages`) rather than per-message requests. (Verify: the bridge
+  already uses backward `MessagesOptions` — confirm it's not degenerating to
+  one-event fetches.)
+
+### Cells / editors
+- [ ] **Truncate document cell display to cell size** — long Markdown content
+  should clip to the cell, not overflow.
+- [ ] 🐞 **Shadow/new-entry document cell uses the inline editor, not the popover**
+  — editing a `document` cell on the shadow/quick-add row distends the cell
+  instead of opening the popover (the popover wiring from #46 isn't applied to
+  the shadow row's `CellEditor`).
+- [ ] **Multi-select support + modify parity** — support multi-select editing and
+  make all creation-time settings modifiable for the relevant column types.
+
+### References / members
+- [ ] **Reference-to-entry values** — a column whose value references another
+  entry (single or multiple) in the same or a different table (e.g. assign a work
+  item to a row in a People table). (`reference` type exists; flesh out the multi
+  variant + cross-table UX.)
+- [ ] **Member / members value** — a column referencing a workspace member (or
+  members) with selection semantics (pick from the room's member list).
+
+### Columns
+- [ ] 🐞 **Re-creating a deleted column's name is a no-op** — adding a column with
+  the same name/id as a previously-deleted column does nothing (the decay-model
+  `deleted=true` marker on that schema row still wins). Need to clear the
+  tombstone / re-activate on re-create.
+- [ ] **Select default should initialize existing entries** — setting a default on
+  a (new or existing) select column should apply it as the value of existing
+  entries that have none. Avoid flooding with one message per row: consider
+  treating an undefined value as the default at read time (so no writes), with a
+  one-time mass-init when the default *changes* (for coherency) — which bounds
+  the problem.
+
+### Templates / table creation
+- [ ] 🐞 **"Failed to create table: undefined" — but the table is still created**
+  — template creation throws yet partially succeeds. Likely the root cause of the
+  next two bugs.
+- [ ] 🐞 **Template columns don't persist** — a bunch of template columns are
+  missing after creation; almost certainly downstream of the creation error above.
+- [ ] 🐞 **Same-name template merges into the existing table** — creating a
+  template table with a name that matches an existing table adds the template's
+  fields to that table instead of erroring / creating a distinct table.
+
+### Onboarding / quick-add
+- [ ] **Drop "Add your first entry" CTA** — for an empty table just show the
+  shadow quick-add row so the first entry is added inline.
+- [ ] **Demo workspace button** — on the Workspaces page, a button that creates a
+  new, fully-populated demo *workspace* (distinct from the local-only `/demo`
+  route item under Hosted offering).
+
+### Row drag
+- [ ] 🐞 **Separate the drag handle from the expand-to-entry button** — the row's
+  drag grabber and the open-full-entry button are currently the same leading-cell
+  control (#52); give them distinct affordances.
+
+### Import / export
+- [ ] **Export / import** — export a table (and "export as CSVs" for a
+  workspace), and import with column-type setting / detection.
+
+---
+
 ## P2 — Housekeeping
 
 - [x] **Separate generated WASM output from hand-written code** — `[§5]` —
