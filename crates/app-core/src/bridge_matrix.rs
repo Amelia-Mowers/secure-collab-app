@@ -1102,6 +1102,12 @@ impl ConnectedWorkspace {
             if let Some(ref token) = from_token {
                 options = options.from(token.as_str());
             }
+            // Fetch large pages so cold start makes ~history/1000 round-trips
+            // instead of ~history/10 (ruma's default limit). The homeserver caps
+            // this to its own max and returns fewer if needed; the loop still
+            // paginates the rest. Sharply cuts the network-round-trip component
+            // of cold start.
+            options.limit = matrix_sdk::ruma::UInt::from(1000u32);
 
             let response = room
                 .messages(options)
