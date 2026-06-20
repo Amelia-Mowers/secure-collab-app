@@ -69,6 +69,9 @@ pub enum Error {
     #[error("Table not found")]
     TableNotFound,
 
+    #[error("A table with that name already exists")]
+    TableAlreadyExists,
+
     #[error("View not found")]
     ViewNotFound,
 

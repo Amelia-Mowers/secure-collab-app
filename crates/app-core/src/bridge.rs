@@ -42,7 +42,12 @@ impl WasmWorkspace {
         let updates = self
             .workspace
             .create_table(definition)
-            .map_err(|_| JsValue::from_str("Failed to create table"))?;
+            .map_err(|e| match e {
+                crate::Error::TableAlreadyExists => {
+                    JsValue::from_str("A table with that name already exists")
+                }
+                _ => JsValue::from_str("Failed to create table"),
+            })?;
 
         let updates_json = serde_json::to_string(&updates)
             .map_err(|_| JsValue::from_str("Serialization failed"))?;

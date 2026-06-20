@@ -310,8 +310,11 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
       notifyWorkspaceChanged(workspaceId)
       navigate(`/workspace/${workspaceId}/table/${tableId}`)
     } catch (err) {
+      // Bridge errors are plain-string JsValues (no `.message`), so don't assume
+      // an Error object — otherwise this showed "...: undefined".
       console.error('Failed to create table:', err)
-      alert('Failed to create table: ' + (err as Error).message)
+      const msg = err instanceof Error ? err.message : String(err)
+      alert('Failed to create table: ' + msg)
     } finally {
       setCreatingTable(false)
     }

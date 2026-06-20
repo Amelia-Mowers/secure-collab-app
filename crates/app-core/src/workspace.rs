@@ -138,6 +138,15 @@ impl Workspace {
     /// Create a new table in the workspace
     pub fn create_table(&mut self, definition: TableDefinition) -> Result<Vec<CellUpdate>> {
         let table_id = definition.id.clone();
+
+        // Reject a name/id that already exists, rather than silently merging the
+        // new definition's columns into the existing table.
+        if self.tables.contains_key(&table_id)
+            || self.schema_manager.get_table_schema(&table_id).is_some()
+        {
+            return Err(crate::Error::TableAlreadyExists);
+        }
+
         let timestamp = self.next_timestamp();
 
         // Create the schema updates - this now applies them internally!
@@ -493,6 +502,24 @@ mod tests {
 
         let tables = workspace.list_tables();
         assert!(tables.contains(&"tasks".to_string()));
+    }
+
+    #[test]
+    fn test_create_table_rejects_duplicate_id() {
+        let mut workspace = Workspace::new("test-workspace");
+        let def = || {
+            TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+                "title",
+                "Title",
+                ColumnType::Text,
+            ))
+        };
+        workspace.create_table(def()).unwrap();
+        // A second table with the same id must be rejected, not merged.
+        assert!(matches!(
+            workspace.create_table(def()),
+            Err(crate::Error::TableAlreadyExists)
+        ));
     }
 
     #[test]
