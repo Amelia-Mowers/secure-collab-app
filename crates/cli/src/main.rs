@@ -51,6 +51,12 @@ enum Command {
         /// (preferred — keeps it out of shell history). Ignored with --sso.
         #[arg(long)]
         password: Option<String>,
+        /// Recovery (master) key, used to verify this device against your secure
+        /// backup. If omitted, read from TIDEWORK_RECOVERY_KEY, else prompted.
+        /// Required — an unverified device can't decrypt your other devices'
+        /// workspaces and won't back up its own.
+        #[arg(long)]
+        recover_key: Option<String>,
     },
     /// Show the currently logged-in user, or report that none is.
     Whoami,
@@ -156,11 +162,12 @@ async fn run() -> Result<()> {
             sso,
             user,
             password,
+            recover_key,
         } => {
             if sso {
-                login_sso(homeserver).await
+                login_sso(homeserver, recover_key).await
             } else {
-                login_password(homeserver, user, password).await
+                login_password(homeserver, user, password, recover_key).await
             }
         }
         Command::Whoami => whoami().await,
@@ -192,6 +199,7 @@ async fn login_password(
     homeserver: String,
     user: Option<String>,
     password: Option<String>,
+    recover_key: Option<String>,
 ) -> Result<()> {
     let user =
         user.ok_or_else(|| anyhow!("--user is required for password login (or use --sso)"))?;
@@ -213,10 +221,10 @@ async fn login_password(
         .await
         .context("login failed")?;
 
-    persist_and_report(&client, &homeserver, &paths, Some(user))
+    finish_login(&client, &homeserver, &paths, Some(user), recover_key).await
 }
 
-async fn login_sso(homeserver: String) -> Result<()> {
+async fn login_sso(homeserver: String, recover_key: Option<String>) -> Result<()> {
     let paths = session::Paths::resolve()?;
     paths.ensure_dirs()?;
 
@@ -237,17 +245,23 @@ async fn login_sso(homeserver: String) -> Result<()> {
         .await
         .context("OAuth login failed")?;
 
-    persist_and_report(&client, &homeserver, &paths, None)
+    finish_login(&client, &homeserver, &paths, None, recover_key).await
 }
 
-/// Save the freshly-authenticated session and print the result. `fallback_user`
-/// is used only if the client can't report its own id yet.
-fn persist_and_report(
+/// Verify the freshly-authenticated device against secure backup, then persist
+/// the session. Recovery is **mandatory** (matching the web app): an unverified
+/// device can't decrypt workspaces created on your other devices and won't back
+/// up the ones it creates, so we don't leave one usable. `fallback_user` is used
+/// only if the client can't report its own id yet.
+async fn finish_login(
     client: &MatrixClient,
     homeserver: &str,
     paths: &session::Paths,
     fallback_user: Option<String>,
+    recover_key: Option<String>,
 ) -> Result<()> {
+    verify_from_backup(client, recover_key).await?;
+
     let blob = client
         .session_json()
         .ok_or_else(|| anyhow!("login succeeded but no session was produced"))?;
@@ -258,8 +272,67 @@ fn persist_and_report(
         .or(fallback_user)
         .unwrap_or_else(|| "<unknown>".to_string());
     println!("Logged in as {who}");
+    println!("Device verified from secure backup — it can now decrypt your workspaces.");
     println!("Session saved to {}", paths.config_dir.display());
     Ok(())
+}
+
+/// Verify the device against secure backup, sourcing the recovery key from the
+/// flag, the TIDEWORK_RECOVERY_KEY env var, or an interactive prompt (in that
+/// order). On a wrong key, re-prompt when attached to a terminal (up to a few
+/// tries); when non-interactive, fail immediately rather than loop on EOF.
+async fn verify_from_backup(client: &MatrixClient, flag: Option<String>) -> Result<()> {
+    use std::io::IsTerminal;
+
+    // The first candidate comes from the flag/env if present; afterwards (and
+    // when neither was given) we prompt.
+    let mut next = flag
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| std::env::var("TIDEWORK_RECOVERY_KEY").ok())
+        .filter(|k| !k.trim().is_empty());
+    let interactive = std::io::stdin().is_terminal();
+
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let candidate = match next.take() {
+            Some(key) => key,
+            None if interactive => prompt_recovery_key()?,
+            None => {
+                return Err(anyhow!(
+                    "no recovery key — pass --recover-key or set TIDEWORK_RECOVERY_KEY"
+                ))
+            }
+        };
+
+        match client.recover_with_key(&candidate).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if !interactive || attempt >= 3 {
+                    return Err(e).context(
+                        "verifying this device from secure backup (check your recovery key)",
+                    );
+                }
+                eprintln!("That recovery key didn't work. Try again.");
+            }
+        }
+    }
+}
+
+/// Prompt for a recovery key on stderr and read one line from stdin.
+fn prompt_recovery_key() -> Result<String> {
+    use std::io::Write;
+    eprint!("Recovery (master) key: ");
+    std::io::stderr().flush().ok();
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .context("reading recovery key")?;
+    let key = line.trim().to_string();
+    if key.is_empty() {
+        return Err(anyhow!("a recovery key is required to verify this device"));
+    }
+    Ok(key)
 }
 
 async fn whoami() -> Result<()> {
