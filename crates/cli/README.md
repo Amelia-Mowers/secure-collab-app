@@ -48,9 +48,33 @@ reachable from the Windows browser via WSL2's localhost forwarding, so `--sso`
 works end to end. If the browser can't be opened automatically, copy the printed
 URL.
 
+### Workspaces, tables, rows
+
+A workspace is an encrypted Matrix room; a `<ws>` argument is either a room id
+(starts with `!`) or a workspace name. A `<table>` is its id or display name.
+
+```sh
+tidework workspace create "Issues"          # create an encrypted workspace
+tidework workspace list                      # NAME + ROOM ID
+
+# Columns are name:type (type ∈ text|number|boolean|date|select|multiselect|json;
+# defaults to text):
+tidework table create "Issues" Bugs --columns title:text,status:select,priority:number
+tidework table list "Issues"
+
+# Cells are column=value (column id or name); the row id is generated + printed:
+tidework row add "Issues" Bugs title="Login fails" status=open priority=1
+tidework table show "Issues" Bugs            # cold-starts the room + renders rows
+```
+
+Read commands cold-start the workspace by replaying the room's history, so they
+reflect everything written by any device. Writes are sent as a single batch
+event (one Matrix event), so a multi-cell write isn't throttled by the
+homeserver's per-message rate limit.
+
 ## Status
 
-Auth is complete: persistent SQLite store, session save/restore, **password**
-login, and **OAuth/MAS** login (validated end-to-end against the production
-homeserver). Still to come: **workspace/table/row/cell CRUD** and a **bench**
-command.
+Auth + core CRUD are complete and validated end-to-end against production:
+persistent SQLite store, session save/restore, **password** + **OAuth/MAS**
+login, **workspace** create/list, **table** create/list/show, and **row** add.
+Still to come: row/column delete + reorder, and a **bench** command.

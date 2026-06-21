@@ -819,7 +819,127 @@ mod matrix_impl {
                 .map_err(|e| anyhow::anyhow!("Failed to finish OAuth login: {e}"))?;
             Ok(())
         }
+
+        /// Create a new encrypted room, tag it as a TideWork workspace, and
+        /// return its room id. Mirrors the WASM bridge's `createRoom`: a private
+        /// E2E-encrypted room carrying the `io.tidework.workspace` marker.
+        pub async fn create_workspace_room(&self, name: &str) -> Result<String> {
+            use matrix_sdk::ruma::api::client::room::create_room::v3::{
+                Request as CreateRoomRequest, RoomPreset,
+            };
+
+            let mut request = CreateRoomRequest::new();
+            request.name = Some(name.to_owned());
+            request.preset = Some(RoomPreset::PrivateChat);
+
+            let room = self
+                .client
+                .create_room(request)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create room: {e}"))?;
+
+            // Encrypt before any workspace data is written.
+            room.enable_encryption()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to enable encryption: {e}"))?;
+
+            room.send_state_event_for_key("", WorkspaceMarkerEventContent { workspace: true })
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to tag room as workspace: {e}"))?;
+
+            Ok(room.room_id().to_string())
+        }
+
+        /// List joined rooms tagged as TideWork workspaces. Requires a prior
+        /// sync so the SDK knows the joined room list. Returns `(room_id, name)`.
+        pub async fn list_workspaces(&self) -> Result<Vec<WorkspaceInfo>> {
+            use matrix_sdk::ruma::events::StateEventType;
+
+            let marker_type = StateEventType::from(WORKSPACE_STATE_TYPE.to_owned());
+            let mut out = Vec::new();
+            for room in self.client.joined_rooms() {
+                let is_workspace = room
+                    .get_state_event(marker_type.clone(), "")
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|raw| {
+                        let json: serde_json::Value = serde_json::to_value(&raw).ok()?;
+                        json.get("content")?.get("workspace")?.as_bool()
+                    })
+                    .unwrap_or(false);
+                if is_workspace {
+                    out.push(WorkspaceInfo {
+                        room_id: room.room_id().to_string(),
+                        name: room.name().unwrap_or_default(),
+                    });
+                }
+            }
+            Ok(out)
+        }
+
+        /// Paginate the current room's history (newest-first) and return every
+        /// cell update found, ready to replay into a `Workspace` via
+        /// `apply_update`. This is the native cold-start: mirrors the WASM
+        /// bridge's `ConnectedWorkspace::create` history replay (large pages to
+        /// minimise round-trips; the SDK decrypts each event in transit).
+        pub async fn load_room_cell_updates(&self) -> Result<Vec<CellUpdate>> {
+            use matrix_sdk::room::MessagesOptions;
+
+            let room = self.get_room()?;
+            let mut updates = Vec::new();
+            let mut from_token: Option<String> = None;
+            loop {
+                let mut options = MessagesOptions::backward();
+                if let Some(ref token) = from_token {
+                    options = options.from(token.as_str());
+                }
+                options.limit = UInt::from(1000u32);
+
+                let response = room
+                    .messages(options)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to fetch room history: {e}"))?;
+                if response.chunk.is_empty() {
+                    break;
+                }
+                for ev in &response.chunk {
+                    if let Ok(json_str) = serde_json::to_string(ev.raw().json()) {
+                        for received in Self::extract_cell_updates(&json_str) {
+                            updates.push(received.into_update());
+                        }
+                    }
+                }
+                match response.end {
+                    Some(token) => from_token = Some(token),
+                    None => break,
+                }
+            }
+            Ok(updates)
+        }
     }
+
+    /// A joined room tagged as a TideWork workspace.
+    #[cfg(feature = "matrix-native")]
+    #[derive(Debug, Clone)]
+    pub struct WorkspaceInfo {
+        pub room_id: String,
+        pub name: String,
+    }
+
+    /// Marks a Matrix room as a TideWork workspace (native send path; the WASM
+    /// bridge defines its own equivalent). The presence of the event is the
+    /// signal — `workspace` is always `true`.
+    #[cfg(feature = "matrix-native")]
+    #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, EventContent)]
+    #[ruma_event(type = "io.tidework.workspace", kind = State, state_key_type = String)]
+    pub struct WorkspaceMarkerEventContent {
+        pub workspace: bool,
+    }
+
+    /// State event type string tagging a room as a TideWork workspace.
+    #[cfg(feature = "matrix-native")]
+    const WORKSPACE_STATE_TYPE: &str = "io.tidework.workspace";
 
     /// Session information for persistence.
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

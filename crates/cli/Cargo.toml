@@ -21,3 +21,4 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 clap = { version = "4.5", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+uuid = { version = "1", features = ["v4"] }
