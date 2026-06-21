@@ -14,6 +14,7 @@ pub use matrix_impl::*;
 mod matrix_impl {
     use crate::cell::{CellUpdate, CELL_UPDATE_VERSION};
     use anyhow::Result;
+    use matrix_sdk::crypto::CollectStrategy;
     use matrix_sdk::encryption::{BackupDownloadStrategy, EncryptionSettings};
     use matrix_sdk::{
         config::SyncSettings,
@@ -316,6 +317,12 @@ mod matrix_impl {
                 // See the `collaborator_history_matrix` test for the full trace.
                 .with_enable_share_history_on_invite(true)
                 .with_encryption_settings(default_encryption_settings())
+                // Share Megolm keys only with devices cross-signed by their
+                // owner's identity (not "all devices"): a device injected by a
+                // malicious homeserver/MAS isn't signed by the user's own
+                // identity, so it receives no future keys — closing the
+                // future-read-via-bump reconstruction. See ADR 0001 addendum.
+                .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
                 .build()
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create Matrix client: {e}"))?;
@@ -618,6 +625,12 @@ mod matrix_impl {
                 .sqlite_store(store_path, None)
                 .with_enable_share_history_on_invite(true)
                 .with_encryption_settings(default_encryption_settings())
+                // Share Megolm keys only with devices cross-signed by their
+                // owner's identity (not "all devices"): a device injected by a
+                // malicious homeserver/MAS isn't signed by the user's own
+                // identity, so it receives no future keys — closing the
+                // future-read-via-bump reconstruction. See ADR 0001 addendum.
+                .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
                 .handle_refresh_tokens()
                 .build()
                 .await
@@ -688,6 +701,12 @@ mod matrix_impl {
                 .sqlite_store(store_path, None)
                 .with_enable_share_history_on_invite(true)
                 .with_encryption_settings(default_encryption_settings())
+                // Share Megolm keys only with devices cross-signed by their
+                // owner's identity (not "all devices"): a device injected by a
+                // malicious homeserver/MAS isn't signed by the user's own
+                // identity, so it receives no future keys — closing the
+                // future-read-via-bump reconstruction. See ADR 0001 addendum.
+                .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
                 .handle_refresh_tokens()
                 .build()
                 .await
