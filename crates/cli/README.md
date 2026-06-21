@@ -33,15 +33,25 @@ across runs without re-verifying the device every time.
 
 ## Commands
 
+Login **always verifies the device** against your secure backup using your
+recovery (master) key — the same step the web app's "verify this device" gate
+performs. This is mandatory: an unverified device can't decrypt workspaces
+created on your other devices, and won't back up the ones it creates (so they'd
+be invisible elsewhere). Provide the key with `--recover-key`, the
+`TIDEWORK_RECOVERY_KEY` env var (preferred — keeps it out of shell history), or
+the interactive prompt.
+
 ```sh
 # OAuth / MAS login (browser sign-in) — required for the production homeserver,
 # which has password login disabled. Opens your browser; the CLI listens on a
-# loopback port for the redirect and finishes automatically:
-tidework login --sso --homeserver https://matrix.tidework.io
+# loopback port for the redirect and finishes automatically. Then it verifies
+# the device from backup (prompts for the recovery key if not in the env):
+TIDEWORK_RECOVERY_KEY="abcd efgh …" tidework login --sso --homeserver https://matrix.tidework.io
 
-# Password login (standard Matrix auth). Prefer the env var so the password
-# stays out of shell history:
-TIDEWORK_PASSWORD=… tidework login --homeserver https://example.org --user alice
+# Password login (standard Matrix auth). Prefer the env vars so secrets stay out
+# of shell history:
+TIDEWORK_PASSWORD=… TIDEWORK_RECOVERY_KEY="…" \
+  tidework login --homeserver https://example.org --user alice
 
 tidework whoami      # show the logged-in user, or report none
 tidework logout      # forget the session and delete the local crypto store
