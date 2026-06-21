@@ -30,6 +30,11 @@ across runs without re-verifying the device every time.
 ## Commands
 
 ```sh
+# OAuth / MAS login (browser sign-in) — required for the production homeserver,
+# which has password login disabled. Opens your browser; the CLI listens on a
+# loopback port for the redirect and finishes automatically:
+tidework login --sso --homeserver https://matrix.tidework.io
+
 # Password login (standard Matrix auth). Prefer the env var so the password
 # stays out of shell history:
 TIDEWORK_PASSWORD=… tidework login --homeserver https://example.org --user alice
@@ -38,9 +43,14 @@ tidework whoami      # show the logged-in user, or report none
 tidework logout      # forget the session and delete the local crypto store
 ```
 
+When run inside WSL, the loopback redirect (`http://127.0.0.1:<port>/…`) is
+reachable from the Windows browser via WSL2's localhost forwarding, so `--sso`
+works end to end. If the browser can't be opened automatically, copy the printed
+URL.
+
 ## Status
 
-Phase 1 (this): foundation — persistent store, session save/restore, and
-password login. **MAS/OAuth login** (required for the production homeserver,
-which has password login disabled) and **workspace/table/row/cell CRUD** land in
-follow-up phases.
+Auth is complete: persistent SQLite store, session save/restore, **password**
+login, and **OAuth/MAS** login (validated end-to-end against the production
+homeserver). Still to come: **workspace/table/row/cell CRUD** and a **bench**
+command.
