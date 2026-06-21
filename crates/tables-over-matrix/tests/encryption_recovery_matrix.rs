@@ -104,3 +104,69 @@ async fn test_backup_exists_after_enabling_recovery() {
         "a key backup should be enabled after enabling recovery"
     );
 }
+
+/// Passkey / WebAuthn-PRF custody foundation (ADR 0001 addendum, phase 1):
+/// enabling recovery with a **passphrase** — the role the PRF-derived secret
+/// plays — produces a Secure Backup that a SECOND device unlocks with the *same
+/// passphrase*, decrypting history it never had live keys for. No random
+/// recovery key is typed; the returned key is only a break-glass fallback. Same
+/// shape as the recovery-key test above, but keyed by a passphrase end to end.
+#[tokio::test]
+#[ignore]
+async fn test_second_device_recovers_with_passphrase() {
+    let harness = TestHarness::new().await.unwrap();
+
+    // Device 1: encrypted room + a cell.
+    let mut alice1 = harness.register_user("alice").await.unwrap();
+    let room_id = harness
+        .create_encrypted_room(&alice1, "workspace")
+        .await
+        .unwrap();
+    alice1.sync_once().await.unwrap();
+    alice1.set_room_from_str(&room_id).unwrap();
+
+    let update = CellUpdate::new("tasks", "t1", "title", json!("Passkey secret"), 100);
+    alice1.send_cell_update(&update).await.unwrap();
+    harness.wait_for_sync().await;
+
+    // Enable recovery keyed by a passphrase (stands in for the PRF output —
+    // deliberately not the login password). A break-glass recovery key is still
+    // returned.
+    let passphrase = "prf-derived-secret-9f3a-not-the-login-password";
+    let recovery_key = alice1
+        .enable_recovery_with_passphrase(passphrase)
+        .await
+        .unwrap();
+    assert!(
+        !recovery_key.is_empty(),
+        "a break-glass recovery key is still returned"
+    );
+
+    // Device 2: a fresh login of the SAME user unlocks with the *passphrase*
+    // (not the recovery key), then syncs so the SDK downloads room keys.
+    let mut alice2 = harness.login_existing("alice").await.unwrap();
+    alice2.sync_once().await.unwrap();
+    alice2.recover_with_key(passphrase).await.unwrap();
+    alice2.sync_once().await.unwrap();
+    harness.wait_for_sync().await;
+    alice2.set_room_from_str(&room_id).unwrap();
+
+    let room = alice2.get_room().unwrap();
+    let response = room
+        .messages(matrix_sdk::room::MessagesOptions::backward())
+        .await
+        .unwrap();
+    let mut table = Table::new("tasks");
+    for event in &response.chunk {
+        if let Ok(json_str) = serde_json::to_string(event.raw().json()) {
+            if let Some(rx) = MatrixClient::extract_cell_update(&json_str) {
+                table.apply_update(rx.into_update());
+            }
+        }
+    }
+    assert_eq!(
+        table.get_value("t1", "title"),
+        Some(&json!("Passkey secret")),
+        "second device should decrypt history after unlocking backup with the passphrase"
+    );
+}

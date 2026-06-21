@@ -46,8 +46,9 @@ pub use table::{Table, ROW_DELETED_COLUMN, ROW_ORDER_COLUMN};
 // Re-export Matrix types only when the matrix feature is enabled
 #[cfg(feature = "matrix")]
 pub use matrix::{
-    default_encryption_settings, enable_recovery, CellBatchEventContent, CellUpdateEventContent,
-    MatrixClient, ReceivedCellUpdate, SessionInfo, CELL_BATCH_EVENT_TYPE, CELL_UPDATE_EVENT_TYPE,
+    default_encryption_settings, enable_recovery, enable_recovery_with_passphrase,
+    CellBatchEventContent, CellUpdateEventContent, MatrixClient, ReceivedCellUpdate, SessionInfo,
+    CELL_BATCH_EVENT_TYPE, CELL_UPDATE_EVENT_TYPE,
 };
 
 /// Error types for the library.

@@ -310,8 +310,26 @@ impl MatrixSession {
             .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
-    /// Restore secrets from Secure Backup using a saved recovery key so this
-    /// (returning) device can decrypt history sent before it existed.
+    /// Enable Secure Backup + Recovery keyed by a **passphrase** instead of a
+    /// random recovery key — the basis for passkey / WebAuthn-PRF custody: the
+    /// JS side derives a stable secret from the passkey's PRF output and passes
+    /// it here. The returned recovery key still works as a break-glass fallback;
+    /// a later device unlocks by passing the **same passphrase** to
+    /// `recoverWithKey` (which accepts a passphrase or a recovery key).
+    #[wasm_bindgen(js_name = enableRecoveryWithPassphrase)]
+    pub async fn enable_recovery_with_passphrase(
+        &self,
+        passphrase: String,
+    ) -> Result<String, JsValue> {
+        tables_over_matrix::enable_recovery_with_passphrase(&self.client, &passphrase)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Restore secrets from Secure Backup so this (returning) device can decrypt
+    /// history sent before it existed. `recovery_key` may be a Base58 recovery
+    /// key **or a passphrase** (e.g. a passkey-PRF-derived secret) — the SDK
+    /// accepts both.
     #[wasm_bindgen(js_name = recoverWithKey)]
     pub async fn recover_with_key(&self, recovery_key: String) -> Result<(), JsValue> {
         self.client
