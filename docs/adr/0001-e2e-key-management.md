@@ -359,9 +359,48 @@ access). This is an auth-side item; see ADR 0002.
    "Memorable new-device verification (SSSS phrase + passkey)" and
    "Reduce/remove the master-key requirement."
 3. **Decision 3** — MAS federate-only (auth-side; ADR 0002).
+4. **CLI / headless access** under passkey custody — **phase 5**, see below.
 
-Caveats to verify before building: whether matrix-rust-sdk's recovery API ingests
-an SSSS *passphrase* directly (vs only the recovery key), and that
-`only_allow_trusted_devices` behaves as expected for own-account device injection
-(it should: an injected device isn't cross-signed by the client-held master key).
-WebAuthn-PRF wrapping is app-layer work the SDK won't do for you.
+### CLI / headless access under passkey custody (phase 5)
+
+Once the default flow custodies via passkey/PRF and never shows a recovery key, a
+headless client (the `tidework` CLI) has no recovery key to type. First, what is
+and isn't in memory: a recovered session holds the **cross-signing private keys +
+backup key** (the secrets), but **not** the recovery key itself — `enable()`
+returns it once and never stores it, and it can't be re-derived from the secrets.
+So an account view can only **reset** to a fresh recovery key, not reveal the
+existing one — and it should surface the **recovery key / passphrase** grain,
+never the raw cross-signing private keys (exporting those is a footgun).
+
+Three ways a headless client gets access, best last:
+
+1. **Break-glass recovery key.** Paste the recovery key kept under Decision 2
+   into the CLI (`TIDEWORK_RECOVERY_KEY`). Works today, but it's a long-lived
+   copyable secret — the babysitting we're removing.
+2. **Device verification / secret gossip** (most Matrix-native). The CLI logs in,
+   creates a device, and requests self-verification; the running trusted web
+   session approves it (SAS) and Matrix gossips the secrets to the CLI over
+   encrypted to-device messages. *Nothing transits anywhere* — not even
+   localhost. Needs an interactive SAS step (terminal emoji or QR); the bridge
+   already has the SAS plumbing.
+3. **CLI opens a browser to run the passkey PRF (recommended default).** Reuse
+   the OAuth loopback the CLI already does: bind `127.0.0.1`, open a tiny page
+   that calls `navigator.credentials.get` with the PRF extension (the user's
+   passkey, biometric tap), derive the same SSSS passphrase, and post it back to
+   the loopback; the CLI then `recover_with_key(passphrase)`. The passkey unlocks
+   the CLI too — no recovery key shown or copied, and the secret only crosses
+   localhost (the never-transit invariant holds). Reuses both pieces already
+   built: the OAuth loopback flow and passphrase recovery (phase 1).
+
+Recommendation: ship **(3)** as the CLI default (it composes with passkey/PRF and
+mirrors the existing OAuth login), keep **(2)** as the no-browser fallback, and
+**(1)** as break-glass. Tracked: "CLI access under passkey custody" in the
+TideWork PM backlog.
+
+**Caveats / status.** Two of the original caveats are now resolved: matrix-rust-sdk's
+recovery API **does** ingest an SSSS passphrase directly (`open_secret_store`
+accepts a passphrase or a Base58 key — wired in phase 1), and the chosen
+`CollectStrategy::IdentityBasedStrategy` behaves as expected for own-account
+device injection (the full integration suite passes; a device not cross-signed by
+its owner's identity receives no keys). Remaining app-layer work the SDK won't do
+for you: the **WebAuthn-PRF wrapping** itself (phase 2).
