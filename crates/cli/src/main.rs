@@ -94,8 +94,8 @@ enum WorkspaceCmd {
 
 #[derive(Subcommand)]
 enum TableCmd {
-    /// Create a table. Columns are `name:type` (type defaults to `text`;
-    /// one of text|number|boolean|date|select|multiselect|json).
+    /// Create a table. Columns are `name:type` (type defaults to `text`; one of
+    /// text|number|boolean|date|select|multiselect|document|json).
     Create {
         /// Workspace (room id or name).
         workspace: String,
