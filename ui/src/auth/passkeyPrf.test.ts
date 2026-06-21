@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
-import { isPasskeyPrfSupported, registerPasskeyPrf, unlockPasskeyPrf } from './passkeyPrf'
+import {
+  hasPlatformAuthenticator,
+  isPasskeyPrfSupported,
+  registerPasskeyPrf,
+  unlockPasskeyPrf,
+} from './passkeyPrf'
 
 /** A fake PublicKeyCredential carrying given extension results. */
 function fakeCred(prf: unknown, rawId = new Uint8Array([9, 9, 9]).buffer) {
@@ -40,6 +45,30 @@ describe('passkeyPrf', () => {
     })
     it('is true when WebAuthn is present', () => {
       expect(isPasskeyPrfSupported()).toBe(true)
+    })
+  })
+
+  describe('hasPlatformAuthenticator', () => {
+    function setUvpaa(impl: () => Promise<boolean>) {
+      const pkc = window.PublicKeyCredential as any
+      pkc.isUserVerifyingPlatformAuthenticatorAvailable = vi.fn(impl)
+    }
+
+    it('is false when WebAuthn is unsupported (headless without it)', async () => {
+      delete (window as { PublicKeyCredential?: unknown }).PublicKeyCredential
+      await expect(hasPlatformAuthenticator()).resolves.toBe(false)
+    })
+    it('is true when a platform authenticator is available', async () => {
+      setUvpaa(() => Promise.resolve(true))
+      await expect(hasPlatformAuthenticator()).resolves.toBe(true)
+    })
+    it('is false when no platform authenticator (e.g. headless without one)', async () => {
+      setUvpaa(() => Promise.resolve(false))
+      await expect(hasPlatformAuthenticator()).resolves.toBe(false)
+    })
+    it('is false (not throwing) when the check errors', async () => {
+      setUvpaa(() => Promise.reject(new Error('boom')))
+      await expect(hasPlatformAuthenticator()).resolves.toBe(false)
     })
   })
 

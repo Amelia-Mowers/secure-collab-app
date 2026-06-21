@@ -22,6 +22,10 @@ export function VerifyDeviceScreen() {
     submitRecoveryKey,
     dismissRecoveryPrompt,
     retryRecoverySetup,
+    passkeyAvailable,
+    setupPasskeyRecovery,
+    setupKeyRecovery,
+    unlockWithPasskey,
     signOut,
     verification,
     startVerification,
@@ -42,12 +46,31 @@ export function VerifyDeviceScreen() {
     )
   }
 
+  if (recoveryPrompt?.kind === 'setup') {
+    return (
+      <ChooseRecoveryMethod onPasskey={setupPasskeyRecovery} onRecoveryKey={setupKeyRecovery} />
+    )
+  }
+
   if (recoveryPrompt?.kind === 'save') {
-    return <SaveRecoveryKey recoveryKey={recoveryPrompt.recoveryKey} onDone={dismissRecoveryPrompt} />
+    return (
+      <SaveRecoveryKey
+        recoveryKey={recoveryPrompt.recoveryKey}
+        viaPasskey={recoveryPrompt.viaPasskey}
+        onDone={dismissRecoveryPrompt}
+      />
+    )
   }
 
   if (recoveryPrompt?.kind === 'verify') {
-    return <VerifyThisDevice onVerify={startVerification} onMasterKey={submitRecoveryKey} />
+    return (
+      <VerifyThisDevice
+        onVerify={startVerification}
+        onMasterKey={submitRecoveryKey}
+        passkeyAvailable={passkeyAvailable}
+        onPasskey={unlockWithPasskey}
+      />
+    )
   }
 
   if (recoveryPrompt?.kind === 'error') {
@@ -61,6 +84,67 @@ export function VerifyDeviceScreen() {
   }
 
   return null
+}
+
+// ── First device: choose how to protect history (passkey vs recovery key) ───
+
+function ChooseRecoveryMethod({
+  onPasskey,
+  onRecoveryKey,
+}: {
+  onPasskey: () => Promise<void>
+  onRecoveryKey: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState<null | 'passkey' | 'key'>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = (which: 'passkey' | 'key', fn: () => Promise<void>) => async () => {
+    setError(null)
+    setBusy(which)
+    try {
+      await fn()
+      // On success the prompt advances to `save`; leave busy until unmount.
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Overlay labelledBy="verify-title">
+      <h2 id="verify-title" className="verify__title">
+        Protect your history
+      </h2>
+      <p className="verify__body">
+        TideWork end-to-end encrypts your workspaces. Choose how to unlock them on a new device. A
+        passkey (Touch ID / Windows Hello) is easiest — nothing to write down — and you&apos;ll still
+        get a recovery key to keep as a backup.
+      </p>
+      {error && (
+        <p className="verify__error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="verify__actions verify__actions--stacked">
+        <button
+          type="button"
+          className="verify__primary"
+          disabled={busy !== null}
+          onClick={run('passkey', onPasskey)}
+        >
+          {busy === 'passkey' ? <><Spinner />Setting up…</> : 'Set up a passkey'}
+        </button>
+        <button
+          type="button"
+          className="verify__link"
+          disabled={busy !== null}
+          onClick={run('key', onRecoveryKey)}
+        >
+          {busy === 'key' ? <><Spinner />Working…</> : 'Use a recovery key instead'}
+        </button>
+      </div>
+    </Overlay>
+  )
 }
 
 // ── First device: recovery bootstrap failed — blocking, never silent ────────
@@ -112,7 +196,15 @@ function RecoverySetupFailed({
 
 // ── First device: save the generated recovery (master) key ──────────────────
 
-function SaveRecoveryKey({ recoveryKey, onDone }: { recoveryKey: string; onDone: () => void }) {
+function SaveRecoveryKey({
+  recoveryKey,
+  viaPasskey,
+  onDone,
+}: {
+  recoveryKey: string
+  viaPasskey?: boolean
+  onDone: () => void
+}) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -128,11 +220,12 @@ function SaveRecoveryKey({ recoveryKey, onDone }: { recoveryKey: string; onDone:
   return (
     <Overlay labelledBy="verify-title">
       <h2 id="verify-title" className="verify__title">
-        Save your master key
+        {viaPasskey ? 'Save your backup key' : 'Save your master key'}
       </h2>
       <p className="verify__body">
-        This key restores your encrypted history on a new device if you can&apos;t verify with an
-        existing one. Store it somewhere safe — it can&apos;t be recovered for you.
+        {viaPasskey
+          ? 'Your passkey unlocks your history on a new device. Keep this recovery key somewhere safe as a backup, in case you ever lose access to your passkey.'
+          : "This key restores your encrypted history on a new device if you can't verify with an existing one. Store it somewhere safe — it can't be recovered for you."}
       </p>
       <div className="verify__key">
         <code className="verify__key-text">{recoveryKey}</code>
@@ -154,9 +247,13 @@ function SaveRecoveryKey({ recoveryKey, onDone }: { recoveryKey: string; onDone:
 function VerifyThisDevice({
   onVerify,
   onMasterKey,
+  passkeyAvailable,
+  onPasskey,
 }: {
   onVerify: () => Promise<void>
   onMasterKey: (key: string) => Promise<void>
+  passkeyAvailable: boolean
+  onPasskey: () => Promise<void>
 }) {
   const [mode, setMode] = useState<'choose' | 'key'>('choose')
   const [key, setKey] = useState('')
@@ -183,8 +280,10 @@ function VerifyThisDevice({
       {mode === 'choose' ? (
         <>
           <p className="verify__body">
-            To keep your workspace history end-to-end encrypted, confirm this is really you. Verify
-            with another device you&apos;re signed in on, or use your master key.
+            To keep your workspace history end-to-end encrypted, confirm this is really you.
+            {passkeyAvailable
+              ? ' Unlock with your passkey, verify with another signed-in device, or use your master key.'
+              : ' Verify with another device you’re signed in on, or use your master key.'}
           </p>
           {error && (
             <p className="verify__error" role="alert">
@@ -192,13 +291,27 @@ function VerifyThisDevice({
             </p>
           )}
           <div className="verify__actions verify__actions--stacked">
+            {passkeyAvailable && (
+              <button
+                type="button"
+                className="verify__primary"
+                disabled={busy}
+                onClick={() => run(onPasskey)}
+              >
+                {busy ? <><Spinner />Working…</> : 'Unlock with passkey'}
+              </button>
+            )}
             <button
               type="button"
-              className="verify__primary"
+              className={passkeyAvailable ? 'verify__link' : 'verify__primary'}
               disabled={busy}
               onClick={() => run(onVerify)}
             >
-              {busy ? <><Spinner />Working…</> : 'Verify with another device'}
+              {!passkeyAvailable && busy ? (
+                <><Spinner />Working…</>
+              ) : (
+                'Verify with another device'
+              )}
             </button>
             <button
               type="button"

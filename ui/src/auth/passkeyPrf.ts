@@ -33,7 +33,7 @@ interface PrfExtensionResults {
   prf?: { enabled?: boolean; results?: { first?: ArrayBuffer } }
 }
 
-/** Whether this browser can do WebAuthn at all (passkeys + PRF need it). */
+/** Whether this browser exposes the WebAuthn API at all (passkeys + PRF need it). */
 export function isPasskeyPrfSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -41,6 +41,22 @@ export function isPasskeyPrfSupported(): boolean {
     typeof navigator !== 'undefined' &&
     !!navigator.credentials
   )
+}
+
+/**
+ * Whether a *usable* platform authenticator (Touch ID / Windows Hello / a synced
+ * passkey provider) is actually available — the gate for whether we offer
+ * passkey flows. Crucially, a headless browser with no authenticator returns
+ * false here (even though `isPasskeyPrfSupported` is true), so the UI falls back
+ * to the recovery-key flow instead of offering a passkey nobody can satisfy.
+ */
+export async function hasPlatformAuthenticator(): Promise<boolean> {
+  if (!isPasskeyPrfSupported()) return false
+  try {
+    return await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+  } catch {
+    return false
+  }
 }
 
 /**
