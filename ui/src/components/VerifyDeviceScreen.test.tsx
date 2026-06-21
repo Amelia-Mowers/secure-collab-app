@@ -4,9 +4,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 const h = vi.hoisted(() => ({
   recoveryPrompt: null as any,
   verification: null as any,
+  passkeyAvailable: false,
   submitRecoveryKey: vi.fn(),
   dismissRecoveryPrompt: vi.fn(),
   retryRecoverySetup: vi.fn(async () => undefined),
+  setupPasskeyRecovery: vi.fn(async () => undefined),
+  setupKeyRecovery: vi.fn(async () => undefined),
+  unlockWithPasskey: vi.fn(async () => undefined),
   signOut: vi.fn(),
   startVerification: vi.fn(),
   acceptIncomingVerification: vi.fn(),
@@ -18,9 +22,13 @@ vi.mock('../hooks/useAuth', () => ({
   useAuth: () => ({
     recoveryPrompt: h.recoveryPrompt,
     verification: h.verification,
+    passkeyAvailable: h.passkeyAvailable,
     submitRecoveryKey: h.submitRecoveryKey,
     dismissRecoveryPrompt: h.dismissRecoveryPrompt,
     retryRecoverySetup: h.retryRecoverySetup,
+    setupPasskeyRecovery: h.setupPasskeyRecovery,
+    setupKeyRecovery: h.setupKeyRecovery,
+    unlockWithPasskey: h.unlockWithPasskey,
     signOut: h.signOut,
     startVerification: h.startVerification,
     acceptIncomingVerification: h.acceptIncomingVerification,
@@ -35,6 +43,7 @@ describe('VerifyDeviceScreen', () => {
   beforeEach(() => {
     h.recoveryPrompt = null
     h.verification = null
+    h.passkeyAvailable = false
     Object.values(h).forEach(v => typeof v === 'function' && (v as any).mockReset?.())
   })
 
@@ -49,6 +58,37 @@ describe('VerifyDeviceScreen', () => {
     expect(screen.getByText('ABCD-EFGH-IJKL')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /saved it/i }))
     expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
+  })
+
+  it('frames the key as a backup when recovery was set up via passkey', () => {
+    h.recoveryPrompt = { kind: 'save', recoveryKey: 'BACKUP-KEY', viaPasskey: true }
+    render(<VerifyDeviceScreen />)
+    expect(screen.getByRole('heading', { name: /backup key/i })).toBeInTheDocument()
+    expect(screen.getByText('BACKUP-KEY')).toBeInTheDocument()
+  })
+
+  describe('choose recovery method (first device, passkey-capable)', () => {
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'setup' }
+    })
+
+    it('offers both the passkey and recovery-key paths', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByRole('button', { name: /set up a passkey/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /recovery key instead/i })).toBeInTheDocument()
+    })
+
+    it('sets up a passkey', async () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
+      await waitFor(() => expect(h.setupPasskeyRecovery).toHaveBeenCalledTimes(1))
+    })
+
+    it('falls back to a recovery key', async () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /recovery key instead/i }))
+      await waitFor(() => expect(h.setupKeyRecovery).toHaveBeenCalledTimes(1))
+    })
   })
 
   describe('recovery setup failed (blocking, never silent)', () => {
@@ -98,6 +138,19 @@ describe('VerifyDeviceScreen', () => {
       render(<VerifyDeviceScreen />)
       fireEvent.click(screen.getByRole('button', { name: /verify with another device/i }))
       await waitFor(() => expect(h.startVerification).toHaveBeenCalledTimes(1))
+    })
+
+    it('offers passkey unlock when available', async () => {
+      h.passkeyAvailable = true
+      h.unlockWithPasskey.mockResolvedValue(undefined)
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
+      await waitFor(() => expect(h.unlockWithPasskey).toHaveBeenCalledTimes(1))
+    })
+
+    it('hides passkey unlock when the browser lacks passkey support', () => {
+      render(<VerifyDeviceScreen />) // passkeyAvailable false
+      expect(screen.queryByRole('button', { name: /unlock with passkey/i })).toBeNull()
     })
 
     it('restores with the trimmed master key', async () => {

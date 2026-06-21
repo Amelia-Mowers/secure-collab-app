@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { createElement } from 'react'
 import { getWasmModule } from '../wasm/loader'
 import type { OauthPopup } from '../auth/oauthPopup'
+import { hasPlatformAuthenticator, registerPasskeyPrf, unlockPasskeyPrf } from '../auth/passkeyPrf'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,7 +26,13 @@ export interface InvitedRoom {
  *  with another device (SAS) or entering its master key. There is deliberately
  *  no bypass (ADR 0001 Phase D-3). */
 export type RecoveryPrompt =
-  | { kind: 'save'; recoveryKey: string }
+  /** First device, passkey-capable browser: choose how to protect history —
+   *  a passkey (WebAuthn-PRF, biometric) or a saved recovery key. Shown before
+   *  recovery is enabled, so the choice doesn't re-key secret storage. */
+  | { kind: 'setup' }
+  /** Save the recovery key. `viaPasskey` means a passkey already unlocks this
+   *  account, so the key is a break-glass backup rather than the only way in. */
+  | { kind: 'save'; recoveryKey: string; viaPasskey?: boolean }
   | { kind: 'verify' }
   /** Recovery bootstrap failed on a first device even after retries. This is
    *  a blocking state (not a silent warn): the account works but NO recovery
@@ -123,6 +130,20 @@ interface AuthState {
   dismissRecoveryPrompt: () => void
   /** Retry the recovery bootstrap after a `kind: 'error'` prompt. */
   retryRecoverySetup: () => Promise<void>
+
+  /** Whether passkey (WebAuthn-PRF) unlock is available in this browser. Gates
+   *  the passkey options in the recovery/verify screens. */
+  passkeyAvailable: boolean
+  /** First device (`setup` prompt): protect history with a passkey — registers
+   *  a passkey, derives its PRF secret, and keys secure backup with it. Still
+   *  yields a break-glass recovery key to save. */
+  setupPasskeyRecovery: () => Promise<void>
+  /** First device (`setup` prompt): protect history with a generated recovery
+   *  key (the classic path). */
+  setupKeyRecovery: () => Promise<void>
+  /** New device (`verify` prompt): unlock history with the account's passkey
+   *  instead of typing the master key. */
+  unlockWithPasskey: () => Promise<void>
 
   /** An in-progress device verification, or null. Drives the verify screen's
    *  emoji-compare step and the incoming-request prompt. */
@@ -273,6 +294,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const [sessionSyncCount, setSessionSyncCount] = useState(0)
   const [recoveryPrompt, setRecoveryPrompt] = useState<RecoveryPrompt | null>(null)
+  // Whether a real platform authenticator is available — gates the passkey
+  // flows. Detected once on mount (async); the ref lets the sign-in-time
+  // bootstrap read the latest value without re-rendering deps. Headless browsers
+  // with no authenticator report false here, so they keep the recovery-key flow.
+  const [passkeyAvailable, setPasskeyAvailable] = useState(false)
+  const passkeyAvailableRef = useRef(false)
+  useEffect(() => {
+    hasPlatformAuthenticator().then(ok => {
+      passkeyAvailableRef.current = ok
+      setPasskeyAvailable(ok)
+    })
+  }, [])
   const [verification, setVerification] = useState<VerificationState | null>(null)
   // The active DeviceVerification handle (WASM) and a stopper for its loop.
   const verificationRef = useRef<any>(null)
@@ -360,7 +393,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // silence: the account works but no recovery key exists, so the user must
   // know (the old console.warn fail-open silently produced devices whose
   // history could never be restored).
-  const bootstrapRecovery = useCallback(async (ms: any) => {
+  const bootstrapWithKey = useCallback(async (ms: any) => {
     const retryDelaysMs = [0, 2000, 5000]
     let lastErr: unknown
     for (const delay of retryDelaysMs) {
@@ -378,6 +411,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       kind: 'error',
       message: (lastErr as Error)?.message ?? String(lastErr ?? 'Unknown error'),
     })
+  }, [])
+
+  // On a passkey-capable browser, let the user choose passkey vs recovery key
+  // BEFORE secure backup is enabled (so the choice never re-keys it). Without
+  // passkeys, go straight to the classic recovery-key bootstrap.
+  const bootstrapRecovery = useCallback(
+    async (ms: any) => {
+      if (passkeyAvailableRef.current) {
+        setRecoveryPrompt({ kind: 'setup' })
+      } else {
+        await bootstrapWithKey(ms)
+      }
+    },
+    [bootstrapWithKey],
+  )
+
+  /** `setup` prompt: protect history with a generated recovery key. */
+  const setupKeyRecovery = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms) return
+    setRecoveryPrompt(null)
+    await bootstrapWithKey(ms)
+  }, [bootstrapWithKey])
+
+  /** `setup` prompt: register a passkey and key secure backup with its PRF
+   *  secret; returns a break-glass recovery key to save. Throws on failure so
+   *  the screen can surface it and let the user retry or pick the key path. */
+  const setupPasskeyRecovery = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms) throw new Error('Not signed in')
+    const uid = (typeof ms.userId === 'function' ? ms.userId() : null) ?? 'tidework'
+    const secret = await registerPasskeyPrf(uid, uid)
+    const recoveryKey: string = await ms.enableRecoveryWithPassphrase(secret)
+    setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
   }, [])
 
   /** Retry the recovery bootstrap from the `kind: 'error'` screen. */
@@ -435,6 +502,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setRecoveryPrompt(null)
   }, [])
+
+  /** `verify` prompt: unlock with the account's passkey — derive its PRF secret
+   *  and feed it to the same recover path (`recoverWithKey` accepts a
+   *  passphrase). Throws on cancel / bad key so the screen surfaces it. */
+  const unlockWithPasskey = useCallback(async () => {
+    const secret = await unlockPasskeyPrf()
+    await submitRecoveryKey(secret)
+  }, [submitRecoveryKey])
 
   const dismissRecoveryPrompt = useCallback(() => {
     setRecoveryPrompt(null)
@@ -1132,6 +1207,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     submitRecoveryKey,
     dismissRecoveryPrompt,
     retryRecoverySetup,
+    passkeyAvailable,
+    setupPasskeyRecovery,
+    setupKeyRecovery,
+    unlockWithPasskey,
     verification,
     startVerification,
     acceptIncomingVerification,
