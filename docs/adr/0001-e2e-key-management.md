@@ -249,3 +249,119 @@ suite once it passes.
 Phase A is independently shippable and de-risks the rest; B is the one that
 actually makes multi-device + history-recovery work and should be gated behind
 a real harness test before the encryption badge claims full E2E.
+
+---
+
+## Addendum (2026-06-21) — sharper threat model: trusted-device-only key sharing + key-custody direction
+
+A re-examination of the threat model in light of the **bump/compaction**
+mechanism revises one decision above and adds two.
+
+### The hole the original decision missed: bump amplifies future-read into full-DB-read
+
+E2EE protects data *at rest on the server* (it only ever holds ciphertext + an
+**encrypted** SSSS blob + the encrypted key backup), and the recovery/master key
+only decrypts that blob **client-side**. So a server breach yields garbage — that
+property is real and unchanged.
+
+But the original decision left **key sharing permissive**: `EncryptionSettings`
+enables cross-signing + backup yet sets **no sharing restriction**, so the SDK
+default applies and every new Megolm session is shared with **every** device in
+the room, verified or not. Combined with the bump mechanism — which re-emits each
+cell's *current* value as fresh events over time — this means:
+
+> A device that can read only **future** traffic eventually reconstructs the
+> **entire live database**, without ever needing historical keys or the master
+> key. Bump turns "future-read" into "full-current-state read."
+
+That makes a rogue device a complete compromise. A device can become rogue via:
+- an **already-trusted endpoint** being compromised (an E2EE axiom — unfixable by
+  any key scheme; bump just makes the loss total), **or**
+- **device injection by a malicious/compromised homeserver or token-minter
+  (MAS)** — Matrix's homeserver is irreducibly inside the trust boundary for
+  *device-list integrity*; it can add a device to a member's device list (or lie
+  about a collaborator's devices) **regardless of how the user authenticated**.
+
+The first is out of scope for any crypto design. The **second is in scope and is
+exactly what cross-signing exists to stop** — but only if clients refuse to share
+room keys with devices not cross-signed by a trusted identity. We don't currently
+do that.
+
+### Decision 1 (revises the "dropped require-verified send mode" above): enforce trusted-device-only key sharing
+
+Re-open what Phase D dropped, but reframed. Set the SDK's collect/sharing
+strategy to **share room keys only with devices cross-signed by a trusted
+identity** (matrix-sdk `only_allow_trusted_devices` / identity-based strategy).
+An injected device that isn't cross-signed by the user's master key — which lives
+client-side — then receives **no** future keys, so the bump path leaks nothing.
+*This is where the master key earns genuine compromise protection*, not just
+history access.
+
+- Cost (the reason it was dropped): users must verify/cross-sign their own
+  devices or they lock themselves out of their *own* new devices. This is why it
+  pairs with Decision 2 — passkey/PRF custody makes verification low-friction.
+- Note: the earlier "verification is only for own-device coherence, not policing
+  others' devices" framing was correct for *that* threat (an honest member's
+  unverified device) but missed the *injection* threat. Trusted-only sharing
+  addresses injection without policing legitimate collaborators (their devices
+  cross-sign normally).
+
+### Decision 2: key custody → passkey / WebAuthn-PRF; deprecate user-handled master key by default (hosted prod)
+
+Authentication and key custody are **separate layers** (cf. ADR 0002): the IdP
+authenticates and must **never** be able to decrypt — letting it hold the
+unlocking key hands plaintext to the exact adversary E2EE defends against. So we
+don't escrow the key in MAS or an OIDC provider. Instead:
+
+- **Default:** a **passkey / WebAuthn-PRF** wraps the SSSS key. The platform
+  keychain (Apple/Google) holds only an *opaque* wrapping secret it can't decrypt
+  with; it rides the user's existing ecosystem (composes with social login),
+  unlock is a biometric gesture, and no server gains read capability.
+- **Fallback:** an SSSS **security phrase** (PBKDF2) — must **not** be the login
+  password (a server that sees the password could brute the blob; under OAuth
+  there is no client-side password, which keeps this clean).
+- **Break-glass:** the raw **recovery key**, demoted to opt-in last resort (not
+  removed — it's the only recovery if the passkey ecosystem is lost).
+- **Enterprise** may opt into admin **key escrow** (non-zero-knowledge by design,
+  for ex-employee recovery) — a deliberate, opt-in exception, not the default.
+
+**Hard invariant:** whatever the custodian, wrap/unwrap happens client-side with
+a secret that **never transits our servers**, even briefly — an architectural
+guarantee, not a policy. (Compliance corollary: a custodian that can *decrypt*
+regulated data, e.g. PHI, becomes a business associate / BAA surface; the
+opaque-secret passkey route keeps that surface small, escrow widens it.)
+
+### Decision 3 (supporting): minimize the token-minter's blast radius
+
+MAS-or-equivalent is structurally required to mint Matrix tokens (Google/Apple
+don't speak Matrix's device scopes), so it can't be removed — but run it
+**federate-only (no local passwords)** so a compromise of our MAS can't harvest
+credentials, only mint tokens (which Decision 1 already neutralises for key
+access). This is an auth-side item; see ADR 0002.
+
+### Revised threat model (what this buys)
+
+| Adversary | Protected? |
+| --- | --- |
+| Server breach / data at rest | ✅ (ciphertext + encrypted SSSS only) |
+| Network eavesdropper | ✅ |
+| Malicious homeserver / MAS **injecting a device** | ✅ **after Decision 1** (was ❌) |
+| Credential capture by the homeserver | ✅ via OAuth (ADR 0002) + Decision 3 |
+| An **already-trusted compromised endpoint** | ❌ — unfixable by crypto; bump makes it total |
+
+### Implementation order
+
+1. **Decision 1** — trusted-device-only sharing (highest leverage; the security
+   fix). Tracked: "Enforce trusted-device-only key sharing" in the TideWork PM
+   backlog.
+2. **Decision 2** — passkey/PRF custody (makes Decision 1's verification
+   friction acceptable; deprecates default master-key handling). Tracked:
+   "Memorable new-device verification (SSSS phrase + passkey)" and
+   "Reduce/remove the master-key requirement."
+3. **Decision 3** — MAS federate-only (auth-side; ADR 0002).
+
+Caveats to verify before building: whether matrix-rust-sdk's recovery API ingests
+an SSSS *passphrase* directly (vs only the recovery key), and that
+`only_allow_trusted_devices` behaves as expected for own-account device injection
+(it should: an injected device isn't cross-signed by the client-held master key).
+WebAuthn-PRF wrapping is app-layer work the SDK won't do for you.
