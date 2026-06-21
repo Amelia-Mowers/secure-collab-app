@@ -1,0 +1,23 @@
+[package]
+name = "tidework-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tidework"
+path = "src/main.rs"
+
+[dependencies]
+app-core = { path = "../app-core", default-features = false, features = ["matrix-native"] }
+tables-over-matrix = { path = "../tables-over-matrix", default-features = false, features = ["matrix-native"] }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
