@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tables_over_matrix::MatrixClient;
 
+mod oauth;
 mod session;
 
 #[derive(Parser)]
@@ -32,16 +33,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Log in to a homeserver with a username + password and persist the session.
+    /// Log in to a homeserver and persist the session. Uses password auth by
+    /// default; pass `--sso` for OAuth/MAS browser sign-in (required by the
+    /// production server, which has password login disabled).
     Login {
         /// Homeserver URL, e.g. https://tidework.io
         #[arg(long)]
         homeserver: String,
-        /// Username (localpart or full @user:server).
+        /// Sign in via OAuth 2.0 / MAS in the browser (no --user/--password).
         #[arg(long)]
-        user: String,
+        sso: bool,
+        /// Username (localpart or full @user:server). Required for password auth.
+        #[arg(long)]
+        user: Option<String>,
         /// Password. If omitted, read from the TIDEWORK_PASSWORD env var
-        /// (preferred — keeps it out of shell history).
+        /// (preferred — keeps it out of shell history). Ignored with --sso.
         #[arg(long)]
         password: Option<String>,
     },
@@ -72,15 +78,28 @@ async fn run() -> Result<()> {
     match cli.command {
         Command::Login {
             homeserver,
+            sso,
             user,
             password,
-        } => login(homeserver, user, password).await,
+        } => {
+            if sso {
+                login_sso(homeserver).await
+            } else {
+                login_password(homeserver, user, password).await
+            }
+        }
         Command::Whoami => whoami().await,
         Command::Logout => logout(),
     }
 }
 
-async fn login(homeserver: String, user: String, password: Option<String>) -> Result<()> {
+async fn login_password(
+    homeserver: String,
+    user: Option<String>,
+    password: Option<String>,
+) -> Result<()> {
+    let user =
+        user.ok_or_else(|| anyhow!("--user is required for password login (or use --sso)"))?;
     let password = password
         .or_else(|| std::env::var("TIDEWORK_PASSWORD").ok())
         .filter(|p| !p.is_empty())
@@ -99,12 +118,50 @@ async fn login(homeserver: String, user: String, password: Option<String>) -> Re
         .await
         .context("login failed")?;
 
+    persist_and_report(&client, &homeserver, &paths, Some(user))
+}
+
+async fn login_sso(homeserver: String) -> Result<()> {
+    let paths = session::Paths::resolve()?;
+    paths.ensure_dirs()?;
+
+    let client = MatrixClient::with_sqlite_store(&homeserver, &paths.store_dir)
+        .await
+        .context("building client")?;
+
+    // Heads-up if the server doesn't actually delegate to an OAuth provider —
+    // the flow would otherwise fail with a less obvious error.
+    if !MatrixClient::homeserver_supports_oauth(&homeserver)
+        .await
+        .unwrap_or(false)
+    {
+        eprintln!("warning: {homeserver} does not advertise OAuth metadata; if this fails, try password login");
+    }
+
+    oauth::loopback_login(&client)
+        .await
+        .context("OAuth login failed")?;
+
+    persist_and_report(&client, &homeserver, &paths, None)
+}
+
+/// Save the freshly-authenticated session and print the result. `fallback_user`
+/// is used only if the client can't report its own id yet.
+fn persist_and_report(
+    client: &MatrixClient,
+    homeserver: &str,
+    paths: &session::Paths,
+    fallback_user: Option<String>,
+) -> Result<()> {
     let blob = client
         .session_json()
         .ok_or_else(|| anyhow!("login succeeded but no session was produced"))?;
-    paths.save_session(&homeserver, &blob)?;
+    paths.save_session(homeserver, &blob)?;
 
-    let who = client.user_id().unwrap_or_else(|| user.clone());
+    let who = client
+        .user_id()
+        .or(fallback_user)
+        .unwrap_or_else(|| "<unknown>".to_string());
     println!("Logged in as {who}");
     println!("Session saved to {}", paths.config_dir.display());
     Ok(())

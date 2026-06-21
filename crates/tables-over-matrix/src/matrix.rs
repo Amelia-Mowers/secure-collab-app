@@ -740,6 +740,85 @@ mod matrix_impl {
         pub fn user_id(&self) -> Option<String> {
             self.client.user_id().map(|u| u.to_string())
         }
+
+        /// Whether the homeserver delegates auth to an OAuth 2.0 provider (MAS /
+        /// MSC3861) — i.e. it advertises authorization-server metadata. Builds a
+        /// throwaway client just to probe; production runs MAS, so password
+        /// login is disabled and this is the only way in.
+        pub async fn homeserver_supports_oauth(homeserver_url: &str) -> Result<bool> {
+            let client = Client::builder()
+                .homeserver_url(homeserver_url)
+                .build()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to connect: {e}"))?;
+            Ok(client.oauth().server_metadata().await.is_ok())
+        }
+
+        /// Begin an OAuth 2.0 login: dynamically register this app with the
+        /// authorization server (a public client — PKCE carries the proof) and
+        /// return the authorization URL to open in a browser.
+        ///
+        /// The PKCE verifier lives inside `self.client`, so [`oauth_finish`] must
+        /// be called on the *same* `MatrixClient` instance. `redirect_uri` is
+        /// where the browser is sent back with the authorization code — for a
+        /// native CLI this is a `http://127.0.0.1:<port>/…` loopback the process
+        /// listens on.
+        ///
+        /// [`oauth_finish`]: MatrixClient::oauth_finish
+        pub async fn oauth_start(&self, redirect_uri: &str) -> Result<String> {
+            use matrix_sdk::authentication::oauth::registration::ClientMetadata;
+            use matrix_sdk::authentication::oauth::ClientRegistrationData;
+            use matrix_sdk::ruma::serde::Raw;
+
+            let redirect: url::Url = redirect_uri
+                .parse()
+                .map_err(|e| anyhow::anyhow!("Invalid redirect URI: {e}"))?;
+
+            // A native, public OAuth client. PKCE (not a secret) authenticates
+            // the token exchange. `client_uri` must be a real https URL — MAS
+            // rejects a loopback/redirect-derived one ("invalid client_uri") —
+            // so point it at the product homepage; the loopback only appears in
+            // `redirect_uris`, which a native client is allowed to use.
+            let metadata_json = serde_json::json!({
+                "client_name": "TideWork CLI",
+                "client_uri": "https://tidework.io/",
+                "application_type": "native",
+                "redirect_uris": [redirect],
+                "token_endpoint_auth_method": "none",
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+            });
+            let metadata: Raw<ClientMetadata> = Raw::from_json_string(metadata_json.to_string())
+                .map_err(|e| anyhow::anyhow!("Invalid client metadata: {e}"))?;
+            let registration_data: ClientRegistrationData = metadata.into();
+
+            let auth_data = self
+                .client
+                .oauth()
+                .login(redirect, None, Some(registration_data), None)
+                .build()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to start OAuth login: {e}"))?;
+
+            Ok(auth_data.url.to_string())
+        }
+
+        /// Complete an OAuth login with the URL the browser was finally
+        /// redirected to (it carries the authorization code + state). Exchanges
+        /// the code for tokens on the client started by [`oauth_start`].
+        ///
+        /// [`oauth_start`]: MatrixClient::oauth_start
+        pub async fn oauth_finish(&self, redirected_url: &str) -> Result<()> {
+            let url: url::Url = redirected_url
+                .parse()
+                .map_err(|e| anyhow::anyhow!("Invalid redirect URL: {e}"))?;
+            self.client
+                .oauth()
+                .finish_login(url.into())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to finish OAuth login: {e}"))?;
+            Ok(())
+        }
     }
 
     /// Session information for persistence.
