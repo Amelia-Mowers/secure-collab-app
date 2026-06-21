@@ -160,6 +160,79 @@ fn coerce_value(column_type: &ColumnType, raw: &str) -> serde_json::Value {
     }
 }
 
+/// Parse a `name:type[:opt1|opt2|...]` column spec into a `ColumnDefinition` at
+/// the given display order. The optional 3rd segment is a `|`-separated list of
+/// allowed values, valid only for `select`/`multiselect`.
+fn parse_column_spec(spec: &str, order: i64) -> Result<ColumnDefinition> {
+    let mut parts = spec.splitn(3, ':');
+    let name = parts.next().unwrap_or("").trim();
+    if name.is_empty() {
+        return Err(anyhow!("empty column name in {spec:?}"));
+    }
+    let col_type = parse_column_type(parts.next().unwrap_or("text"))?;
+    let mut col = ColumnDefinition::new(slug(name), name, col_type.clone()).with_order(order);
+
+    if let Some(opts) = parts.next() {
+        let options = parse_options(opts);
+        if !options.is_empty() {
+            if !matches!(col_type, ColumnType::Select | ColumnType::MultiSelect) {
+                return Err(anyhow!(
+                    "options only apply to select/multiselect columns (got a type with options for {name:?})"
+                ));
+            }
+            col = col.with_options(options);
+        }
+    }
+    Ok(col)
+}
+
+/// Split a `|`-separated options list, trimming blanks.
+fn parse_options(s: &str) -> Vec<String> {
+    s.split('|')
+        .map(|o| o.trim().to_string())
+        .filter(|o| !o.is_empty())
+        .collect()
+}
+
+/// Coerce a raw string to a JSON value per the column type, **validating**
+/// select/multiselect values against the column's configured options (if any).
+/// Multiselect accepts a comma-separated list and stores a JSON array.
+fn coerce_and_validate(column: &ColumnDefinition, raw: &str) -> Result<serde_json::Value> {
+    match column.column_type {
+        ColumnType::Select => {
+            check_option(column, raw)?;
+            Ok(serde_json::json!(raw))
+        }
+        ColumnType::MultiSelect => {
+            let values: Vec<String> = raw
+                .split(',')
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect();
+            for v in &values {
+                check_option(column, v)?;
+            }
+            Ok(serde_json::json!(values))
+        }
+        ref t => Ok(coerce_value(t, raw)),
+    }
+}
+
+/// Reject a value that isn't among a select/multiselect column's configured
+/// options. A column with no options is unconstrained (free-form).
+fn check_option(column: &ColumnDefinition, value: &str) -> Result<()> {
+    if let Some(opts) = &column.options {
+        if !opts.is_empty() && !opts.iter().any(|o| o == value) {
+            return Err(anyhow!(
+                "{value:?} is not an allowed value for column {:?} (allowed: {})",
+                column.name,
+                opts.join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn render_value(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
@@ -243,16 +316,7 @@ pub async fn table_create(workspace: String, name: String, columns: Vec<String>)
     }
     let mut def = TableDefinition::new(&table_id, &name);
     for (i, spec) in columns.iter().enumerate() {
-        let (col_name, type_str) = match spec.split_once(':') {
-            Some((n, t)) => (n.trim(), t),
-            None => (spec.trim(), "text"),
-        };
-        if col_name.is_empty() {
-            return Err(anyhow!("empty column name in {spec:?}"));
-        }
-        let col_type = parse_column_type(type_str)?;
-        let col = ColumnDefinition::new(slug(col_name), col_name, col_type).with_order(i as i64);
-        def = def.with_column(col);
+        def = def.with_column(parse_column_spec(spec, i as i64)?);
     }
 
     let updates = ws
@@ -361,8 +425,7 @@ pub async fn row_add(workspace: String, table: String, cells: Vec<String>) -> Re
             .split_once('=')
             .ok_or_else(|| anyhow!("expected column=value, got {assignment:?}"))?;
         let col_id = resolve_column(&schema, col)?;
-        let col_type = &schema.columns[&col_id].column_type;
-        let value = coerce_value(col_type, raw);
+        let value = coerce_and_validate(&schema.columns[&col_id], raw)?;
         updates.extend(
             ws.update_cell_with_bump(&table_id, &row_id, &col_id, value)
                 .map_err(|e| anyhow!("writing cell: {e}"))?,
@@ -374,5 +437,115 @@ pub async fn row_add(workspace: String, table: String, cells: Vec<String>) -> Re
         .await
         .context("sending row")?;
     println!("Added row {row_id} to \"{}\"", schema.name);
+    Ok(())
+}
+
+pub async fn column_add(workspace: String, table: String, spec: String) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    // Append after the existing columns.
+    let order = ws
+        .get_table_schema(&table_id)
+        .map(|s| s.columns.len() as i64)
+        .unwrap_or(0);
+    let col = parse_column_spec(&spec, order)?;
+    let col_name = col.name.clone();
+
+    let updates = ws
+        .add_column(&table_id, col)
+        .map_err(|e| anyhow!("adding column: {e}"))?;
+    client
+        .send_cell_batch(&updates)
+        .await
+        .context("sending column")?;
+    println!("Added column \"{col_name}\" to table {table_id}");
+    Ok(())
+}
+
+pub async fn column_set(
+    workspace: String,
+    table: String,
+    column: String,
+    options: Option<String>,
+    default: Option<String>,
+    name: Option<String>,
+) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let schema = ws
+        .get_table_schema(&table_id)
+        .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
+    let col_id = resolve_column(&schema, &column)?;
+    let existing = &schema.columns[&col_id];
+
+    let new_options = options.map(|s| {
+        s.split(',')
+            .map(|o| o.trim().to_string())
+            .filter(|o| !o.is_empty())
+            .collect::<Vec<_>>()
+    });
+
+    let mut patch = serde_json::Map::new();
+    if let Some(opts) = &new_options {
+        if !matches!(
+            existing.column_type,
+            ColumnType::Select | ColumnType::MultiSelect
+        ) {
+            return Err(anyhow!(
+                "--options only applies to select/multiselect columns (column {:?} is {:?})",
+                existing.name,
+                existing.column_type
+            ));
+        }
+        patch.insert("options".into(), serde_json::json!(opts));
+    }
+    if let Some(new_name) = name {
+        patch.insert("name".into(), serde_json::json!(new_name));
+    }
+    if let Some(default) = default {
+        // A select default must itself be an allowed option (new if given, else
+        // the column's current options).
+        if matches!(
+            existing.column_type,
+            ColumnType::Select | ColumnType::MultiSelect
+        ) {
+            if let Some(opts) = new_options.as_ref().or(existing.options.as_ref()) {
+                if !opts.is_empty() && !opts.iter().any(|o| o == &default) {
+                    return Err(anyhow!(
+                        "default {default:?} is not among the allowed options ({})",
+                        opts.join(", ")
+                    ));
+                }
+            }
+        }
+        patch.insert(
+            "default_value".into(),
+            coerce_value(&existing.column_type, &default),
+        );
+    }
+
+    if patch.is_empty() {
+        return Err(anyhow!(
+            "nothing to change — pass --options, --default, and/or --name"
+        ));
+    }
+
+    let display_name = existing.name.clone();
+    let updates = ws
+        .update_column(&table_id, &col_id, &serde_json::Value::Object(patch))
+        .map_err(|e| anyhow!("updating column: {e}"))?;
+    client
+        .send_cell_batch(&updates)
+        .await
+        .context("sending column update")?;
+    println!("Updated column \"{display_name}\" ({col_id}) in table {table_id}");
     Ok(())
 }

@@ -71,12 +71,20 @@ A workspace is an encrypted Matrix room; a `<ws>` argument is either a room id
 tidework workspace create "Issues"          # create an encrypted workspace
 tidework workspace list                      # NAME + ROOM ID
 
-# Columns are name:type (type ∈
-# text|number|boolean|date|select|multiselect|document|json; defaults to text):
-tidework table create "Issues" Bugs --columns title:text,status:select,priority:number
+# Columns are name:type[:opt1|opt2|...] (type ∈
+# text|number|boolean|date|select|multiselect|document|json; defaults to text).
+# The |-separated options give a select/multiselect its allowed values:
+tidework table create "Issues" Bugs \
+  --columns "title:text,status:select:open|closed,priority:number"
 tidework table list "Issues"
 
-# Cells are column=value (column id or name); the row id is generated + printed:
+# Add or reconfigure columns on an existing table:
+tidework column add "Issues" Bugs "assignee:select:alice|bob"
+tidework column set "Issues" Bugs status --options open,in-progress,closed --default open
+
+# Cells are column=value (column id or name); the row id is generated + printed.
+# A value for a select/multiselect with options must be one of them, else the
+# write is rejected (multiselect takes a comma-separated list):
 tidework row add "Issues" Bugs title="Login fails" status=open priority=1
 tidework table show "Issues" Bugs            # cold-starts the room + renders rows
 ```

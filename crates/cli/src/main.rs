@@ -77,6 +77,11 @@ enum Command {
         #[command(subcommand)]
         command: RowCmd,
     },
+    /// Column operations within a table.
+    Column {
+        #[command(subcommand)]
+        command: ColumnCmd,
+    },
 }
 
 /// A workspace argument is either a room id (starts with `!`) or a workspace
@@ -130,6 +135,38 @@ enum RowCmd {
         /// `column=value` assignments.
         #[arg(required = true)]
         cells: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ColumnCmd {
+    /// Add a column to a table. SPEC is `name:type[:opt1|opt2|...]` (the
+    /// `|`-separated options apply to select/multiselect).
+    Add {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// Column spec, e.g. `status:select:open|in-progress|closed`.
+        spec: String,
+    },
+    /// Reconfigure an existing column's allowed options / default / name.
+    Set {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// Column (id or name).
+        column: String,
+        /// Comma-separated allowed values (select/multiselect).
+        #[arg(long)]
+        options: Option<String>,
+        /// Default value (must be an allowed option for select/multiselect).
+        #[arg(long)]
+        default: Option<String>,
+        /// New display name.
+        #[arg(long)]
+        name: Option<String>,
     },
 }
 
@@ -191,6 +228,21 @@ async fn run() -> Result<()> {
                 table,
                 cells,
             } => crud::row_add(workspace, table, cells).await,
+        },
+        Command::Column { command } => match command {
+            ColumnCmd::Add {
+                workspace,
+                table,
+                spec,
+            } => crud::column_add(workspace, table, spec).await,
+            ColumnCmd::Set {
+                workspace,
+                table,
+                column,
+                options,
+                default,
+                name,
+            } => crud::column_set(workspace, table, column, options, default, name).await,
         },
     }
 }
