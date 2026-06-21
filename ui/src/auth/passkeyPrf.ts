@@ -1,0 +1,149 @@
+/**
+ * WebAuthn-PRF helpers (passkey phase 2): register a discoverable passkey with
+ * the PRF extension and re-derive a *stable secret string* from it. That string
+ * is the SSSS passphrase the bridge's `enableRecoveryWithPassphrase` /
+ * `recoverWithKey` consume — so a biometric tap unlocks the E2EE keys instead of
+ * a saved recovery key.
+ *
+ * This module is crypto-agnostic plumbing: it knows nothing about Matrix — it
+ * just turns "the user's passkey" into "a stable passphrase." Wiring it into
+ * recovery setup / the verify gate is phase 3 (ADR 0001 addendum, Decision 2).
+ *
+ * Security: a fixed, domain-separated salt makes the PRF output stable per
+ * credential, so the SAME passkey (synced via the platform keychain) derives the
+ * SAME secret on every device. The PRF secret never leaves the client; the
+ * platform authenticator holds only an opaque per-credential key it can't reveal.
+ */
+
+/**
+ * Domain-separation label fed to the PRF as the salt. **Stable forever** —
+ * changing it would orphan every existing passkey-derived secret (the SSSS key
+ * would no longer match). v1.
+ */
+const PRF_SALT: Uint8Array = new TextEncoder().encode('io.tidework.ssss.prf.v1')
+
+const RP_NAME = 'TideWork'
+
+// ── minimal PRF typings (TS DOM lib coverage of the PRF extension varies) ──
+
+interface PrfInputs {
+  eval?: { first: BufferSource; second?: BufferSource }
+}
+interface PrfExtensionResults {
+  prf?: { enabled?: boolean; results?: { first?: ArrayBuffer } }
+}
+
+/** Whether this browser can do WebAuthn at all (passkeys + PRF need it). */
+export function isPasskeyPrfSupported(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.PublicKeyCredential !== 'undefined' &&
+    typeof navigator !== 'undefined' &&
+    !!navigator.credentials
+  )
+}
+
+/**
+ * Register a new discoverable passkey for `userId` and return the PRF-derived
+ * secret string (the SSSS passphrase). Prompts the platform authenticator
+ * (Touch ID / Windows Hello / security key). The passkey is resident, so it
+ * syncs via the platform keychain and can be found on other devices.
+ */
+export async function registerPasskeyPrf(userId: string, displayName: string): Promise<string> {
+  if (!isPasskeyPrfSupported()) {
+    throw new Error('Passkeys are not supported in this browser')
+  }
+
+  const cred = (await navigator.credentials.create({
+    publicKey: {
+      rp: { name: RP_NAME, id: rpId() },
+      user: {
+        id: new TextEncoder().encode(userId),
+        name: userId,
+        displayName: displayName || userId,
+      },
+      challenge: randomBytes(32),
+      pubKeyCredParams: [
+        { type: 'public-key', alg: -7 }, // ES256
+        { type: 'public-key', alg: -257 }, // RS256
+      ],
+      authenticatorSelection: {
+        residentKey: 'required', // discoverable → syncs + found without an id
+        requireResidentKey: true,
+        userVerification: 'required',
+      },
+      // Request PRF, and ask to evaluate it now — some authenticators return the
+      // result at create() time (one prompt); others only at get() (we fall back).
+      extensions: { prf: { eval: { first: PRF_SALT } } } as unknown as
+        AuthenticationExtensionsClientInputs,
+    },
+  })) as PublicKeyCredential | null
+
+  if (!cred) throw new Error('Passkey registration was cancelled')
+
+  const ext = cred.getClientExtensionResults() as unknown as PrfExtensionResults
+  if (ext.prf?.results?.first) {
+    return toBase64Url(ext.prf.results.first) // evaluated at create — single prompt
+  }
+  if (ext.prf?.enabled === false) {
+    throw new Error('This authenticator does not support PRF — a recovery key is required')
+  }
+  // Fall back to an assertion against the credential we just created.
+  return derivePrfSecret([cred.rawId])
+}
+
+/**
+ * Re-derive the secret from an existing (possibly platform-synced) passkey — the
+ * unlock path on a returning or fresh device. Empty `allowCredentials` lets the
+ * platform offer the synced passkey without us knowing its id.
+ */
+export async function unlockPasskeyPrf(): Promise<string> {
+  if (!isPasskeyPrfSupported()) {
+    throw new Error('Passkeys are not supported in this browser')
+  }
+  return derivePrfSecret([])
+}
+
+/** Drive a WebAuthn assertion that evaluates the PRF and returns its output. */
+async function derivePrfSecret(allow: ArrayBuffer[]): Promise<string> {
+  const assertion = (await navigator.credentials.get({
+    publicKey: {
+      rpId: rpId(),
+      challenge: randomBytes(32),
+      allowCredentials: allow.map((id) => ({ type: 'public-key' as const, id })),
+      userVerification: 'required',
+      extensions: { prf: { eval: { first: PRF_SALT } } } as unknown as
+        AuthenticationExtensionsClientInputs,
+    },
+  })) as PublicKeyCredential | null
+
+  if (!assertion) throw new Error('Passkey unlock was cancelled')
+
+  const results = (assertion.getClientExtensionResults() as unknown as PrfExtensionResults).prf
+    ?.results
+  if (!results?.first) {
+    throw new Error('This passkey does not support PRF — a recovery key is required')
+  }
+  return toBase64Url(results.first)
+}
+
+/** The relying-party id: the current host (`localhost` in dev). */
+function rpId(): string {
+  return window.location.hostname
+}
+
+function randomBytes(n: number): BufferSource {
+  const b = new Uint8Array(n)
+  crypto.getRandomValues(b)
+  return b
+}
+
+/** Encode the 32-byte PRF output as url-safe base64 (the passphrase string). */
+function toBase64Url(buf: ArrayBuffer): string {
+  let s = ''
+  for (const byte of new Uint8Array(buf)) s += String.fromCharCode(byte)
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+// Re-exported so phase 3 (and tests) can reference the input type without a cast.
+export type { PrfInputs }
