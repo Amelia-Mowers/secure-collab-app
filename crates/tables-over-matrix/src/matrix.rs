@@ -55,30 +55,67 @@ mod matrix_impl {
     /// retry; the retry skips backup creation and only bootstraps secret
     /// storage around the existing backup.
     pub async fn enable_recovery(client: &Client) -> Result<String> {
+        enable_recovery_inner(client, None).await
+    }
+
+    /// Like [`enable_recovery`], but derive the secret-storage key from a
+    /// **passphrase** (PBKDF2) rather than a random recovery key. This is the
+    /// basis for passkey / WebAuthn-PRF custody: the PRF output is the
+    /// passphrase, so the SSSS key is unlocked by a biometric gesture instead of
+    /// a saved string. The returned recovery key still works as a break-glass
+    /// fallback, and a later device restores by passing the **same passphrase**
+    /// to [`MatrixClient::recover_with_key`] (the SDK's `recover` accepts either
+    /// a passphrase or a Base58 recovery key).
+    pub async fn enable_recovery_with_passphrase(
+        client: &Client,
+        passphrase: &str,
+    ) -> Result<String> {
+        enable_recovery_inner(client, Some(passphrase)).await
+    }
+
+    /// One enable attempt, optionally keyed by a passphrase. The builder chain is
+    /// kept inline (not bound to a `let`) so the intermediate `Encryption` /
+    /// `Recovery` temporaries it borrows live across the `.await`.
+    async fn try_enable_recovery(
+        client: &Client,
+        passphrase: Option<&str>,
+    ) -> Result<String, matrix_sdk::encryption::recovery::RecoveryError> {
+        match passphrase {
+            Some(p) => {
+                client
+                    .encryption()
+                    .recovery()
+                    .enable()
+                    .wait_for_backups_to_upload()
+                    .with_passphrase(p)
+                    .await
+            }
+            None => {
+                client
+                    .encryption()
+                    .recovery()
+                    .enable()
+                    .wait_for_backups_to_upload()
+                    .await
+            }
+        }
+    }
+
+    /// Shared enable logic with the auto-backup-race retry (see the doc on
+    /// [`enable_recovery`]), parameterised by an optional passphrase.
+    async fn enable_recovery_inner(client: &Client, passphrase: Option<&str>) -> Result<String> {
         use matrix_sdk::encryption::recovery::RecoveryError;
 
-        match client
-            .encryption()
-            .recovery()
-            .enable()
-            .wait_for_backups_to_upload()
-            .await
-        {
+        match try_enable_recovery(client, passphrase).await {
             Ok(recovery_key) => {
                 info!("Secure backup + recovery enabled");
                 Ok(recovery_key)
             }
             Err(RecoveryError::BackupExistsOnServer) => {
                 wait_until_backups_enabled(client, 40).await?;
-                let recovery_key = client
-                    .encryption()
-                    .recovery()
-                    .enable()
-                    .wait_for_backups_to_upload()
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!("Failed to enable recovery after auto-backup settled: {e}")
-                    })?;
+                let recovery_key = try_enable_recovery(client, passphrase).await.map_err(|e| {
+                    anyhow::anyhow!("Failed to enable recovery after auto-backup settled: {e}")
+                })?;
                 info!("Secure backup + recovery enabled (after auto-backup race)");
                 Ok(recovery_key)
             }
@@ -561,10 +598,21 @@ mod matrix_impl {
             enable_recovery(&self.client).await
         }
 
+        /// Enable Secure Backup + Recovery keyed by a **passphrase** instead of a
+        /// random recovery key — the basis for passkey / WebAuthn-PRF custody
+        /// (the PRF output is the passphrase). See
+        /// [`enable_recovery_with_passphrase`]. Restore later with the same
+        /// passphrase via [`recover_with_key`](Self::recover_with_key).
+        pub async fn enable_recovery_with_passphrase(&self, passphrase: &str) -> Result<String> {
+            enable_recovery_with_passphrase(&self.client, passphrase).await
+        }
+
         /// Restore secrets (including the backup decryption key) from Secure
-        /// Backup using a previously-saved recovery key. Afterwards the SDK
-        /// downloads room keys from backup so this device can decrypt history
-        /// that was sent before it existed — the multi-device promise.
+        /// Backup. `recovery_key` may be either a Base58 recovery key **or a
+        /// passphrase** (the SDK's `open_secret_store` accepts both) — so this is
+        /// also the unlock path for passphrase / passkey-PRF custody. Afterwards
+        /// the SDK downloads room keys from backup so this device can decrypt
+        /// history that was sent before it existed — the multi-device promise.
         pub async fn recover_with_key(&self, recovery_key: &str) -> Result<()> {
             self.client
                 .encryption()
