@@ -16,7 +16,11 @@ cargo build -p tidework-cli          # produces the `tidework` binary
 cargo run   -p tidework-cli -- --help
 ```
 
-State is persisted under `~/.tidework/`:
+The native build bundles SQLite (compiled from source), so it links without a
+system `sqlite3` — it just needs a C toolchain (MSVC Build Tools on Windows,
+`cc` elsewhere). Builds and runs natively on Windows, macOS, and Linux.
+
+State is persisted under `~/.tidework/` (`%USERPROFILE%\.tidework\` on Windows):
 
 | file/dir       | purpose                                                    |
 | -------------- | ---------------------------------------------------------- |

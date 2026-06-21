@@ -27,6 +27,14 @@ uuid = { workspace = true }
 matrix-sdk = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 
+# When the native SQLite store is used (`matrix-native`), bundle SQLite —
+# compile it from source via libsqlite3-sys — so linking needs no system
+# `sqlite3.lib`. Required on Windows/MSVC (no system SQLite is present);
+# harmless elsewhere (a C compiler builds the amalgamation). Version tracks the
+# libsqlite3-sys that matrix-sdk-sqlite resolves, so the bundled feature unifies
+# onto the same crate rather than adding a second copy.
+libsqlite3-sys = { version = "0.35", features = ["bundled"], optional = true }
+
 # WASM support
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
@@ -56,8 +64,9 @@ default = ["wasm"]
 matrix = ["matrix-sdk", "futures"]
 # Matrix for WASM targets (IndexedDB store + JS interop)
 matrix-wasm = ["matrix", "matrix-sdk/indexeddb", "matrix-sdk/js", "getrandom_03"]
-# Matrix for native targets (SQLite store — used by integration tests)
-matrix-native = ["matrix", "matrix-sdk/sqlite"]
+# Matrix for native targets (SQLite store — used by integration tests + CLI).
+# Bundles SQLite so the native link needs no system sqlite3 (notably Windows).
+matrix-native = ["matrix", "matrix-sdk/sqlite", "dep:libsqlite3-sys"]
 # WASM bridge support (always on for our browser-first target)
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "tracing-wasm"]
 # Red/pending integration tests — expected to FAIL until the surface they spec
