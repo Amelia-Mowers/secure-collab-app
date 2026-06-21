@@ -16,6 +16,7 @@ tables-over-matrix = { path = "../tables-over-matrix", default-features = false,
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+indexmap = "2"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
