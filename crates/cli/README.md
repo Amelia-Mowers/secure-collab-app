@@ -88,6 +88,10 @@ tidework column set "Issues" Bugs status --options open,in-progress,closed --def
 tidework row add "Issues" Bugs title="Login fails" status=open priority=1
 tidework table show "Issues" Bugs            # cold-starts the room + renders rows
 
+# Update an existing row by its id (the ROW column in `table show`). Only the
+# named cells change — every other cell on the row is left untouched:
+tidework row set "Issues" Bugs <row-id> status=closed
+
 # Filter + sort (read-side). --where is repeatable (AND); ops are = != ~ > >= < <=.
 # --sort takes a column; prefix - for descending, repeat for multi-key:
 tidework table show "Issues" Bugs --where status=open --sort priority
