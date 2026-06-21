@@ -71,8 +71,8 @@ A workspace is an encrypted Matrix room; a `<ws>` argument is either a room id
 tidework workspace create "Issues"          # create an encrypted workspace
 tidework workspace list                      # NAME + ROOM ID
 
-# Columns are name:type (type ∈ text|number|boolean|date|select|multiselect|json;
-# defaults to text):
+# Columns are name:type (type ∈
+# text|number|boolean|date|select|multiselect|document|json; defaults to text):
 tidework table create "Issues" Bugs --columns title:text,status:select,priority:number
 tidework table list "Issues"
 

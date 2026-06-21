@@ -428,6 +428,25 @@ work (templates #51, row-reorder #52, shadow row #43) — prioritize these.
 
 ---
 
+## CLI — native command-line client (`crates/cli`)
+
+A native `tidework` binary that reuses the Rust core for dogfooding without a
+browser: password + OAuth/MAS login, verify-from-backup at login, and
+workspace/table/row CRUD (`workspace create|list`, `table create|list|show`,
+`row add`). Builds natively on Windows/macOS/Linux (bundled SQLite). See
+[[tidework-cli-dogfooding]].
+
+- [ ] **Query with filters + sort** — let read commands filter and order rows,
+  e.g. `tidework table show <ws> Issues --where status=open --sort priority`
+  (and `--sort -priority` for descending) so you can pull "open issues by
+  priority". Support basic predicates (`col=val`, `col!=val`, `col~substr`,
+  maybe numeric `<`/`>`) and multi-key sort. Today `table show` dumps every row
+  in row-order only. (Filtering/sorting is read-side over the cold-started
+  `Workspace` — no schema/protocol change.)
+- [ ] **Row / column delete + reorder, and a `bench` command** — round out
+  mutation parity with the app (delete/reorder rows + columns) and add a
+  perf/bench subcommand for the capacity-testing work above.
+
 ## P2 — Housekeeping
 
 - [x] **Separate generated WASM output from hand-written code** — `[§5]` —
