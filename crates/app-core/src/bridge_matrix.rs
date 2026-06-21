@@ -47,6 +47,7 @@ pub struct WorkspaceMarkerEventContent {
 }
 
 use crate::workspace::Workspace;
+use matrix_sdk::crypto::CollectStrategy;
 use tables_over_matrix::{default_encryption_settings, CellUpdate, MatrixClient};
 
 /// Sanitize a string for use as part of an IndexedDB database name.
@@ -140,6 +141,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share Megolm keys only with devices cross-signed by their owner's
+            // identity (not "all devices"): a device injected by a malicious
+            // homeserver/MAS isn't signed by the user's identity, so it gets no
+            // future keys — closing the future-read-via-bump reconstruction.
+            // See the ADR 0001 addendum.
+            .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
             // Share encrypted room history with invitees (MSC4268) so new
             // collaborators can decrypt workspace data written before they
             // joined; mirrors MatrixClient::new. Requires a homeserver that
@@ -190,6 +197,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share Megolm keys only with devices cross-signed by their owner's
+            // identity (not "all devices"): a device injected by a malicious
+            // homeserver/MAS isn't signed by the user's identity, so it gets no
+            // future keys — closing the future-read-via-bump reconstruction.
+            // See the ADR 0001 addendum.
+            .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
             // Share encrypted room history with invitees (MSC4268) so new
             // collaborators can decrypt workspace data written before they
             // joined; mirrors MatrixClient::new. Requires a homeserver that
@@ -528,6 +541,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share Megolm keys only with devices cross-signed by their owner's
+            // identity (not "all devices"): a device injected by a malicious
+            // homeserver/MAS isn't signed by the user's identity, so it gets no
+            // future keys — closing the future-read-via-bump reconstruction.
+            // See the ADR 0001 addendum.
+            .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
             // Share encrypted room history with invitees (MSC4268) so new
             // collaborators can decrypt workspace data written before they
             // joined; mirrors MatrixClient::new. Requires a homeserver that
@@ -626,6 +645,12 @@ impl MatrixSession {
             .homeserver_url(&homeserver_url)
             .indexeddb_store(&store_name, None)
             .with_encryption_settings(default_encryption_settings())
+            // Share Megolm keys only with devices cross-signed by their owner's
+            // identity (not "all devices"): a device injected by a malicious
+            // homeserver/MAS isn't signed by the user's identity, so it gets no
+            // future keys — closing the future-read-via-bump reconstruction.
+            // See the ADR 0001 addendum.
+            .with_room_key_recipient_strategy(CollectStrategy::IdentityBasedStrategy)
             // Share encrypted room history with invitees (MSC4268) so new
             // collaborators can decrypt workspace data written before they
             // joined; mirrors MatrixClient::new. Requires a homeserver that
