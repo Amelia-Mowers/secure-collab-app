@@ -144,6 +144,19 @@ enum RowCmd {
         #[arg(required = true)]
         cells: Vec<String>,
     },
+    /// Update cells of an existing row (only the named columns change; the rest
+    /// are left untouched). The row id is the value in `table show`'s ROW column.
+    Set {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// Row id (from `table show`).
+        row: String,
+        /// `column=value` assignments.
+        #[arg(required = true)]
+        cells: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -241,6 +254,12 @@ async fn run() -> Result<()> {
                 table,
                 cells,
             } => crud::row_add(workspace, table, cells).await,
+            RowCmd::Set {
+                workspace,
+                table,
+                row,
+                cells,
+            } => crud::row_set(workspace, table, row, cells).await,
         },
         Command::Column { command } => match command {
             ColumnCmd::Add {

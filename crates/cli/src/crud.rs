@@ -10,7 +10,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use app_core::{ColumnDefinition, ColumnType, TableDefinition, Workspace};
-use tables_over_matrix::MatrixClient;
+use tables_over_matrix::{CellUpdate, MatrixClient};
 
 use crate::session;
 
@@ -599,18 +599,7 @@ pub async fn row_add(workspace: String, table: String, cells: Vec<String>) -> Re
         .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
 
     let row_id = uuid::Uuid::new_v4().to_string();
-    let mut updates = Vec::new();
-    for assignment in &cells {
-        let (col, raw) = assignment
-            .split_once('=')
-            .ok_or_else(|| anyhow!("expected column=value, got {assignment:?}"))?;
-        let col_id = resolve_column(&schema, col)?;
-        let value = coerce_and_validate(&schema.columns[&col_id], raw)?;
-        updates.extend(
-            ws.update_cell_with_bump(&table_id, &row_id, &col_id, value)
-                .map_err(|e| anyhow!("writing cell: {e}"))?,
-        );
-    }
+    let updates = apply_cells(&mut ws, &schema, &table_id, &row_id, &cells)?;
 
     client
         .send_cell_batch(&updates)
@@ -618,6 +607,74 @@ pub async fn row_add(workspace: String, table: String, cells: Vec<String>) -> Re
         .context("sending row")?;
     println!("Added row {row_id} to \"{}\"", schema.name);
     Ok(())
+}
+
+pub async fn row_set(
+    workspace: String,
+    table: String,
+    row_id: String,
+    cells: Vec<String>,
+) -> Result<()> {
+    if cells.is_empty() {
+        return Err(anyhow!("provide at least one column=value pair"));
+    }
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let schema = ws
+        .get_table_schema(&table_id)
+        .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
+
+    // Require the row to already exist so a mistyped id can't silently create a
+    // phantom row.
+    let exists = ws
+        .get_table_rows(&table_id)
+        .map_err(|e| anyhow!("reading rows: {e}"))?
+        .iter()
+        .any(|r| r.get("_row_id").and_then(|v| v.as_str()) == Some(row_id.as_str()));
+    if !exists {
+        return Err(anyhow!(
+            "no row {row_id:?} in table {table_id} — check `tidework table show`"
+        ));
+    }
+
+    // Only the named cells change; every other cell on the row is left as-is.
+    let updates = apply_cells(&mut ws, &schema, &table_id, &row_id, &cells)?;
+
+    client
+        .send_cell_batch(&updates)
+        .await
+        .context("sending row update")?;
+    println!("Updated row {row_id} in \"{}\"", schema.name);
+    Ok(())
+}
+
+/// Build the cell updates for a set of `column=value` assignments against one
+/// row (shared by `row add` and `row set`). Each assignment writes exactly one
+/// cell — columns not listed are untouched. Values are validated per column.
+fn apply_cells(
+    ws: &mut Workspace,
+    schema: &TableDefinition,
+    table_id: &str,
+    row_id: &str,
+    cells: &[String],
+) -> Result<Vec<CellUpdate>> {
+    let mut updates = Vec::new();
+    for assignment in cells {
+        let (col, raw) = assignment
+            .split_once('=')
+            .ok_or_else(|| anyhow!("expected column=value, got {assignment:?}"))?;
+        let col_id = resolve_column(schema, col)?;
+        let value = coerce_and_validate(&schema.columns[&col_id], raw)?;
+        updates.extend(
+            ws.update_cell_with_bump(table_id, row_id, &col_id, value)
+                .map_err(|e| anyhow!("writing cell: {e}"))?,
+        );
+    }
+    Ok(updates)
 }
 
 pub async fn column_add(workspace: String, table: String, spec: String) -> Result<()> {
