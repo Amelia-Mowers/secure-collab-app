@@ -87,6 +87,11 @@ tidework column set "Issues" Bugs status --options open,in-progress,closed --def
 # write is rejected (multiselect takes a comma-separated list):
 tidework row add "Issues" Bugs title="Login fails" status=open priority=1
 tidework table show "Issues" Bugs            # cold-starts the room + renders rows
+
+# Filter + sort (read-side). --where is repeatable (AND); ops are = != ~ > >= < <=.
+# --sort takes a column; prefix - for descending, repeat for multi-key:
+tidework table show "Issues" Bugs --where status=open --sort priority
+tidework table show "Issues" Bugs --where priority<=1 --where title~login --sort -opened
 ```
 
 Read commands cold-start the workspace by replaying the room's history, so they

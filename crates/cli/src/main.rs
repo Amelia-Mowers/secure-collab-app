@@ -115,12 +115,20 @@ enum TableCmd {
         /// Workspace (room id or name).
         workspace: String,
     },
-    /// Show a table's rows.
+    /// Show a table's rows, optionally filtered and sorted.
     Show {
         /// Workspace (room id or name).
         workspace: String,
         /// Table (id or name).
         table: String,
+        /// Filter `col<op>value` (op: = != ~ > >= < <=); repeatable, AND-ed.
+        /// e.g. --where status=open --where priority<=1
+        #[arg(long = "where", allow_hyphen_values = true)]
+        filter: Vec<String>,
+        /// Sort by column; prefix `-` for descending. Repeatable for multi-key.
+        /// e.g. --sort priority --sort -opened
+        #[arg(long, allow_hyphen_values = true)]
+        sort: Vec<String>,
     },
 }
 
@@ -220,7 +228,12 @@ async fn run() -> Result<()> {
                 columns,
             } => crud::table_create(workspace, name, columns).await,
             TableCmd::List { workspace } => crud::table_list(workspace).await,
-            TableCmd::Show { workspace, table } => crud::table_show(workspace, table).await,
+            TableCmd::Show {
+                workspace,
+                table,
+                filter,
+                sort,
+            } => crud::table_show(workspace, table, filter, sort).await,
         },
         Command::Row { command } => match command {
             RowCmd::Add {

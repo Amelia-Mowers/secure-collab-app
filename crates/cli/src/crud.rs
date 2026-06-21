@@ -363,7 +363,12 @@ pub async fn table_list(workspace: String) -> Result<()> {
     Ok(())
 }
 
-pub async fn table_show(workspace: String, table: String) -> Result<()> {
+pub async fn table_show(
+    workspace: String,
+    table: String,
+    filters: Vec<String>,
+    sorts: Vec<String>,
+) -> Result<()> {
     let mut client = restore_client().await?;
     client.sync_once().await.context("initial sync")?;
     let room_id = resolve_workspace(&client, &workspace).await?;
@@ -379,14 +384,30 @@ pub async fn table_show(workspace: String, table: String) -> Result<()> {
     cols.sort_by_key(|c| c.order.unwrap_or(i64::MAX));
     let col_ids: Vec<String> = cols.iter().map(|c| c.id.clone()).collect();
 
+    // Parse the query, resolving column names against this table's schema.
+    let predicates = filters
+        .iter()
+        .map(|f| parse_predicate(&schema, f))
+        .collect::<Result<Vec<_>>>()?;
+    let sort_keys = sorts
+        .iter()
+        .map(|s| parse_sort_key(&schema, s))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut rows = ws
+        .get_table_rows(&table_id)
+        .map_err(|e| anyhow!("reading rows: {e}"))?;
+    let total = rows.len();
+    rows.retain(|row| predicates.iter().all(|p| p.matches(row)));
+    if !sort_keys.is_empty() {
+        rows.sort_by(|a, b| compare_by_keys(a, b, &sort_keys));
+    }
+    let shown = rows.len();
+
     let mut grid: Vec<Vec<String>> = Vec::new();
     let mut header = vec!["ROW".to_string()];
     header.extend(cols.iter().map(|c| c.name.to_uppercase()));
     grid.push(header);
-
-    let rows = ws
-        .get_table_rows(&table_id)
-        .map_err(|e| anyhow!("reading rows: {e}"))?;
     for row in &rows {
         let mut line = vec![row
             .get("_row_id")
@@ -400,8 +421,167 @@ pub async fn table_show(workspace: String, table: String) -> Result<()> {
     }
 
     print_aligned(&grid);
-    println!("\n{} row(s)", rows.len());
+    if shown == total {
+        println!("\n{shown} row(s)");
+    } else {
+        println!("\n{shown} of {total} row(s)");
+    }
     Ok(())
+}
+
+// ── query: --where filters and --sort keys (read-side over materialized rows) ──
+
+type Row = indexmap::IndexMap<String, serde_json::Value>;
+
+#[derive(Clone, Copy)]
+enum Op {
+    Eq,
+    Ne,
+    Contains,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+}
+
+struct Predicate {
+    col_id: String,
+    op: Op,
+    value: String,
+}
+
+/// Split a `--where` expression into (column, operator, value), checking the
+/// two-char operators (`!=`, `>=`, `<=`) before the single-char ones.
+fn split_predicate(s: &str) -> Option<(&str, Op, &str)> {
+    let bytes = s.as_bytes();
+    for i in 0..s.len() {
+        let rest = &s[i..];
+        for (tok, op) in [("!=", Op::Ne), (">=", Op::Ge), ("<=", Op::Le)] {
+            if rest.starts_with(tok) {
+                return Some((&s[..i], op, &s[i + 2..]));
+            }
+        }
+        for (ch, op) in [
+            ('~', Op::Contains),
+            ('>', Op::Gt),
+            ('<', Op::Lt),
+            ('=', Op::Eq),
+        ] {
+            if bytes[i] == ch as u8 {
+                return Some((&s[..i], op, &s[i + 1..]));
+            }
+        }
+    }
+    None
+}
+
+fn parse_predicate(schema: &TableDefinition, s: &str) -> Result<Predicate> {
+    let (col, op, value) = split_predicate(s).ok_or_else(|| {
+        anyhow!("invalid --where {s:?}; expected col<op>value (op: = != ~ > >= < <=)")
+    })?;
+    Ok(Predicate {
+        col_id: resolve_column(schema, col.trim())?,
+        op,
+        value: value.trim().to_string(),
+    })
+}
+
+impl Predicate {
+    fn matches(&self, row: &Row) -> bool {
+        let cell = row.get(&self.col_id);
+        match self.op {
+            Op::Eq => cell.is_some_and(|v| render_value(v) == self.value),
+            // A missing cell is "not equal" to any value.
+            Op::Ne => cell.map(|v| render_value(v) != self.value).unwrap_or(true),
+            Op::Contains => cell.is_some_and(|v| {
+                render_value(v)
+                    .to_lowercase()
+                    .contains(&self.value.to_lowercase())
+            }),
+            Op::Gt | Op::Ge | Op::Lt | Op::Le => {
+                let (Some(a), Ok(b)) = (cell.and_then(as_number), self.value.parse::<f64>()) else {
+                    return false;
+                };
+                match self.op {
+                    Op::Gt => a > b,
+                    Op::Ge => a >= b,
+                    Op::Lt => a < b,
+                    Op::Le => a <= b,
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+}
+
+fn as_number(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+}
+
+struct SortKey {
+    col_id: String,
+    desc: bool,
+    numeric: bool,
+}
+
+fn parse_sort_key(schema: &TableDefinition, s: &str) -> Result<SortKey> {
+    let (desc, name) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let col_id = resolve_column(schema, name.trim())?;
+    let numeric = matches!(schema.columns[&col_id].column_type, ColumnType::Number);
+    Ok(SortKey {
+        col_id,
+        desc,
+        numeric,
+    })
+}
+
+fn compare_by_keys(a: &Row, b: &Row, keys: &[SortKey]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    for k in keys {
+        // Missing values sort last (ascending), before any `desc` reversal.
+        let mut ord = if k.numeric {
+            cmp_option(
+                a.get(&k.col_id).and_then(as_number),
+                b.get(&k.col_id).and_then(as_number),
+                |x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal),
+            )
+        } else {
+            cmp_option(
+                a.get(&k.col_id).map(render_value),
+                b.get(&k.col_id).map(render_value),
+                |x, y| x.cmp(y),
+            )
+        };
+        if k.desc {
+            ord = ord.reverse();
+        }
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+    // Stable tiebreak by row id.
+    let aid = a.get("_row_id").and_then(|v| v.as_str()).unwrap_or("");
+    let bid = b.get("_row_id").and_then(|v| v.as_str()).unwrap_or("");
+    aid.cmp(bid)
+}
+
+/// Compare two `Option`s with present-before-absent so missing values sort last.
+fn cmp_option<T>(
+    a: Option<T>,
+    b: Option<T>,
+    cmp: impl Fn(&T, &T) -> std::cmp::Ordering,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a, b) {
+        (Some(x), Some(y)) => cmp(&x, &y),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
 }
 
 pub async fn row_add(workspace: String, table: String, cells: Vec<String>) -> Result<()> {
@@ -548,4 +728,101 @@ pub async fn column_set(
         .context("sending column update")?;
     println!("Updated column \"{display_name}\" ({col_id}) in table {table_id}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn schema() -> TableDefinition {
+        TableDefinition::new("t", "T")
+            .with_column(
+                ColumnDefinition::new("status", "Status", ColumnType::Select).with_order(0),
+            )
+            .with_column(
+                ColumnDefinition::new("priority", "Priority", ColumnType::Number).with_order(1),
+            )
+            .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text).with_order(2))
+    }
+
+    fn row(id: &str, status: &str, pri: i64, name: &str) -> Row {
+        let mut r = Row::new();
+        r.insert("_row_id".into(), json!(id));
+        r.insert("status".into(), json!(status));
+        r.insert("priority".into(), json!(pri));
+        r.insert("name".into(), json!(name));
+        r
+    }
+
+    fn pred(s: &str) -> Predicate {
+        parse_predicate(&schema(), s).unwrap()
+    }
+
+    #[test]
+    fn where_eq_ne_contains() {
+        let r = row("1", "open", 2, "Fix login");
+        assert!(pred("status=open").matches(&r));
+        assert!(!pred("status=closed").matches(&r));
+        assert!(pred("status!=closed").matches(&r));
+        assert!(pred("name~login").matches(&r)); // case-insensitive substring
+        assert!(pred("name~LOGIN").matches(&r));
+        assert!(!pred("name~logout").matches(&r));
+    }
+
+    #[test]
+    fn where_numeric_ops() {
+        let r = row("1", "open", 2, "x");
+        assert!(pred("priority<=2").matches(&r));
+        assert!(pred("priority>=2").matches(&r));
+        assert!(pred("priority>1").matches(&r));
+        assert!(!pred("priority<2").matches(&r));
+    }
+
+    #[test]
+    fn where_resolves_by_name_and_handles_missing_cell() {
+        let mut r = Row::new();
+        r.insert("_row_id".into(), json!("1"));
+        // No status cell: `=` is false, `!=` is true.
+        assert!(!pred("status=open").matches(&r));
+        assert!(pred("status!=open").matches(&r));
+        // Column resolved by display name.
+        r.insert("priority".into(), json!(3));
+        assert!(pred("Priority>=3").matches(&r));
+    }
+
+    #[test]
+    fn bad_predicate_errors() {
+        assert!(parse_predicate(&schema(), "statusopen").is_err()); // no operator
+        assert!(parse_predicate(&schema(), "nope=x").is_err()); // unknown column
+    }
+
+    fn sorted_ids(rows: &mut [Row], key: &str) -> Vec<String> {
+        let sk = vec![parse_sort_key(&schema(), key).unwrap()];
+        rows.sort_by(|a, b| compare_by_keys(a, b, &sk));
+        rows.iter()
+            .map(|r| r.get("_row_id").unwrap().as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn sort_numeric_and_string_asc_desc() {
+        // priorities 2,0,1 with ids a,b,c.
+        let mut rows = vec![
+            row("a", "open", 2, "banana"),
+            row("b", "open", 0, "apple"),
+            row("c", "open", 1, "cherry"),
+        ];
+        assert_eq!(sorted_ids(&mut rows, "priority"), ["b", "c", "a"]);
+        assert_eq!(sorted_ids(&mut rows, "-priority"), ["a", "c", "b"]);
+        assert_eq!(sorted_ids(&mut rows, "name"), ["b", "a", "c"]); // apple,banana,cherry
+    }
+
+    #[test]
+    fn missing_sort_value_sorts_last() {
+        let mut missing = Row::new();
+        missing.insert("_row_id".into(), json!("z"));
+        let mut rows = vec![row("a", "open", 1, "a"), missing];
+        assert_eq!(sorted_ids(&mut rows, "priority"), ["a", "z"]);
+    }
 }

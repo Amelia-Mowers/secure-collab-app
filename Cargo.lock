@@ -3619,6 +3619,7 @@ dependencies = [
  "anyhow",
  "app-core",
  "clap",
+ "indexmap",
  "serde",
  "serde_json",
  "tables-over-matrix",
