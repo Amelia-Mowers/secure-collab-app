@@ -82,6 +82,10 @@ jobs:
       # Lint app-core with Matrix SDK on native
       - name: Clippy (app-core matrix-native)
         run: cargo clippy -p app-core --no-default-features --features matrix-native --all-targets -- -D warnings
+      # Lint the native CLI (pulls app-core + tables-over-matrix with
+      # matrix-native; this is the only job that compiles the cli crate).
+      - name: Clippy (cli)
+        run: cargo clippy -p tidework-cli --all-targets -- -D warnings
 
   wasm:
     name: WASM Build

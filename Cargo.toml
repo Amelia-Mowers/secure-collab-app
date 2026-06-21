@@ -2,6 +2,15 @@
 members = [
     "crates/tables-over-matrix",
     "crates/app-core",
+    "crates/cli",
+]
+# The native `cli` binary is excluded from default (whole-workspace) commands so
+# they keep resolving the wasm-default features for the two library crates.
+# Build/test the cli explicitly with `-p tidework-cli` (it pulls app-core with
+# `matrix-native`, default features off, so wasm + native never unify).
+default-members = [
+    "crates/tables-over-matrix",
+    "crates/app-core",
 ]
 resolver = "2"
 

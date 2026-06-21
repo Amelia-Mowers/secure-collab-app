@@ -600,6 +600,148 @@ mod matrix_impl {
         }
     }
 
+    // ── Native CLI support: persistent SQLite store + session save/restore ──
+    //
+    // The WASM bridge persists sessions to a JS-side blob and uses an IndexedDB
+    // store; a native CLI persists to disk and uses a SQLite store. These methods
+    // mirror the bridge's session blob shape so the two stay format-compatible.
+    #[cfg(feature = "matrix-native")]
+    impl MatrixClient {
+        /// Build a client backed by a persistent SQLite store at `store_path`, so
+        /// the device identity, crypto keys, and session survive across runs.
+        pub async fn with_sqlite_store(
+            homeserver_url: &str,
+            store_path: &std::path::Path,
+        ) -> Result<Self> {
+            let client = Client::builder()
+                .homeserver_url(homeserver_url)
+                .sqlite_store(store_path, None)
+                .with_enable_share_history_on_invite(true)
+                .with_encryption_settings(default_encryption_settings())
+                .handle_refresh_tokens()
+                .build()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to build client: {e}"))?;
+            Ok(Self {
+                client,
+                room_id: None,
+            })
+        }
+
+        /// Serialize the active session for on-disk persistence. Mirrors the WASM
+        /// bridge blob (`kind`/`userId`/`deviceId`/`accessToken`[`/refreshToken`/
+        /// `clientId`]) so the formats stay compatible.
+        pub fn session_json(&self) -> Option<String> {
+            let data = match self.client.session()? {
+                matrix_sdk::AuthSession::Matrix(ms) => serde_json::json!({
+                    "kind": "password",
+                    "userId": ms.meta.user_id.to_string(),
+                    "deviceId": ms.meta.device_id.to_string(),
+                    "accessToken": ms.tokens.access_token,
+                }),
+                matrix_sdk::AuthSession::OAuth(os) => serde_json::json!({
+                    "kind": "oauth",
+                    "userId": os.user.meta.user_id.to_string(),
+                    "deviceId": os.user.meta.device_id.to_string(),
+                    "accessToken": os.user.tokens.access_token,
+                    "refreshToken": os.user.tokens.refresh_token,
+                    "clientId": os.client_id.as_str(),
+                }),
+                _ => return None,
+            };
+            serde_json::to_string(&data).ok()
+        }
+
+        /// Restore a client from a saved session blob against the same SQLite
+        /// store (so the persisted device + crypto keys are reused).
+        pub async fn restore_with_store(
+            homeserver_url: &str,
+            store_path: &std::path::Path,
+            session_json: &str,
+        ) -> Result<Self> {
+            use matrix_sdk::authentication::oauth::{
+                ClientId, OAuthSession as SdkOAuthSession, UserSession,
+            };
+            use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId};
+            use matrix_sdk::{AuthSession, SessionMeta, SessionTokens};
+
+            #[derive(serde::Deserialize)]
+            struct Saved {
+                #[serde(rename = "userId")]
+                user_id: String,
+                #[serde(rename = "deviceId")]
+                device_id: String,
+                #[serde(rename = "accessToken")]
+                access_token: String,
+                #[serde(default)]
+                kind: Option<String>,
+                #[serde(rename = "refreshToken", default)]
+                refresh_token: Option<String>,
+                #[serde(rename = "clientId", default)]
+                client_id: Option<String>,
+            }
+            let saved: Saved = serde_json::from_str(session_json)
+                .map_err(|e| anyhow::anyhow!("Invalid session JSON: {e}"))?;
+
+            let client = Client::builder()
+                .homeserver_url(homeserver_url)
+                .sqlite_store(store_path, None)
+                .with_enable_share_history_on_invite(true)
+                .with_encryption_settings(default_encryption_settings())
+                .handle_refresh_tokens()
+                .build()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to build client: {e}"))?;
+
+            let user_id: OwnedUserId = saved
+                .user_id
+                .as_str()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid user id in session"))?;
+            let device_id: OwnedDeviceId = saved.device_id.into();
+            let meta = SessionMeta { user_id, device_id };
+
+            let sdk_session: AuthSession = if saved.kind.as_deref() == Some("oauth") {
+                let client_id = saved
+                    .client_id
+                    .ok_or_else(|| anyhow::anyhow!("OAuth session blob missing clientId"))?;
+                AuthSession::OAuth(Box::new(SdkOAuthSession {
+                    client_id: ClientId::new(client_id),
+                    user: UserSession {
+                        meta,
+                        tokens: SessionTokens {
+                            access_token: saved.access_token,
+                            refresh_token: saved.refresh_token,
+                        },
+                    },
+                }))
+            } else {
+                AuthSession::Matrix(matrix_sdk::authentication::matrix::MatrixSession {
+                    meta,
+                    tokens: SessionTokens {
+                        access_token: saved.access_token,
+                        refresh_token: None,
+                    },
+                })
+            };
+
+            client
+                .restore_session(sdk_session)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to restore session: {e}"))?;
+
+            Ok(Self {
+                client,
+                room_id: None,
+            })
+        }
+
+        /// The logged-in user id, if a session is active.
+        pub fn user_id(&self) -> Option<String> {
+            self.client.user_id().map(|u| u.to_string())
+        }
+    }
+
     /// Session information for persistence.
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
     pub struct SessionInfo {
