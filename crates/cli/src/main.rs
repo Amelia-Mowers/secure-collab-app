@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tables_over_matrix::MatrixClient;
 
+mod crud;
 mod oauth;
 mod session;
 
@@ -55,14 +56,88 @@ enum Command {
     Whoami,
     /// Log out: forget the saved session and delete the local crypto store.
     Logout,
+    /// Workspace (encrypted Matrix room) operations.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCmd,
+    },
+    /// Table operations within a workspace.
+    Table {
+        #[command(subcommand)]
+        command: TableCmd,
+    },
+    /// Row operations within a table.
+    Row {
+        #[command(subcommand)]
+        command: RowCmd,
+    },
+}
+
+/// A workspace argument is either a room id (starts with `!`) or a workspace
+/// name (resolved against your joined workspaces).
+#[derive(Subcommand)]
+enum WorkspaceCmd {
+    /// Create a new workspace and print its room id.
+    Create {
+        /// Display name for the workspace.
+        name: String,
+    },
+    /// List your workspaces.
+    List,
+}
+
+#[derive(Subcommand)]
+enum TableCmd {
+    /// Create a table. Columns are `name:type` (type defaults to `text`;
+    /// one of text|number|boolean|date|select|multiselect|json).
+    Create {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Display name for the table.
+        name: String,
+        /// Comma-separated `name:type` column specs.
+        #[arg(long, value_delimiter = ',', required = true)]
+        columns: Vec<String>,
+    },
+    /// List the tables in a workspace.
+    List {
+        /// Workspace (room id or name).
+        workspace: String,
+    },
+    /// Show a table's rows.
+    Show {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RowCmd {
+    /// Add a row. Cells are `column=value` pairs (column id or name).
+    Add {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// `column=value` assignments.
+        #[arg(required = true)]
+        cells: Vec<String>,
+    },
 }
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+            // Quiet the SDK's crypto chatter (missing-backup-key / undecryptable
+            // history of *other* rooms) by default; set RUST_LOG to override.
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new(
+                    "warn,matrix_sdk=error,matrix_sdk_crypto=error,matrix_sdk_base=error",
+                )
+            }),
         )
         .with_writer(std::io::stderr)
         .init();
@@ -90,6 +165,26 @@ async fn run() -> Result<()> {
         }
         Command::Whoami => whoami().await,
         Command::Logout => logout(),
+        Command::Workspace { command } => match command {
+            WorkspaceCmd::Create { name } => crud::workspace_create(name).await,
+            WorkspaceCmd::List => crud::workspace_list().await,
+        },
+        Command::Table { command } => match command {
+            TableCmd::Create {
+                workspace,
+                name,
+                columns,
+            } => crud::table_create(workspace, name, columns).await,
+            TableCmd::List { workspace } => crud::table_list(workspace).await,
+            TableCmd::Show { workspace, table } => crud::table_show(workspace, table).await,
+        },
+        Command::Row { command } => match command {
+            RowCmd::Add {
+                workspace,
+                table,
+                cells,
+            } => crud::row_add(workspace, table, cells).await,
+        },
     }
 }
 
