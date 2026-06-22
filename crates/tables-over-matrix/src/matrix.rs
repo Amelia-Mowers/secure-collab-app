@@ -73,6 +73,30 @@ mod matrix_impl {
         enable_recovery_inner(client, Some(passphrase)).await
     }
 
+    /// Re-key Secure Backup to a **passphrase** (a passkey's PRF secret),
+    /// rotating the secret-storage key and re-uploading the secrets under it.
+    /// Unlike [`enable_recovery_with_passphrase`], this is for an account that
+    /// ALREADY has recovery — a legacy raw-recovery-key account migrating to
+    /// passkey custody. The device must already hold the secrets (i.e. have
+    /// recovered) so they can be re-uploaded under the new key. Returns a fresh
+    /// break-glass recovery key; the old recovery key stops working.
+    ///
+    /// The builder chain is kept inline (not bound to a `let`) so the
+    /// intermediate `Encryption`/`Recovery` temporaries live across the `.await`
+    /// (mirrors [`try_enable_recovery`]).
+    pub async fn reset_recovery_with_passphrase(
+        client: &Client,
+        passphrase: &str,
+    ) -> Result<String> {
+        client
+            .encryption()
+            .recovery()
+            .reset_key()
+            .with_passphrase(passphrase)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to reset recovery key: {e}"))
+    }
+
     /// One enable attempt, optionally keyed by a passphrase. The builder chain is
     /// kept inline (not bound to a `let`) so the intermediate `Encryption` /
     /// `Recovery` temporaries it borrows live across the `.await`.

@@ -326,6 +326,22 @@ impl MatrixSession {
             .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
+    /// Re-key Secure Backup to a **passphrase** (a passkey's PRF secret) on an
+    /// account that ALREADY has recovery — the legacy-account migration to
+    /// passkey custody. Call only after the device has recovered (it must hold
+    /// the secrets to re-upload them). Rotates the secret-storage key and
+    /// returns a fresh break-glass recovery key; the previous recovery key (the
+    /// user's old master key) stops working.
+    #[wasm_bindgen(js_name = resetRecoveryWithPassphrase)]
+    pub async fn reset_recovery_with_passphrase(
+        &self,
+        passphrase: String,
+    ) -> Result<String, JsValue> {
+        tables_over_matrix::reset_recovery_with_passphrase(&self.client, &passphrase)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     /// Restore secrets from Secure Backup so this (returning) device can decrypt
     /// history sent before it existed. `recovery_key` may be a Base58 recovery
     /// key **or a passphrase** (e.g. a passkey-PRF-derived secret) — the SDK

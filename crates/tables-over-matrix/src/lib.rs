@@ -47,8 +47,8 @@ pub use table::{Table, ROW_DELETED_COLUMN, ROW_ORDER_COLUMN};
 #[cfg(feature = "matrix")]
 pub use matrix::{
     default_encryption_settings, enable_recovery, enable_recovery_with_passphrase,
-    CellBatchEventContent, CellUpdateEventContent, MatrixClient, ReceivedCellUpdate, SessionInfo,
-    CELL_BATCH_EVENT_TYPE, CELL_UPDATE_EVENT_TYPE,
+    reset_recovery_with_passphrase, CellBatchEventContent, CellUpdateEventContent, MatrixClient,
+    ReceivedCellUpdate, SessionInfo, CELL_BATCH_EVENT_TYPE, CELL_UPDATE_EVENT_TYPE,
 };
 
 /// Error types for the library.
