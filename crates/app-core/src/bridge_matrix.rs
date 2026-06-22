@@ -341,6 +341,53 @@ impl MatrixSession {
         Ok(())
     }
 
+    /// Whether the account's Secure Backup is keyed by a *passphrase* (the basis
+    /// of passkey / WebAuthn-PRF custody) rather than only a raw recovery key.
+    /// Read pre-unlock from unencrypted account data (the SSSS default key's KDF
+    /// info), so a new device can decide whether to offer passkey unlock before
+    /// it can unlock anything. Legacy accounts bootstrapped via `enableRecovery`
+    /// (raw key, no passphrase) return false; accounts set up with
+    /// `enableRecoveryWithPassphrase` return true. Leaks no new metadata — the
+    /// KDF info already lives in account data the homeserver can see.
+    #[wasm_bindgen(js_name = recoveryUsesPassphrase)]
+    pub async fn recovery_uses_passphrase(&self) -> Result<bool, JsValue> {
+        use matrix_sdk::ruma::events::GlobalAccountDataEventType;
+
+        let secret_storage = self.client.encryption().secret_storage();
+        let Some(default_key) = secret_storage
+            .fetch_default_key_id()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        else {
+            return Ok(false); // no Secure Backup at all
+        };
+        let key_id = match default_key.deserialize() {
+            Ok(content) => content.key_id,
+            Err(_) => return Ok(false),
+        };
+
+        let event_type: GlobalAccountDataEventType =
+            format!("m.secret_storage.key.{key_id}").as_str().into();
+        let Some(raw) = self
+            .client
+            .account()
+            .fetch_account_data(event_type)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        else {
+            return Ok(false);
+        };
+        // The key event carries a top-level `passphrase` object (KDF info) only
+        // when it was created with one; presence is all we need. (The typed
+        // `SecretStorageKeyEventContent` isn't plain-`Deserialize` — its event
+        // type is keyed — so probe the raw field instead.)
+        match raw.get_field::<serde_json::Value>("passphrase") {
+            Ok(passphrase) => Ok(passphrase.is_some()),
+            Err(_) => Ok(false),
+        }
+    }
+
+
     /// Create a new room (workspace) and return its room ID.
     /// Tags the room with a custom state event so it can be identified as
     /// a workspace when listing rooms.

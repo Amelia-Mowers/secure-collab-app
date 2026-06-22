@@ -134,6 +134,11 @@ interface AuthState {
   /** Whether passkey (WebAuthn-PRF) unlock is available in this browser. Gates
    *  the passkey options in the recovery/verify screens. */
   passkeyAvailable: boolean
+  /** Whether the *account* has a passkey enrolled (secure backup is keyed by a
+   *  passphrase, i.e. our passkey PRF). With `passkeyAvailable`, gates the
+   *  "Unlock with passkey" option on the verify gate — legacy accounts (raw
+   *  recovery key) are never offered a passkey they don't have. */
+  passkeyEnrolled: boolean
   /** First device (`setup` prompt): protect history with a passkey — registers
    *  a passkey, derives its PRF secret, and keys secure backup with it. Still
    *  yields a break-glass recovery key to save. */
@@ -300,6 +305,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // with no authenticator report false here, so they keep the recovery-key flow.
   const [passkeyAvailable, setPasskeyAvailable] = useState(false)
   const passkeyAvailableRef = useRef(false)
+  // Whether the account has a passkey enrolled (secure backup is passphrase-
+  // keyed). Determined from account data when the verify gate is reached, so a
+  // brand-new device can decide whether to offer passkey unlock before it can
+  // decrypt anything. See `recoveryUsesPassphrase` in the WASM bridge.
+  const [passkeyEnrolled, setPasskeyEnrolled] = useState(false)
   useEffect(() => {
     hasPlatformAuthenticator().then(ok => {
       passkeyAvailableRef.current = ok
@@ -475,6 +485,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (status === 'needs_bootstrap') {
           await bootstrapRecovery(ms)
         } else if (status === 'needs_recovery') {
+          // Offer passkey unlock only if the account actually has a passkey —
+          // i.e. secure backup is passphrase-keyed (our PRF). Legacy accounts
+          // (raw recovery key) would only see a dead-end button, so detect this
+          // before showing the gate. Guard for older bindings / mocks.
+          if (typeof ms.recoveryUsesPassphrase === 'function') {
+            try {
+              setPasskeyEnrolled(await ms.recoveryUsesPassphrase())
+            } catch (e) {
+              console.warn('[auth] passkey-enrollment check failed:', e)
+              setPasskeyEnrolled(false)
+            }
+          }
           // New device: must verify (or use its master key) before it can read
           // history. No bypass — only verifying or signing out moves forward.
           setRecoveryPrompt({ kind: 'verify' })
@@ -1208,6 +1230,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     dismissRecoveryPrompt,
     retryRecoverySetup,
     passkeyAvailable,
+    passkeyEnrolled,
     setupPasskeyRecovery,
     setupKeyRecovery,
     unlockWithPasskey,
