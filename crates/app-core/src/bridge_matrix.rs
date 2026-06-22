@@ -387,7 +387,6 @@ impl MatrixSession {
         }
     }
 
-
     /// Create a new room (workspace) and return its room ID.
     /// Tags the room with a custom state event so it can be identified as
     /// a workspace when listing rooms.
