@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   recoveryPrompt: null as any,
   verification: null as any,
   passkeyAvailable: false,
+  passkeyEnrolled: false,
   submitRecoveryKey: vi.fn(),
   dismissRecoveryPrompt: vi.fn(),
   retryRecoverySetup: vi.fn(async () => undefined),
@@ -23,6 +24,7 @@ vi.mock('../hooks/useAuth', () => ({
     recoveryPrompt: h.recoveryPrompt,
     verification: h.verification,
     passkeyAvailable: h.passkeyAvailable,
+    passkeyEnrolled: h.passkeyEnrolled,
     submitRecoveryKey: h.submitRecoveryKey,
     dismissRecoveryPrompt: h.dismissRecoveryPrompt,
     retryRecoverySetup: h.retryRecoverySetup,
@@ -44,6 +46,7 @@ describe('VerifyDeviceScreen', () => {
     h.recoveryPrompt = null
     h.verification = null
     h.passkeyAvailable = false
+    h.passkeyEnrolled = false
     Object.values(h).forEach(v => typeof v === 'function' && (v as any).mockReset?.())
   })
 
@@ -140,8 +143,9 @@ describe('VerifyDeviceScreen', () => {
       await waitFor(() => expect(h.startVerification).toHaveBeenCalledTimes(1))
     })
 
-    it('offers passkey unlock when available', async () => {
+    it('offers passkey unlock when the browser supports it AND the account is enrolled', async () => {
       h.passkeyAvailable = true
+      h.passkeyEnrolled = true
       h.unlockWithPasskey.mockResolvedValue(undefined)
       render(<VerifyDeviceScreen />)
       fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
@@ -149,8 +153,21 @@ describe('VerifyDeviceScreen', () => {
     })
 
     it('hides passkey unlock when the browser lacks passkey support', () => {
+      h.passkeyEnrolled = true // enrolled, but the browser has no authenticator
       render(<VerifyDeviceScreen />) // passkeyAvailable false
       expect(screen.queryByRole('button', { name: /unlock with passkey/i })).toBeNull()
+    })
+
+    it('hides passkey unlock for a legacy account (authenticator present but no passkey enrolled)', () => {
+      h.passkeyAvailable = true
+      h.passkeyEnrolled = false // raw-recovery-key account — no passkey to use
+      render(<VerifyDeviceScreen />)
+      expect(screen.queryByRole('button', { name: /unlock with passkey/i })).toBeNull()
+      // The non-passkey paths are still offered.
+      expect(
+        screen.getByRole('button', { name: /verify with another device/i }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /use your master key/i })).toBeInTheDocument()
     })
 
     it('restores with the trimmed master key', async () => {

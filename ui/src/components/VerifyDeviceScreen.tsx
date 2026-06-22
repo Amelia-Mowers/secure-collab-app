@@ -23,6 +23,7 @@ export function VerifyDeviceScreen() {
     dismissRecoveryPrompt,
     retryRecoverySetup,
     passkeyAvailable,
+    passkeyEnrolled,
     setupPasskeyRecovery,
     setupKeyRecovery,
     unlockWithPasskey,
@@ -67,7 +68,7 @@ export function VerifyDeviceScreen() {
       <VerifyThisDevice
         onVerify={startVerification}
         onMasterKey={submitRecoveryKey}
-        passkeyAvailable={passkeyAvailable}
+        canUnlockWithPasskey={passkeyAvailable && passkeyEnrolled}
         onPasskey={unlockWithPasskey}
       />
     )
@@ -247,12 +248,12 @@ function SaveRecoveryKey({
 function VerifyThisDevice({
   onVerify,
   onMasterKey,
-  passkeyAvailable,
+  canUnlockWithPasskey,
   onPasskey,
 }: {
   onVerify: () => Promise<void>
   onMasterKey: (key: string) => Promise<void>
-  passkeyAvailable: boolean
+  canUnlockWithPasskey: boolean
   onPasskey: () => Promise<void>
 }) {
   const [mode, setMode] = useState<'choose' | 'key'>('choose')
@@ -281,7 +282,7 @@ function VerifyThisDevice({
         <>
           <p className="verify__body">
             To keep your workspace history end-to-end encrypted, confirm this is really you.
-            {passkeyAvailable
+            {canUnlockWithPasskey
               ? ' Unlock with your passkey, verify with another signed-in device, or use your master key.'
               : ' Verify with another device you’re signed in on, or use your master key.'}
           </p>
@@ -291,7 +292,7 @@ function VerifyThisDevice({
             </p>
           )}
           <div className="verify__actions verify__actions--stacked">
-            {passkeyAvailable && (
+            {canUnlockWithPasskey && (
               <button
                 type="button"
                 className="verify__primary"
@@ -303,11 +304,11 @@ function VerifyThisDevice({
             )}
             <button
               type="button"
-              className={passkeyAvailable ? 'verify__link' : 'verify__primary'}
+              className={canUnlockWithPasskey ? 'verify__link' : 'verify__primary'}
               disabled={busy}
               onClick={() => run(onVerify)}
             >
-              {!passkeyAvailable && busy ? (
+              {!canUnlockWithPasskey && busy ? (
                 <><Spinner />Working…</>
               ) : (
                 'Verify with another device'
