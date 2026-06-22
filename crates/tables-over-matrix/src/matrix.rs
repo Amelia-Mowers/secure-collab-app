@@ -693,7 +693,13 @@ mod matrix_impl {
         /// bridge blob (`kind`/`userId`/`deviceId`/`accessToken`[`/refreshToken`/
         /// `clientId`]) so the formats stay compatible.
         pub fn session_json(&self) -> Option<String> {
-            let data = match self.client.session()? {
+            Self::serialize_session_blob(&self.client)
+        }
+
+        /// Shared session serializer used by `session_json` and the
+        /// token-refresh persistence task (which holds a `Client`, not `&self`).
+        fn serialize_session_blob(client: &Client) -> Option<String> {
+            let data = match client.session()? {
                 matrix_sdk::AuthSession::Matrix(ms) => serde_json::json!({
                     "kind": "password",
                     "userId": ms.meta.user_id.to_string(),
@@ -711,6 +717,39 @@ mod matrix_impl {
                 _ => return None,
             };
             serde_json::to_string(&data).ok()
+        }
+
+        /// Re-persist the session whenever the SDK rotates the OAuth tokens, so
+        /// the next run restores with a *live* refresh token instead of the dead
+        /// one captured at sign-in. Without this, refresh works in-memory for the
+        /// current process but is lost on exit — MAS rotates the refresh token,
+        /// the stored blob keeps the old one, and the next run fails
+        /// `invalid_grant`. Mirrors the WASM bridge's `start_token_persistence`.
+        /// `on_tokens` receives the fresh `session_json()` string; runs as a
+        /// detached task and does not block. Call once on a restored/signed-in
+        /// client.
+        pub fn persist_session_on_refresh<F>(&self, on_tokens: F)
+        where
+            F: Fn(String) + Send + 'static,
+        {
+            let client = self.client.clone();
+            let mut changes = client.subscribe_to_session_changes();
+            tokio::spawn(async move {
+                loop {
+                    match changes.recv().await {
+                        Ok(matrix_sdk::SessionChange::TokensRefreshed) => {
+                            if let Some(blob) = MatrixClient::serialize_session_blob(&client) {
+                                on_tokens(blob);
+                            }
+                        }
+                        // UnknownToken (refresh failed / token revoked): the
+                        // request layer surfaces the auth error; nothing to save.
+                        Ok(_) => {}
+                        // Lagged past the buffer or the sender dropped: stop.
+                        Err(_) => break,
+                    }
+                }
+            });
         }
 
         /// Restore a client from a saved session blob against the same SQLite

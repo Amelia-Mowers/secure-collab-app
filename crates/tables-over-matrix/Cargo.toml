@@ -35,6 +35,12 @@ futures = { workspace = true, optional = true }
 # onto the same crate rather than adding a second copy.
 libsqlite3-sys = { version = "0.35", features = ["bundled"], optional = true }
 
+# Native-only: lets the CLI spawn a detached task that re-persists the session
+# when the SDK rotates OAuth tokens (see persist_session_on_refresh). `rt` is
+# enough — the binary supplies the runtime. Gated to matrix-native so wasm
+# never pulls it.
+tokio = { version = "1.35", features = ["rt"], optional = true }
+
 # WASM support
 wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
@@ -66,7 +72,7 @@ matrix = ["matrix-sdk", "futures"]
 matrix-wasm = ["matrix", "matrix-sdk/indexeddb", "matrix-sdk/js", "getrandom_03"]
 # Matrix for native targets (SQLite store — used by integration tests + CLI).
 # Bundles SQLite so the native link needs no system sqlite3 (notably Windows).
-matrix-native = ["matrix", "matrix-sdk/sqlite", "dep:libsqlite3-sys"]
+matrix-native = ["matrix", "matrix-sdk/sqlite", "dep:libsqlite3-sys", "dep:tokio"]
 # WASM bridge support (always on for our browser-first target)
 wasm = ["wasm-bindgen", "wasm-bindgen-futures", "tracing-wasm"]
 # Red/pending integration tests — expected to FAIL until the surface they spec

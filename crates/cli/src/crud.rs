@@ -22,9 +22,21 @@ async fn restore_client() -> Result<MatrixClient> {
     let saved = paths
         .load_session()?
         .ok_or_else(|| anyhow!("Not logged in. Run `tidework login` first."))?;
-    MatrixClient::restore_with_store(&saved.homeserver, &paths.store_dir, &saved.session)
-        .await
-        .context("restoring session")
+    let client =
+        MatrixClient::restore_with_store(&saved.homeserver, &paths.store_dir, &saved.session)
+            .await
+            .context("restoring session")?;
+    // Persist rotated OAuth tokens whenever the SDK refreshes them, so the next
+    // run restores a live token instead of failing `invalid_grant`. The session
+    // blob is otherwise written only at login, so a rotated refresh token is
+    // lost on exit.
+    let homeserver = saved.homeserver.clone();
+    client.persist_session_on_refresh(move |blob| {
+        if let Err(e) = paths.save_session(&homeserver, &blob) {
+            eprintln!("warning: could not persist refreshed session: {e}");
+        }
+    });
+    Ok(client)
 }
 
 /// Resolve a workspace argument — a room id (starts with `!`) or a workspace
