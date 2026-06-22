@@ -53,3 +53,29 @@ export async function captureMasterKey(page: Page): Promise<string> {
   await page.getByRole('button', { name: /saved it/i }).click()
   return key
 }
+
+/**
+ * Attach a PRF-capable virtual platform authenticator to a page's context, so
+ * `isUVPAA()` reports true and WebAuthn create/get return a PRF result without a
+ * real biometric prompt. Returns the CDP session (e.g. for
+ * `Storage.clearDataForOrigin` when simulating a re-provisioned device) and the
+ * authenticator id. Add it only to contexts that should be passkey-capable —
+ * omit it to exercise the legacy raw-recovery-key path.
+ */
+export async function addPrfAuthenticator(page: Page) {
+  const client = await page.context().newCDPSession(page)
+  await client.send('WebAuthn.enable')
+  const { authenticatorId } = await client.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      ctap2Version: 'ctap2_1',
+      transport: 'internal', // platform authenticator → isUVPAA() returns true
+      hasResidentKey: true, // discoverable
+      hasUserVerification: true,
+      hasPrf: true, // the extension our key derivation needs
+      automaticPresenceSimulation: true,
+      isUserVerified: true, // auto-pass UV (no real biometric prompt)
+    },
+  })
+  return { client, authenticatorId }
+}

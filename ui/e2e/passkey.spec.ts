@@ -1,5 +1,5 @@
-import { test, expect, type Page } from '@playwright/test'
-import { homeserverUrl, registerDevice, signInDevice, uniqueUser } from './helpers'
+import { test, expect } from '@playwright/test'
+import { addPrfAuthenticator, homeserverUrl, registerDevice, signInDevice, uniqueUser } from './helpers'
 
 /**
  * Passkey / WebAuthn-PRF round-trip (passkey custody, phase 3b). Drives the real
@@ -20,25 +20,6 @@ import { homeserverUrl, registerDevice, signInDevice, uniqueUser } from './helpe
  * passkey *syncing* is a platform feature (iCloud Keychain / Google Password
  * Manager), not our code, so there is nothing of ours to exercise that way.
  */
-
-/** Attach a PRF-capable virtual platform authenticator to a page's context. */
-async function addPrfAuthenticator(page: Page) {
-  const client = await page.context().newCDPSession(page)
-  await client.send('WebAuthn.enable')
-  const { authenticatorId } = await client.send('WebAuthn.addVirtualAuthenticator', {
-    options: {
-      protocol: 'ctap2',
-      ctap2Version: 'ctap2_1',
-      transport: 'internal', // platform authenticator → isUVPAA() returns true
-      hasResidentKey: true, // discoverable
-      hasUserVerification: true,
-      hasPrf: true, // the extension our key derivation needs
-      automaticPresenceSimulation: true,
-      isUserVerified: true, // auto-pass UV (no real biometric prompt)
-    },
-  })
-  return { client, authenticatorId }
-}
 
 test('passkey: protect history on setup, then unlock a re-provisioned device', async ({ browser }) => {
   const url = homeserverUrl()
