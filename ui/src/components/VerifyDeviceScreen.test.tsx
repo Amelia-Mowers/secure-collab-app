@@ -65,11 +65,22 @@ describe('VerifyDeviceScreen', () => {
     expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
   })
 
-  it('frames the key as a backup when recovery was set up via passkey', () => {
+  it('demotes the key for a passkey account — hidden by default, revealable on demand', () => {
     h.recoveryPrompt = { kind: 'save', recoveryKey: 'BACKUP-KEY', viaPasskey: true }
     render(<VerifyDeviceScreen />)
-    expect(screen.getByRole('heading', { name: /backup key/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /passkey ready/i })).toBeInTheDocument()
+    // The break-glass key is not surfaced by default for a passkey account.
+    expect(screen.queryByText('BACKUP-KEY')).not.toBeInTheDocument()
+    // ...but can be revealed if the user wants to store it.
+    fireEvent.click(screen.getByRole('button', { name: /show backup key/i }))
     expect(screen.getByText('BACKUP-KEY')).toBeInTheDocument()
+  })
+
+  it('dismisses the passkey-ready screen via Done', () => {
+    h.recoveryPrompt = { kind: 'save', recoveryKey: 'BACKUP-KEY', viaPasskey: true }
+    render(<VerifyDeviceScreen />)
+    fireEvent.click(screen.getByRole('button', { name: /^done$/i }))
+    expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
   })
 
   describe('choose recovery method (first device, passkey-capable)', () => {

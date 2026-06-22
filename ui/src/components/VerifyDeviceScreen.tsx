@@ -263,6 +263,10 @@ function SaveRecoveryKey({
   onDone: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  // For a passkey account the key is break-glass insurance, not the primary
+  // unlock, so keep it out of the way — revealed only on request (4c). The
+  // classic key-only path always shows it: it's the sole way back into history.
+  const [revealed, setRevealed] = useState(!viaPasskey)
 
   const handleCopy = async () => {
     try {
@@ -277,24 +281,38 @@ function SaveRecoveryKey({
   return (
     <Overlay labelledBy="verify-title">
       <h2 id="verify-title" className="verify__title">
-        {viaPasskey ? 'Save your backup key' : 'Save your master key'}
+        {viaPasskey ? 'Passkey ready' : 'Save your master key'}
       </h2>
       <p className="verify__body">
         {viaPasskey
-          ? 'Your passkey unlocks your history on a new device. Keep this recovery key somewhere safe as a backup, in case you ever lose access to your passkey.'
+          ? 'Your passkey now unlocks your history on any device — nothing to write down. A one-time backup key also exists, in case you ever lose access to your passkey.'
           : "This key restores your encrypted history on a new device if you can't verify with an existing one. Store it somewhere safe — it can't be recovered for you."}
       </p>
-      <div className="verify__key">
-        <code className="verify__key-text">{recoveryKey}</code>
-        <button type="button" className="verify__copy" onClick={handleCopy}>
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <div className="verify__actions">
-        <button type="button" className="verify__primary" onClick={onDone}>
-          I&apos;ve saved it
-        </button>
-      </div>
+      {revealed ? (
+        <>
+          <div className="verify__key">
+            <code className="verify__key-text">{recoveryKey}</code>
+            <button type="button" className="verify__copy" onClick={handleCopy}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <div className="verify__actions">
+            <button type="button" className="verify__primary" onClick={onDone}>
+              {viaPasskey ? 'Done' : <>I&apos;ve saved it</>}
+            </button>
+          </div>
+        </>
+      ) : (
+        // Passkey path, collapsed: proceed by default, reveal the key on demand.
+        <div className="verify__actions verify__actions--stacked">
+          <button type="button" className="verify__primary" onClick={onDone}>
+            Done
+          </button>
+          <button type="button" className="verify__link" onClick={() => setRevealed(true)}>
+            Show backup key
+          </button>
+        </div>
+      )}
     </Overlay>
   )
 }
