@@ -34,6 +34,10 @@ export type RecoveryPrompt =
    *  account, so the key is a break-glass backup rather than the only way in. */
   | { kind: 'save'; recoveryKey: string; viaPasskey?: boolean }
   | { kind: 'verify' }
+  /** A legacy account (raw recovery key) just unlocked with its master key on a
+   *  passkey-capable device — offer to protect it with a passkey so future
+   *  devices need no typed key. Optional: declining proceeds into the app. */
+  | { kind: 'offer-passkey' }
   /** Recovery bootstrap failed on a first device even after retries. This is
    *  a blocking state (not a silent warn): the account works but NO recovery
    *  key exists, so a lost device would mean unrecoverable history — the user
@@ -149,6 +153,10 @@ interface AuthState {
   /** New device (`verify` prompt): unlock history with the account's passkey
    *  instead of typing the master key. */
   unlockWithPasskey: () => Promise<void>
+  /** `offer-passkey` prompt: a legacy account that just unlocked with its master
+   *  key adds passkey custody — registers a passkey, re-keys secure backup to
+   *  its PRF secret, and surfaces a fresh break-glass key. */
+  migrateToPasskey: () => Promise<void>
 
   /** An in-progress device verification, or null. Drives the verify screen's
    *  emoji-compare step and the incoming-request prompt. */
@@ -310,6 +318,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // brand-new device can decide whether to offer passkey unlock before it can
   // decrypt anything. See `recoveryUsesPassphrase` in the WASM bridge.
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false)
+  // Mirrors `passkeyEnrolled` for callbacks (submitRecoveryKey) that need the
+  // latest value without being re-created when it changes.
+  const passkeyEnrolledRef = useRef(false)
   useEffect(() => {
     hasPlatformAuthenticator().then(ok => {
       passkeyAvailableRef.current = ok
@@ -454,6 +465,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const uid = (typeof ms.userId === 'function' ? ms.userId() : null) ?? 'tidework'
     const secret = await registerPasskeyPrf(uid, uid)
     const recoveryKey: string = await ms.enableRecoveryWithPassphrase(secret)
+    passkeyEnrolledRef.current = true
+    setPasskeyEnrolled(true)
     setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
   }, [])
 
@@ -491,9 +504,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // before showing the gate. Guard for older bindings / mocks.
           if (typeof ms.recoveryUsesPassphrase === 'function') {
             try {
-              setPasskeyEnrolled(await ms.recoveryUsesPassphrase())
+              const enrolled = await ms.recoveryUsesPassphrase()
+              passkeyEnrolledRef.current = enrolled
+              setPasskeyEnrolled(enrolled)
             } catch (e) {
               console.warn('[auth] passkey-enrollment check failed:', e)
+              passkeyEnrolledRef.current = false
               setPasskeyEnrolled(false)
             }
           }
@@ -522,7 +538,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Non-fatal — keys download in the background; the next sync picks up.
     }
-    setRecoveryPrompt(null)
+    // A legacy account (no passkey enrolled) that just unlocked with its master
+    // key on a passkey-capable device: offer to protect it with a passkey so
+    // future devices need no typed key. Declining proceeds into the app. The
+    // passkey-unlock path never reaches here as a legacy account (it's gated on
+    // enrollment), so this only fires after a master-key restore.
+    if (passkeyAvailableRef.current && !passkeyEnrolledRef.current) {
+      setRecoveryPrompt({ kind: 'offer-passkey' })
+    } else {
+      setRecoveryPrompt(null)
+    }
   }, [])
 
   /** `verify` prompt: unlock with the account's passkey — derive its PRF secret
@@ -532,6 +557,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const secret = await unlockPasskeyPrf()
     await submitRecoveryKey(secret)
   }, [submitRecoveryKey])
+
+  /** `offer-passkey` prompt: a legacy account (just unlocked with its master
+   *  key) adds passkey custody — register a passkey, re-key secure backup to its
+   *  PRF secret (the old recovery key stops working), and surface the fresh
+   *  break-glass key to save. Throws on failure so the screen can surface it. */
+  const migrateToPasskey = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms) throw new Error('Not signed in')
+    const uid = (typeof ms.userId === 'function' ? ms.userId() : null) ?? 'tidework'
+    const secret = await registerPasskeyPrf(uid, uid)
+    const recoveryKey: string = await ms.resetRecoveryWithPassphrase(secret)
+    passkeyEnrolledRef.current = true
+    setPasskeyEnrolled(true)
+    setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
+  }, [])
 
   const dismissRecoveryPrompt = useCallback(() => {
     setRecoveryPrompt(null)
@@ -1234,6 +1274,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setupPasskeyRecovery,
     setupKeyRecovery,
     unlockWithPasskey,
+    migrateToPasskey,
     verification,
     startVerification,
     acceptIncomingVerification,

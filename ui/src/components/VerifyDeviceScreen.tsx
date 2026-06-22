@@ -27,6 +27,7 @@ export function VerifyDeviceScreen() {
     setupPasskeyRecovery,
     setupKeyRecovery,
     unlockWithPasskey,
+    migrateToPasskey,
     signOut,
     verification,
     startVerification,
@@ -74,6 +75,10 @@ export function VerifyDeviceScreen() {
     )
   }
 
+  if (recoveryPrompt?.kind === 'offer-passkey') {
+    return <OfferPasskeyMigration onSetup={migrateToPasskey} onSkip={dismissRecoveryPrompt} />
+  }
+
   if (recoveryPrompt?.kind === 'error') {
     return (
       <RecoverySetupFailed
@@ -85,6 +90,57 @@ export function VerifyDeviceScreen() {
   }
 
   return null
+}
+
+// ── Legacy account: offer to add a passkey after a master-key unlock ─────────
+
+function OfferPasskeyMigration({
+  onSetup,
+  onSkip,
+}: {
+  onSetup: () => Promise<void>
+  onSkip: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSetup = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      await onSetup()
+      // On success the prompt advances to `save` (the new break-glass key).
+    } catch (err: any) {
+      setError(err?.message ?? 'Something went wrong. Please try again.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Overlay labelledBy="verify-title">
+      <h2 id="verify-title" className="verify__title">
+        Add a passkey?
+      </h2>
+      <p className="verify__body">
+        You unlocked with your master key. Add a passkey (Touch ID / Windows Hello) so your next
+        device unlocks with a tap — nothing to type. You&apos;ll get a fresh backup key to keep, and
+        your old master key stops working.
+      </p>
+      {error && (
+        <p className="verify__error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="verify__actions verify__actions--stacked">
+        <button type="button" className="verify__primary" disabled={busy} onClick={handleSetup}>
+          {busy ? <><Spinner />Setting up…</> : 'Set up a passkey'}
+        </button>
+        <button type="button" className="verify__link" disabled={busy} onClick={onSkip}>
+          Not now
+        </button>
+      </div>
+    </Overlay>
+  )
 }
 
 // ── First device: choose how to protect history (passkey vs recovery key) ───

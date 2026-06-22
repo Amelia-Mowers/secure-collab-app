@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   setupPasskeyRecovery: vi.fn(async () => undefined),
   setupKeyRecovery: vi.fn(async () => undefined),
   unlockWithPasskey: vi.fn(async () => undefined),
+  migrateToPasskey: vi.fn(async () => undefined),
   signOut: vi.fn(),
   startVerification: vi.fn(),
   acceptIncomingVerification: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('../hooks/useAuth', () => ({
     setupPasskeyRecovery: h.setupPasskeyRecovery,
     setupKeyRecovery: h.setupKeyRecovery,
     unlockWithPasskey: h.unlockWithPasskey,
+    migrateToPasskey: h.migrateToPasskey,
     signOut: h.signOut,
     startVerification: h.startVerification,
     acceptIncomingVerification: h.acceptIncomingVerification,
@@ -177,6 +179,39 @@ describe('VerifyDeviceScreen', () => {
       fireEvent.change(screen.getByPlaceholderText(/master key/i), { target: { value: '  k  ' } })
       fireEvent.click(screen.getByRole('button', { name: /^restore$/i }))
       await waitFor(() => expect(h.submitRecoveryKey).toHaveBeenCalledWith('k'))
+    })
+  })
+
+  describe('offer passkey migration (legacy account, after master-key unlock)', () => {
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'offer-passkey' }
+    })
+
+    it('offers to set up a passkey, or skip into the app', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByRole('heading', { name: /add a passkey/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /set up a passkey/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /not now/i })).toBeInTheDocument()
+    })
+
+    it('runs the migration when accepted', async () => {
+      h.migrateToPasskey.mockResolvedValue(undefined)
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
+      await waitFor(() => expect(h.migrateToPasskey).toHaveBeenCalledTimes(1))
+    })
+
+    it('skips into the app when declined', () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /not now/i }))
+      expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
+    })
+
+    it('surfaces a migration failure without leaving the screen', async () => {
+      h.migrateToPasskey.mockRejectedValue(new Error('PRF unavailable'))
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('PRF unavailable'))
     })
   })
 
