@@ -954,6 +954,23 @@ mod matrix_impl {
             use matrix_sdk::room::MessagesOptions;
 
             let room = self.get_room()?;
+            // Cold-start key restore: a freshly recovered device has backup
+            // *access* (the recovery key opened secure backup) but not the room
+            // keys themselves, so the encrypted history paginated below would
+            // come back undecryptable and be silently skipped — a new device
+            // would see an empty workspace. Pull this room's keys from key
+            // backup first. Best-effort: a room may be unencrypted or have no
+            // backup yet, and we still proceed with whatever keys we have.
+            if let Err(e) = self
+                .client
+                .encryption()
+                .backups()
+                .download_room_keys_for_room(room.room_id())
+                .await
+            {
+                debug!("backup key download for {} failed: {e}", room.room_id());
+            }
+
             let mut updates = Vec::new();
             let mut from_token: Option<String> = None;
             loop {
