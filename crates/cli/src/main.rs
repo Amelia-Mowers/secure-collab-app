@@ -191,8 +191,26 @@ enum ColumnCmd {
     },
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // The native cold start replays a workspace's full decrypted history, which
+    // recurses deep through the SDK's event deserialization/decryption — enough
+    // to overflow the OS default main-thread stack on a large room (Windows
+    // gives ~1 MB; the overflow is invisible on Linux's 8 MB, including CI). Run
+    // everything on a thread with a generous stack, and size the runtime's
+    // worker/blocking threads the same way.
+    let worker = std::thread::Builder::new()
+        .name("tidework".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(real_main)
+        .expect("failed to spawn worker thread");
+    let code = worker.join().unwrap_or_else(|_| {
+        eprintln!("error: worker thread panicked");
+        1
+    });
+    std::process::exit(code);
+}
+
+fn real_main() -> i32 {
     tracing_subscriber::fmt()
         .with_env_filter(
             // Quiet the SDK's crypto chatter (missing-backup-key / undecryptable
@@ -206,10 +224,25 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    if let Err(err) = run().await {
-        eprintln!("error: {err:#}");
-        std::process::exit(1);
-    }
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(32 * 1024 * 1024)
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("error: failed to build async runtime: {e}");
+            return 1;
+        }
+    };
+
+    runtime.block_on(async {
+        if let Err(err) = run().await {
+            eprintln!("error: {err:#}");
+            return 1;
+        }
+        0
+    })
 }
 
 async fn run() -> Result<()> {
