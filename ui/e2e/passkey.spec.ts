@@ -58,11 +58,12 @@ test('passkey: protect history on setup, then unlock a re-provisioned device', a
   })
   await dialog.getByRole('button', { name: /set up a passkey/i }).click()
 
-  // Backup key screen (secure backup is now keyed by the passkey's PRF secret).
-  await expect(dialog.getByRole('heading', { name: /backup key/i })).toBeVisible({
+  // Passkey-ready screen (secure backup is now keyed by the passkey's PRF
+  // secret; the break-glass key is collapsed by default — phase 4c).
+  await expect(dialog.getByRole('heading', { name: /passkey ready/i })).toBeVisible({
     timeout: 90_000,
   })
-  await dialog.getByRole('button', { name: /saved it/i }).click()
+  await dialog.getByRole('button', { name: /^done$/i }).click()
   await expect(page).toHaveURL(/workspaces/, { timeout: 60_000 })
 
   // ── Re-provision as a NEW device: wipe local crypto store + session ─────────
