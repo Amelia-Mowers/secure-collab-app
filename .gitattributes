@@ -4,3 +4,8 @@
 *.nix    text eol=lf
 *.sh     text eol=lf
 Makefile text eol=lf
+
+# Rust sources are LF by convention. Pin it so editors/tools on Windows can't
+# silently reintroduce CRLF and churn the whole file on the next `cargo fmt`
+# (bridge_matrix.rs drifted to CRLF this way before being normalized).
+*.rs     text eol=lf
