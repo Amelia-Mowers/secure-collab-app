@@ -134,4 +134,17 @@ cp "$DEPLOY/docker-compose.yml" "$SRV/docker-compose.yml"
 cd "$SRV" && docker compose pull -q && docker compose up -d --wait --force-recreate
 # --force-recreate: configs are bind-mounted files; compose can't see content
 # changes, so recreate to pick up re-rendered configs every deploy.
+
+# ── Monitoring: healthcheck timer that alerts via Resend on failure ─────────
+# Reuses the decrypted $SMTP_PASSWORD (the Resend API key) as the alert creds —
+# no separate secret to manage. Idempotent.
+install -m 0755 "$DEPLOY/healthcheck.sh" /usr/local/bin/tidework-healthcheck.sh
+install -m 0644 "$DEPLOY/systemd/tidework-healthcheck.service" /etc/systemd/system/tidework-healthcheck.service
+install -m 0644 "$DEPLOY/systemd/tidework-healthcheck.timer" /etc/systemd/system/tidework-healthcheck.timer
+mkdir -p /root/.config/tidework-alert
+printf '%s' "$SMTP_PASSWORD" > /root/.config/tidework-alert/resend.key
+chmod 600 /root/.config/tidework-alert/resend.key
+systemctl daemon-reload
+systemctl enable --now tidework-healthcheck.timer >/dev/null 2>&1 || true
+
 echo "remote setup complete"
