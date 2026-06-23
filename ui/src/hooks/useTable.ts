@@ -308,6 +308,31 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
         try {
           const cws = await wasmModule.ConnectedWorkspace.create(matrixSession, workspaceId)
 
+          // Legacy / unencrypted rooms are read-only. Encryption state is
+          // reliably known once create() succeeds (the room + its state are
+          // loaded) and a room never transitions back to unencrypted, so this
+          // is stable. Block table mutations at the handle so edits are
+          // rejected immediately with a clear message — the bridge send path
+          // already fails closed, but this avoids the optimistic-apply-then-
+          // revert flicker. Reads, remote applyUpdate and sync are untouched.
+          try {
+            const handle = cws as any
+            if (typeof handle.isEncrypted === 'function' && !handle.isEncrypted()) {
+              const blocked = () => {
+                throw new Error('This workspace is read-only: it is not end-to-end encrypted.')
+              }
+              for (const m of [
+                'updateCell', 'deleteRow', 'addColumn', 'reorderColumns',
+                'updateColumn', 'deleteColumn', 'createTable', 'createView',
+              ]) {
+                handle[m] = blocked
+              }
+              console.log('[workspace] room is unencrypted — workspace is read-only')
+            }
+          } catch {
+            // isEncrypted unavailable (mock/local workspace) — treat as editable
+          }
+
           // Start the sync loop with a change callback
           cws.startSync(() => {
             console.log('[sync] Remote change detected, triggering refresh')
