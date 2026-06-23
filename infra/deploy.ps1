@@ -18,6 +18,10 @@ scp -qr "$here\synapse" "$here\mas" "$here\nginx" "$here\systemd" "$here\ssh" "$
 scp -q "$here\secrets\postgres.sops.env" "${Target}:/srv/tidework/deploy/secrets.sops.env"
 scp -q "$here\secrets\billing.sops.env" "${Target}:/srv/tidework/deploy/billing.sops.env"
 scp -q "$here\secrets\email.sops.env" "${Target}:/srv/tidework/deploy/email.sops.env"
+# Optional: upstream social-login provider creds (present once an OAuth app is registered).
+if (Test-Path "$here\secrets\upstream-oauth.sops.env") {
+  scp -q "$here\secrets\upstream-oauth.sops.env" "${Target}:/srv/tidework/deploy/upstream-oauth.sops.env"
+}
 
 Write-Host "==> running remote setup"
 ssh -o BatchMode=yes $Target "sed -i 's/\r$//' /srv/tidework/deploy/remote-setup.sh /srv/tidework/deploy/healthcheck.sh /srv/tidework/deploy/*/*.tmpl /srv/tidework/deploy/nginx/*.conf /srv/tidework/deploy/systemd/* /srv/tidework/deploy/ssh/*.conf 2>/dev/null; bash /srv/tidework/deploy/remote-setup.sh"
