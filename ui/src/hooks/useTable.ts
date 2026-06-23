@@ -308,30 +308,14 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
         try {
           const cws = await wasmModule.ConnectedWorkspace.create(matrixSession, workspaceId)
 
-          // Legacy / unencrypted rooms are read-only. Encryption state is
-          // reliably known once create() succeeds (the room + its state are
-          // loaded) and a room never transitions back to unencrypted, so this
-          // is stable. Block table mutations at the handle so edits are
-          // rejected immediately with a clear message — the bridge send path
-          // already fails closed, but this avoids the optimistic-apply-then-
-          // revert flicker. Reads, remote applyUpdate and sync are untouched.
-          try {
-            const handle = cws as any
-            if (typeof handle.isEncrypted === 'function' && !handle.isEncrypted()) {
-              const blocked = () => {
-                throw new Error('This workspace is read-only: it is not end-to-end encrypted.')
-              }
-              for (const m of [
-                'updateCell', 'deleteRow', 'addColumn', 'reorderColumns',
-                'updateColumn', 'deleteColumn', 'createTable', 'createView',
-              ]) {
-                handle[m] = blocked
-              }
-              console.log('[workspace] room is unencrypted — workspace is read-only')
-            }
-          } catch {
-            // isEncrypted unavailable (mock/local workspace) — treat as editable
-          }
+          // Note on read-only legacy rooms: enforcement lives in the bridge
+          // send path, which fails closed for unencrypted rooms at SEND time
+          // (when encryption state is reliably known). We deliberately do NOT
+          // gate on isEncrypted() here — right after create() a freshly made
+          // encrypted room can transiently report false (encryption state
+          // Unknown, not yet synced), so a create-time block would wrongly
+          // reject edits during that window. The ReadOnlyBanner surfaces the
+          // state to the user (and re-checks as sync settles).
 
           // Start the sync loop with a change callback
           cws.startSync(() => {

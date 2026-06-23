@@ -11,8 +11,8 @@ interface ReadOnlyBannerProps {
 /**
  * Workspace-level banner shown when the connected room is NOT end-to-end
  * encrypted — a "legacy" room from before encryption was required. Such rooms
- * are read-only: the bridge send path fails closed and `useWorkspace` blocks
- * the handle's mutation methods, so this explains why editing is disabled.
+ * are read-only: the bridge send path fails closed, so writes never persist;
+ * this banner explains why changes can't be saved.
  *
  * Mirrors EncryptionWarningBanner: reads `ConnectedWorkspace::isEncrypted()`,
  * renders nothing for the local-only / mock workspace (which doesn't expose it)
@@ -40,7 +40,7 @@ export function ReadOnlyBanner({ workspace, syncCount }: ReadOnlyBannerProps) {
       <span className="encryption-warning__icon" aria-hidden="true">🔒</span>
       <span className="encryption-warning__text">
         This workspace is read-only because it isn&apos;t end-to-end encrypted (a legacy room). You
-        can view its contents, but editing is disabled.
+        can view its contents, but changes can&apos;t be saved.
       </span>
     </div>
   )
