@@ -55,7 +55,11 @@ fi
 set -a; . "$SRV/secrets/shared.env"; set +a
 
 # ── One-time: databases on the managed cluster ──────────────────────────────
+# verify-full for every psql/runtime connection: authenticate the server
+# against the DO cluster CA (public cert shipped in the bundle).
 export PGPASSWORD="$PG_PASSWORD"
+export PGSSLMODE=verify-full
+export PGSSLROOTCERT="$DEPLOY/db-ca.crt"
 PSQL="psql -h $PG_HOST -p $PG_PORT -U $PG_USER -d defaultdb -tAc"
 for db in synapse mas; do
   if [ "$($PSQL "SELECT 1 FROM pg_database WHERE datname='$db'")" != "1" ]; then
@@ -68,6 +72,12 @@ unset PGPASSWORD
 
 # ── Render configs ──────────────────────────────────────────────────────────
 mkdir -p "$SRV/synapse" "$SRV/mas"
+
+# DB CA cert for sslmode=verify-full (public cert — safe to ship in the bundle).
+# Mounted into each container (/data, /config); the per-dir chowns below give
+# the synapse (991) and mas (65532) users read access.
+cp "$DEPLOY/db-ca.crt" "$SRV/synapse/db-ca.crt"
+cp "$DEPLOY/db-ca.crt" "$SRV/mas/db-ca.crt"
 
 # ── One-time: MAS generated secrets (encryption + signing keys) ─────────────
 if [ ! -f "$SRV/mas/secrets.yaml" ]; then
@@ -146,5 +156,16 @@ printf '%s' "$SMTP_PASSWORD" > /root/.config/tidework-alert/resend.key
 chmod 600 /root/.config/tidework-alert/resend.key
 systemctl daemon-reload
 systemctl enable --now tidework-healthcheck.timer >/dev/null 2>&1 || true
+
+# ── SSH hardening (idempotent; defense in depth) ────────────────────────────
+# Pins password auth off and forbids any password path for root (key-only) on
+# top of the cloud-init drop-ins; disables X11 forwarding. Validate before
+# reload so a malformed edit can never lock us out; reload (not restart) so
+# live sessions survive. fail2ban bans brute-force sources (sshd jail).
+install -m 0644 "$DEPLOY/ssh/99-tidework-hardening.conf" /etc/ssh/sshd_config.d/99-tidework-hardening.conf
+if sshd -t; then systemctl reload ssh; fi
+if ! command -v fail2ban-client >/dev/null; then
+  apt-get install -y -q fail2ban >/dev/null && systemctl enable --now fail2ban
+fi
 
 echo "remote setup complete"

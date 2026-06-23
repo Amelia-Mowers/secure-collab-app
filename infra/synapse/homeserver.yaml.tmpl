@@ -25,8 +25,9 @@ listeners:
       - names: [client, federation]
         compress: false
 
-# DO managed Postgres (tier-2 secrets). sslmode=require encrypts the link;
-# upgrading to verify-full with the cluster CA is a tracked follow-up.
+# DO managed Postgres (tier-2 secrets). verify-full encrypts the link AND
+# authenticates the server against the cluster CA (db-ca.crt, shipped in the
+# deploy bundle and mounted at /data) — defeats MITM on the public endpoint.
 database:
   name: psycopg2
   args:
@@ -35,7 +36,8 @@ database:
     dbname: synapse
     host: "${PG_HOST}"
     port: ${PG_PORT}
-    sslmode: require
+    sslmode: verify-full
+    sslrootcert: /data/db-ca.crt
     cp_min: 5
     cp_max: 10
 
