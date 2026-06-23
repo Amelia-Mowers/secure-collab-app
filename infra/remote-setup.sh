@@ -44,6 +44,13 @@ sops -d "$DEPLOY/billing.sops.env" > "$SRV/secrets/billing.env"
 set -a; . "$SRV/secrets/billing.env"; set +a
 sops -d "$DEPLOY/email.sops.env" > "$SRV/secrets/email.env"
 set -a; . "$SRV/secrets/email.env"; set +a
+# Upstream social-login provider creds (optional — present once an OAuth app is
+# registered). When absent, GOOGLE_OAUTH_* stay empty and the provider is
+# dropped from the rendered MAS config below.
+if [ -f "$DEPLOY/upstream-oauth.sops.env" ]; then
+  sops -d "$DEPLOY/upstream-oauth.sops.env" > "$SRV/secrets/upstream-oauth.env"
+  set -a; . "$SRV/secrets/upstream-oauth.env"; set +a
+fi
 
 # ── One-time: MAS↔Synapse shared secrets (generated here, stay here) ────────
 if [ ! -f "$SRV/secrets/shared.env" ]; then
@@ -88,16 +95,26 @@ if [ ! -f "$SRV/mas/secrets.yaml" ]; then
   echo "  generated mas secrets"
 fi
 
-export PG_HOST PG_PORT PG_USER PG_PASSWORD MAS_ADMIN_TOKEN MAS_SYNAPSE_CLIENT_SECRET MAS_BILLING_CLIENT_SECRET SMTP_PASSWORD
+# GOOGLE_OAUTH_* may be unset (no upstream creds yet) — list them in envsubst
+# so the placeholders render to empty (then get dropped below) rather than
+# leaking a literal "${GOOGLE_OAUTH_CLIENT_ID}" into the config.
+export PG_HOST PG_PORT PG_USER PG_PASSWORD MAS_ADMIN_TOKEN MAS_SYNAPSE_CLIENT_SECRET MAS_BILLING_CLIENT_SECRET SMTP_PASSWORD GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET
 envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET' \
   < "$DEPLOY/synapse/homeserver.yaml.tmpl" > "$SRV/synapse/homeserver.yaml"
-envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET $MAS_BILLING_CLIENT_SECRET $SMTP_PASSWORD' \
+envsubst '$PG_HOST $PG_PORT $PG_USER $PG_PASSWORD $MAS_ADMIN_TOKEN $MAS_SYNAPSE_CLIENT_SECRET $MAS_BILLING_CLIENT_SECRET $SMTP_PASSWORD $GOOGLE_OAUTH_CLIENT_ID $GOOGLE_OAUTH_CLIENT_SECRET' \
   < "$DEPLOY/mas/config.yaml.tmpl" > "$SRV/mas/config.rendered.yaml"
 # MAS 1.12 does not actually merge multiple --config files - combine the
-# rendered config with the generated secrets into one file ourselves.
+# rendered config with the generated secrets into one file ourselves. Also drop
+# any upstream_oauth2 provider whose client_id is empty (creds not deployed) so
+# MAS boots fine without social-login secrets.
 python3 - <<'PY'
 import yaml
 base = yaml.safe_load(open('/srv/tidework/mas/config.rendered.yaml'))
+up = base.get('upstream_oauth2')
+if isinstance(up, dict) and isinstance(up.get('providers'), list):
+    up['providers'] = [p for p in up['providers'] if p.get('client_id')]
+    if not up['providers']:
+        base.pop('upstream_oauth2')
 base.update(yaml.safe_load(open('/srv/tidework/mas/secrets.yaml')))
 yaml.safe_dump(base, open('/srv/tidework/mas/config.yaml', 'w'))
 PY
