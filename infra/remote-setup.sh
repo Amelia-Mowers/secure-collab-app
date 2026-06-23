@@ -157,4 +157,15 @@ chmod 600 /root/.config/tidework-alert/resend.key
 systemctl daemon-reload
 systemctl enable --now tidework-healthcheck.timer >/dev/null 2>&1 || true
 
+# ── SSH hardening (idempotent; defense in depth) ────────────────────────────
+# Pins password auth off and forbids any password path for root (key-only) on
+# top of the cloud-init drop-ins; disables X11 forwarding. Validate before
+# reload so a malformed edit can never lock us out; reload (not restart) so
+# live sessions survive. fail2ban bans brute-force sources (sshd jail).
+install -m 0644 "$DEPLOY/ssh/99-tidework-hardening.conf" /etc/ssh/sshd_config.d/99-tidework-hardening.conf
+if sshd -t; then systemctl reload ssh; fi
+if ! command -v fail2ban-client >/dev/null; then
+  apt-get install -y -q fail2ban >/dev/null && systemctl enable --now fail2ban
+fi
+
 echo "remote setup complete"
