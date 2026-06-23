@@ -308,6 +308,15 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
         try {
           const cws = await wasmModule.ConnectedWorkspace.create(matrixSession, workspaceId)
 
+          // Note on read-only legacy rooms: enforcement lives in the bridge
+          // send path, which fails closed for unencrypted rooms at SEND time
+          // (when encryption state is reliably known). We deliberately do NOT
+          // gate on isEncrypted() here — right after create() a freshly made
+          // encrypted room can transiently report false (encryption state
+          // Unknown, not yet synced), so a create-time block would wrongly
+          // reject edits during that window. The ReadOnlyBanner surfaces the
+          // state to the user (and re-checks as sync settles).
+
           // Start the sync loop with a change callback
           cws.startSync(() => {
             console.log('[sync] Remote change detected, triggering refresh')
