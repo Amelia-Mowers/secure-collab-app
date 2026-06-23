@@ -32,8 +32,10 @@ http:
   trusted_proxies:
     - 172.16.0.0/12 # docker bridge — host nginx forwards through it
 
+# verify-full: encrypt + authenticate the server against the DO cluster CA
+# (db-ca.crt mounted at /config). sqlx parses sslrootcert from the URL.
 database:
-  uri: "postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT}/mas?sslmode=require"
+  uri: "postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT}/mas?sslmode=verify-full&sslrootcert=/config/db-ca.crt"
 
 matrix:
   homeserver: "tidework.io"

@@ -9,3 +9,7 @@ Makefile text eol=lf
 # silently reintroduce CRLF and churn the whole file on the next `cargo fmt`
 # (bridge_matrix.rs drifted to CRLF this way before being normalized).
 *.rs     text eol=lf
+
+# CA cert: store verbatim (LF), never normalize — it's shipped as-is to the
+# droplet and mounted into the Synapse/MAS containers for sslmode=verify-full.
+infra/db-ca.crt -text
