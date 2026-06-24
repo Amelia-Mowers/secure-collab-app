@@ -10,7 +10,7 @@ import { captureMasterKey } from './helpers'
  * first device, and restores the session across a reload.
  *
  * Only runs when scripts/spike-synapse-mas.sh --e2e provides the stack via
- * E2E_SYNAPSE_URL (+ a pre-registered MAS user) — normal Conduit runs skip it.
+ * E2E_SYNAPSE_URL (+ a pre-registered MAS user) — the default E2E runs skip it.
  */
 
 const SYNAPSE_URL = process.env.E2E_SYNAPSE_URL
