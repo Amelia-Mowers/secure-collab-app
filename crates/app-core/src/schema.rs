@@ -156,6 +156,21 @@ impl SchemaManager {
         self.tables_table.apply_update(name_update.clone());
         updates.push(name_update);
 
+        // Explicit not-deleted marker. Harmless on a first creation; on
+        // RE-creating a previously deleted table id it clears the tombstone
+        // (LWW — this newer write beats the old `deleted = true`) so the table
+        // reappears. The `deleted_at` cutoff is intentionally left in place so
+        // old row data stays hidden (see `Workspace::get_table_rows`).
+        let undelete = CellUpdate::new(
+            TABLES_TABLE_ID,
+            &table_id,
+            "deleted",
+            serde_json::json!(false),
+            timestamp,
+        );
+        self.tables_table.apply_update(undelete.clone());
+        updates.push(undelete);
+
         if let Some(desc) = &definition.description {
             let desc_update = CellUpdate::new(
                 TABLES_TABLE_ID,
@@ -279,6 +294,12 @@ impl SchemaManager {
 
     /// Get the schema for a table
     pub fn get_table_schema(&self, table_id: &str) -> Option<TableDefinition> {
+        // A deleted table (decay model, mirrors a deleted column) has no live
+        // schema — it's hidden until the id is re-created (which clears the
+        // tombstone). See `delete_table` / `is_table_deleted`.
+        if self.is_table_deleted(table_id) {
+            return None;
+        }
         // Read from tables table
         let name = self.tables_table.get_value(table_id, "name")?;
         let description = self.tables_table.get_value(table_id, "description");
@@ -609,6 +630,78 @@ impl SchemaManager {
             }
         }
         cutoffs
+    }
+
+    /// Delete a table (decay model, mirrors [`delete_column`](Self::delete_column)):
+    /// write a `deleted = true` marker plus `deleted_at` onto the table's
+    /// `_tables` registry row. [`get_table_schema`](Self::get_table_schema) then
+    /// returns None and `Workspace::list_tables` hides it; the `deleted_at`
+    /// cutoff hides the table's existing row data so re-creating the id starts
+    /// blank. Returns the CellUpdates applied.
+    pub fn delete_table(&mut self, table_id: &str, timestamp: u64) -> Vec<CellUpdate> {
+        let deleted = CellUpdate::new(
+            TABLES_TABLE_ID,
+            table_id,
+            "deleted",
+            serde_json::json!(true),
+            timestamp,
+        );
+        self.tables_table.apply_update(deleted.clone());
+        let deleted_at = CellUpdate::new(
+            TABLES_TABLE_ID,
+            table_id,
+            "deleted_at",
+            serde_json::json!(timestamp),
+            timestamp,
+        );
+        self.tables_table.apply_update(deleted_at.clone());
+        vec![deleted, deleted_at]
+    }
+
+    /// Whether a table's `_tables` row carries a truthy `deleted` tombstone.
+    pub fn is_table_deleted(&self, table_id: &str) -> bool {
+        self.tables_table
+            .get_value(table_id, "deleted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// The timestamp a table was last deleted, if any. Used as a table-wide
+    /// cutoff (across all columns) so a re-created table id doesn't resurrect
+    /// row data written before the deletion.
+    pub fn table_deleted_at(&self, table_id: &str) -> Option<u64> {
+        self.tables_table
+            .get_value(table_id, "deleted_at")
+            .and_then(|v| v.as_u64())
+    }
+
+    /// Set a table's manual-ordering key (a fractional-index string) on its
+    /// `_tables` row. `Workspace::list_tables` sorts by it. Mirrors the row
+    /// `_order` pattern — reordering is a single LWW cell write.
+    pub fn set_table_order(
+        &mut self,
+        table_id: &str,
+        order_key: &str,
+        timestamp: u64,
+    ) -> Vec<CellUpdate> {
+        let update = CellUpdate::new(
+            TABLES_TABLE_ID,
+            table_id,
+            "_order",
+            serde_json::json!(order_key),
+            timestamp,
+        );
+        self.tables_table.apply_update(update.clone());
+        vec![update]
+    }
+
+    /// A table's manual-ordering key ([`set_table_order`](Self::set_table_order)),
+    /// if set to a string.
+    pub fn table_order(&self, table_id: &str) -> Option<String> {
+        self.tables_table
+            .get_value(table_id, "_order")
+            .and_then(|v| v.as_str())
+            .map(String::from)
     }
 
     /// Winning cells of the system tables (`_schema` + `_tables`) for a

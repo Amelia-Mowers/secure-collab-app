@@ -267,6 +267,40 @@ impl WasmWorkspace {
                 _ => JsValue::from_str("Failed to delete row"),
             })
     }
+
+    /// Delete a table (local-only workspace). Tombstones the `_tables` registry
+    /// row; the returned updates aren't synced anywhere. The table then drops
+    /// out of `listTables` / `getTableSchema`.
+    #[wasm_bindgen(js_name = deleteTable)]
+    pub fn delete_table(&mut self, table_id: String) -> Result<(), JsValue> {
+        self.workspace
+            .delete_table(&table_id)
+            .map(|_| ())
+            .map_err(|e| match e {
+                crate::Error::TableNotFound => JsValue::from_str("Table not found"),
+                _ => JsValue::from_str("Failed to delete table"),
+            })
+    }
+
+    /// Set a table's manual-ordering key (local-only workspace).
+    #[wasm_bindgen(js_name = setTableOrder)]
+    pub fn set_table_order(&mut self, table_id: String, order_key: String) -> Result<(), JsValue> {
+        self.workspace
+            .set_table_order(&table_id, &order_key)
+            .map(|_| ())
+            .map_err(|e| match e {
+                crate::Error::TableNotFound => JsValue::from_str("Table not found"),
+                _ => JsValue::from_str("Failed to set table order"),
+            })
+    }
+
+    /// Map of `table_id -> manual-ordering key` as a JSON object.
+    #[wasm_bindgen(js_name = getTableOrderKeys)]
+    pub fn get_table_order_keys(&self) -> String {
+        let map: std::collections::HashMap<String, String> =
+            self.workspace.get_table_order_keys().into_iter().collect();
+        serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+    }
 }
 
 // Add console_error_panic_hook dependency
