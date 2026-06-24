@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getWasmModule } from '../wasm/loader'
 import { loadSnapshot, saveSnapshot } from '../lib/snapshotStore'
+import { getSnapshotKey } from '../lib/atRestSession'
 
 // ── Cross-tab broadcast ──────────────────────────────────────────────────────
 //
@@ -310,7 +311,7 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       // create() fills from local state and only fetches events newer than its
       // marker, instead of re-paginating the entire room history. Best-effort —
       // a missing/invalid snapshot just means a full gather.
-      const snapshotJson = await loadSnapshot(workspaceId)
+      const snapshotJson = await loadSnapshot(workspaceId, getSnapshotKey() ?? undefined)
 
       // Retry loop — handles the case where the SDK room cache is not yet
       // populated (initialSync still running in the background).
@@ -353,7 +354,7 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
           // it current thereafter). Fire-and-forget.
           try {
             const snap = cws.snapshot()
-            if (snap) void saveSnapshot(workspaceId, snap)
+            if (snap) void saveSnapshot(workspaceId, snap, getSnapshotKey() ?? undefined)
           } catch {
             /* best-effort */
           }
@@ -462,7 +463,7 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       if (cancelled || !workspace.snapshot) return
       try {
         const snap = workspace.snapshot()
-        if (snap) void saveSnapshot(workspaceId, snap)
+        if (snap) void saveSnapshot(workspaceId, snap, getSnapshotKey() ?? undefined)
       } catch {
         /* best-effort */
       }
