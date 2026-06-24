@@ -53,24 +53,55 @@ export class MockWorkspace {
   private cellStore: CellStore = new Map()
   private schemas: Map<string, TableDef> = new Map()
   private views: Map<string, ViewConfig> = new Map()
+  private deletedTables: Set<string> = new Set()
+  private tableOrder: Map<string, string> = new Map()
 
   // ── Table operations ──────────────────────────────────────────────────────
 
   createTable(definitionJson: string): string {
     const def: TableDef = JSON.parse(definitionJson)
-    if (this.schemas.has(def.id) || this.cellStore.has(def.id)) {
+    if ((this.schemas.has(def.id) || this.cellStore.has(def.id)) && !this.deletedTables.has(def.id)) {
       throw new Error('A table with that name already exists')
     }
+    this.deletedTables.delete(def.id) // re-creating a deleted id clears the tombstone
     this.schemas.set(def.id, def)
     this.cellStore.set(def.id, new Map())
     return JSON.stringify({ success: true })
   }
 
   listTables(): string {
-    return JSON.stringify(Array.from(this.cellStore.keys()))
+    const ids = Array.from(this.cellStore.keys()).filter(id => !this.deletedTables.has(id))
+    ids.sort((a, b) => {
+      const ka = this.tableOrder.get(a) ?? null
+      const kb = this.tableOrder.get(b) ?? null
+      if (ka != null && kb != null) return ka < kb ? -1 : ka > kb ? 1 : a.localeCompare(b)
+      if (ka != null) return -1
+      if (kb != null) return 1
+      return a.localeCompare(b)
+    })
+    return JSON.stringify(ids)
+  }
+
+  /** Tombstone a table (decay model): hidden from listTables / getTableSchema. */
+  deleteTable(tableId: string): void {
+    this.deletedTables.add(tableId)
+  }
+
+  /** Set a table's manual-ordering key (fractional index). */
+  setTableOrder(tableId: string, orderKey: string): void {
+    this.tableOrder.set(tableId, orderKey)
+  }
+
+  getTableOrderKeys(): string {
+    const map: Record<string, string> = {}
+    for (const [id, key] of this.tableOrder) {
+      if (!this.deletedTables.has(id)) map[id] = key
+    }
+    return JSON.stringify(map)
   }
 
   getTableSchema(tableId: string): string {
+    if (this.deletedTables.has(tableId)) throw new Error('Table not found')
     const schema = this.schemas.get(tableId)
     if (!schema) throw new Error('Table not found')
     // Exclude deleted columns from `columns` and report them in

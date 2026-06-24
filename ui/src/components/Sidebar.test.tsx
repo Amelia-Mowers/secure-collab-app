@@ -176,7 +176,7 @@ describe('Sidebar', () => {
       const ws = makeKanbanWorkspace()
       renderSidebar(ws)
       const taskLabels = screen.getAllByText('Tasks')
-      const tableBtn = taskLabels.find(el => el.classList.contains('sidebar__item-label'))?.closest('button')
+      const tableBtn = taskLabels.find(el => el.classList.contains('sidebar__item-label'))?.closest('.sidebar__item')
       if (tableBtn) {
         fireEvent.click(tableBtn)
       } else {
@@ -196,7 +196,7 @@ describe('Sidebar', () => {
       const ws = makeKanbanWorkspace()
       renderSidebar(ws, '/workspace/ws_test/table/tasks')
       const taskLabels = screen.getAllByText('Tasks')
-      const tableBtn = taskLabels.find(el => el.classList.contains('sidebar__item-label'))?.closest('button')
+      const tableBtn = taskLabels.find(el => el.classList.contains('sidebar__item-label'))?.closest('.sidebar__item')
       expect(tableBtn).toBeTruthy()
       expect(tableBtn!.className).toContain('sidebar__item--active')
     })

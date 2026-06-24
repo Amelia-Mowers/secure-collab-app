@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 import { homeserverUrl, registerDevice, captureMasterKey, uniqueUser } from './helpers'
 
 /**
@@ -261,4 +261,65 @@ test('a deleted row stays deleted after reload', async ({ page }) => {
   await page.reload()
   await expect(page.locator('th', { hasText: 'Name' })).toBeVisible({ timeout: 120_000 })
   await expect(gridRow(page, 'Doomed row')).toBeHidden()
+})
+
+// Table-level delete + reorder persistence (issue c36f496d). Deleting a table
+// writes a `_tables` registry tombstone (+ deleted_at cutoff) and reordering
+// writes a fractional `_order` cell — both sync to Matrix, so they survive a
+// cold-start reload (the durability the MockWorkspace unit tests can't cover).
+test('table delete and reorder persist after reload', async ({ page }) => {
+  test.setTimeout(300_000)
+  page.on('dialog', dialog => dialog.accept()) // auto-accept the delete confirm
+
+  await registerDevice(page, homeserverUrl(), uniqueUser('tbl'))
+  await captureMasterKey(page)
+  await expect(page).toHaveURL(/workspaces/, { timeout: 60_000 })
+  await createWorkspace(page, 'Tables E2E')
+
+  await createTable(page, 'Apples')
+  await createTable(page, 'Bananas')
+
+  const tablesSection = page.locator('.sidebar__section', { hasText: 'Tables' })
+  const items = tablesSection.locator('.sidebar__item--table')
+  await expect(items).toHaveCount(2, { timeout: 30_000 })
+  // Default order is by id: apples, then bananas.
+  await expect(items.nth(0)).toContainText('Apples')
+  await expect(items.nth(1)).toContainText('Bananas')
+
+  // Drag 'Bananas' up onto 'Apples' to reorder. dnd-kit needs real pointer
+  // movement past its 6px activation threshold, so drive the mouse in steps
+  // rather than Playwright's one-shot dragTo.
+  const dragUp = async (from: Locator, to: Locator) => {
+    const s = await from.boundingBox()
+    const t = await to.boundingBox()
+    if (!s || !t) throw new Error('missing bounding box for drag')
+    await page.mouse.move(s.x + s.width / 2, s.y + s.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(s.x + s.width / 2, s.y + s.height / 2 + 10, { steps: 5 })
+    await page.mouse.move(t.x + t.width / 2, t.y + t.height / 2, { steps: 12 })
+    await page.mouse.up()
+  }
+  await dragUp(items.filter({ hasText: 'Bananas' }), items.filter({ hasText: 'Apples' }))
+  await expect(items.nth(0)).toContainText('Bananas', { timeout: 30_000 })
+  await expect(items.nth(1)).toContainText('Apples')
+
+  // Drain background sends, then cold-start reload: the new order must persist.
+  await page.waitForTimeout(4000)
+  await page.reload()
+  const afterReorder = page.locator('.sidebar__section', { hasText: 'Tables' }).locator('.sidebar__item--table')
+  await expect(afterReorder).toHaveCount(2, { timeout: 120_000 })
+  await expect(afterReorder.nth(0)).toContainText('Bananas')
+  await expect(afterReorder.nth(1)).toContainText('Apples')
+
+  // Delete 'Apples'; it disappears immediately and stays gone after reload.
+  await page.locator('.sidebar__section', { hasText: 'Tables' }).getByTitle('Delete table Apples').click()
+  await expect(afterReorder).toHaveCount(1, { timeout: 30_000 })
+  await expect(afterReorder.nth(0)).toContainText('Bananas')
+
+  await page.waitForTimeout(4000)
+  await page.reload()
+  const afterDelete = page.locator('.sidebar__section', { hasText: 'Tables' }).locator('.sidebar__item--table')
+  await expect(afterDelete).toHaveCount(1, { timeout: 120_000 })
+  await expect(afterDelete.nth(0)).toContainText('Bananas')
+  await expect(afterDelete.filter({ hasText: 'Apples' })).toHaveCount(0)
 })

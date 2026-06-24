@@ -215,6 +215,32 @@
   opacity: 1;
 }
 
+/* Table list: drag-to-reorder affordance + per-item delete (issue c36f496d). */
+.sidebar__item--table {
+  cursor: grab;
+  user-select: none;
+}
+.sidebar__item--table:active {
+  cursor: grabbing;
+}
+.sidebar__item-delete {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.sidebar__item--table:hover .sidebar__item-delete {
+  opacity: 0.7;
+}
+.sidebar__item-delete:hover {
+  opacity: 1 !important;
+  color: var(--text);
+  background-color: var(--bg-hover);
+}
+
 .sidebar__empty {
   padding: 8px 10px;
   font-size: 12px;

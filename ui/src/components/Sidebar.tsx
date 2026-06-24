@@ -1,11 +1,27 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type CSSProperties } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  arrayMove,
+  useSortable,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
 import { NewTableModal } from '@/components/NewTableModal'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { notifyWorkspaceChanged } from '@/hooks/useTable'
+import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { TrialBadge } from '@/components/TrialStatus'
 import { buildTableDefinition, type TableTemplate } from '@/tableTemplates'
 import './Sidebar.css'
@@ -206,6 +222,74 @@ export function viewPath(view: ViewInfo, workspaceId: string): string {
   return `/workspace/${workspaceId}/table/${view.table_id}/view/${view.id}`
 }
 
+const TrashIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+    <line x1="2" y1="3" x2="10" y2="3" />
+    <path d="M3 3v7a1 1 0 001 1h4a1 1 0 001-1V3" />
+    <path d="M4.5 3V2a1 1 0 011-1h1a1 1 0 011 1v1" />
+  </svg>
+)
+
+/** A draggable, deletable table entry in the sidebar list. The whole row is the
+ *  drag handle (a <6px move still registers as a click → navigate); the trash
+ *  button stops pointer/click propagation so it neither drags nor navigates. */
+function SortableTableItem({
+  table,
+  active,
+  canDelete,
+  onOpen,
+  onDelete,
+}: {
+  table: TableInfo
+  active: boolean
+  canDelete: boolean
+  onOpen: () => void
+  onDelete: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: table.id,
+  })
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`sidebar__item sidebar__item--table ${active ? 'sidebar__item--active' : ''}`}
+      {...attributes}
+      {...listeners}
+      onClick={onOpen}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen()
+        }
+      }}
+    >
+      <HashIcon />
+      <span className="sidebar__item-label">{table.name}</span>
+      {canDelete && (
+        <button
+          className="sidebar__item-delete ghost"
+          title={`Delete table ${table.name}`}
+          aria-label="Delete table"
+          onClick={e => {
+            e.stopPropagation()
+            onDelete()
+          }}
+          onPointerDown={e => e.stopPropagation()}
+          onKeyDown={e => e.stopPropagation()}
+        >
+          <TrashIcon />
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [tables, setTables] = useState<TableInfo[]>([])
   const [views, setViews] = useState<ViewInfo[]>([])
@@ -274,6 +358,15 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
       })
       setTables(tableList)
 
+      // If the table we're currently viewing was deleted (here or on another
+      // device, arriving via sync), leave its now-dead route so the user isn't
+      // stranded on an empty page.
+      const m = location.pathname.match(/\/workspace\/[^/]+\/table\/([^/]+)/)
+      const currentTableId = m ? decodeURIComponent(m[1]) : null
+      if (currentTableId && !tableList.some(t => t.id === currentTableId)) {
+        navigate(`/workspace/${workspaceId}`)
+      }
+
       // Build flat view list across all tables
       const viewList: ViewInfo[] = []
       for (const table of tableList) {
@@ -321,6 +414,63 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   }
 
   const isActive = (path: string) => location.pathname === path
+
+  const canMutateTables = !!workspace && typeof workspace.deleteTable === 'function'
+
+  // Drag-to-reorder the table list. A 6px threshold keeps a plain click as a
+  // navigate. Mirrors the row reorder in TableView: write a fractional `_order`
+  // key (one write for an already-ordered list, a one-time backfill otherwise).
+  const tableSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+
+  const handleTableDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e
+    if (!over || active.id === over.id || !workspace || typeof workspace.setTableOrder !== 'function') {
+      return
+    }
+    let keyMap: Record<string, string> = {}
+    try {
+      keyMap = JSON.parse(workspace.getTableOrderKeys?.() ?? '{}')
+    } catch {
+      /* no keys yet — computeReorderWrites backfills */
+    }
+    const orderRows: OrderRow[] = tables.map(t => ({ id: t.id, key: keyMap[t.id] ?? null }))
+    const writes = computeReorderWrites(orderRows, String(active.id), String(over.id))
+    if (writes.length === 0) return
+
+    // Optimistic: reflect the new order immediately; the writes sync in the bg.
+    const ids = tables.map(t => t.id)
+    const from = ids.indexOf(String(active.id))
+    const to = ids.indexOf(String(over.id))
+    if (from >= 0 && to >= 0) setTables(arrayMove(tables, from, to))
+
+    for (const w of writes) {
+      Promise.resolve(workspace.setTableOrder(w.id, w.key)).catch((err: unknown) =>
+        console.error('Failed to reorder table:', err),
+      )
+    }
+    if (workspaceId) notifyWorkspaceChanged(workspaceId)
+  }
+
+  const handleDeleteTable = (table: TableInfo) => {
+    if (!workspace || typeof workspace.deleteTable !== 'function') return
+    if (!window.confirm(`Delete table "${table.name}"? All of its rows will be removed.`)) return
+
+    // Optimistic removal; if we're viewing it, leave the route now.
+    setTables(prev => prev.filter(t => t.id !== table.id))
+    if (location.pathname.startsWith(`/workspace/${workspaceId}/table/${table.id}`)) {
+      navigate(`/workspace/${workspaceId}`)
+    }
+    Promise.resolve(workspace.deleteTable(table.id))
+      .then(() => {
+        if (workspaceId) notifyWorkspaceChanged(workspaceId)
+        refreshData()
+      })
+      .catch((err: unknown) => {
+        console.error('Failed to delete table:', err)
+        alert('Failed to delete table: ' + (err instanceof Error ? err.message : String(err)))
+        refreshData() // roll back to the real state
+      })
+  }
 
   return (
     <aside className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''}`}>
@@ -379,19 +529,27 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
           <div className="sidebar__section">
             <div className="sidebar__section-label">Tables</div>
 
-            {tables.map(table => {
-              const active = isActive(`/workspace/${workspaceId}/table/${table.id}`)
-              return (
-                <button
-                  key={table.id}
-                  className={`sidebar__item ${active ? 'sidebar__item--active' : ''}`}
-                  onClick={() => navigate(`/workspace/${workspaceId}/table/${table.id}`)}
-                >
-                  <HashIcon />
-                  <span className="sidebar__item-label">{table.name}</span>
-                </button>
-              )
-            })}
+            <DndContext
+              sensors={tableSensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleTableDragEnd}
+            >
+              <SortableContext
+                items={tables.map(t => t.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {tables.map(table => (
+                  <SortableTableItem
+                    key={table.id}
+                    table={table}
+                    active={isActive(`/workspace/${workspaceId}/table/${table.id}`)}
+                    canDelete={canMutateTables}
+                    onOpen={() => navigate(`/workspace/${workspaceId}/table/${table.id}`)}
+                    onDelete={() => handleDeleteTable(table)}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
 
             <button
               className="sidebar__item sidebar__item--add"
