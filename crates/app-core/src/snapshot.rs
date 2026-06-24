@@ -185,8 +185,11 @@ mod tests {
 
         let mut ws = Workspace::new("w");
         ws.create_table(
-            TableDefinition::new("tasks", "Tasks")
-                .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text)),
+            TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+                "name",
+                "Name",
+                ColumnType::Text,
+            )),
         )
         .unwrap();
         // Columns added AFTER table creation (separate _schema writes).
@@ -206,17 +209,27 @@ mod tests {
         )
         .unwrap();
 
-        ws.update_cell("tasks", "r1", "name", json!("Alpha task")).unwrap();
-        ws.update_cell("tasks", "r1", "priority", json!("High")).unwrap();
+        ws.update_cell("tasks", "r1", "name", json!("Alpha task"))
+            .unwrap();
+        ws.update_cell("tasks", "r1", "priority", json!("High"))
+            .unwrap();
         ws.update_cell("tasks", "r1", "points", json!(3)).unwrap();
         ws.update_cell("tasks", "r1", "done", json!(true)).unwrap();
-        ws.update_cell("tasks", "r2", "name", json!("Beta task")).unwrap();
-        ws.update_cell("tasks", "r3", "name", json!("Gamma task")).unwrap();
-        // Inline edit: the later write must win LWW after reload.
-        ws.update_cell("tasks", "r2", "name", json!("Beta task v2")).unwrap();
-
-        ws.create_view(ViewConfig::new("tasks-board", "Board", "tasks", ViewType::Kanban))
+        ws.update_cell("tasks", "r2", "name", json!("Beta task"))
             .unwrap();
+        ws.update_cell("tasks", "r3", "name", json!("Gamma task"))
+            .unwrap();
+        // Inline edit: the later write must win LWW after reload.
+        ws.update_cell("tasks", "r2", "name", json!("Beta task v2"))
+            .unwrap();
+
+        ws.create_view(ViewConfig::new(
+            "tasks-board",
+            "Board",
+            "tasks",
+            ViewType::Kanban,
+        ))
+        .unwrap();
 
         // snapshot -> json -> load into a fresh workspace
         let snap = WorkspaceSnapshot {
