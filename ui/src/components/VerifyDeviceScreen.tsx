@@ -27,6 +27,8 @@ export function VerifyDeviceScreen() {
     setupPasskeyRecovery,
     setupKeyRecovery,
     unlockWithPasskey,
+    unlockSessionWithPasskey,
+    submitUnlockKey,
     migrateToPasskey,
     signOut,
     verification,
@@ -71,6 +73,17 @@ export function VerifyDeviceScreen() {
         onMasterKey={submitRecoveryKey}
         canUnlockWithPasskey={passkeyAvailable && passkeyEnrolled}
         onPasskey={unlockWithPasskey}
+      />
+    )
+  }
+
+  if (recoveryPrompt?.kind === 'unlock') {
+    return (
+      <UnlockSession
+        custody={recoveryPrompt.custody}
+        passkeyAvailable={passkeyAvailable}
+        onPasskey={unlockSessionWithPasskey}
+        onKey={submitUnlockKey}
       />
     )
   }
@@ -444,6 +457,120 @@ function VerifyThisDevice({
               Fetching and decrypting your history from secure backup — this can take a few seconds.
             </p>
           )}
+        </>
+      )}
+    </Overlay>
+  )
+}
+
+// ── At-rest unlock-first gate: get the master secret BEFORE restore so the
+//    encrypted local store can be opened (issue c72ec5df). ────────────────────
+
+function UnlockSession({
+  custody,
+  passkeyAvailable,
+  onPasskey,
+  onKey,
+}: {
+  custody?: 'passkey' | 'manual'
+  passkeyAvailable: boolean
+  onPasskey: () => Promise<void>
+  onKey: (key: string) => Promise<void>
+}) {
+  const canPasskey = passkeyAvailable && custody !== 'manual'
+  const [mode, setMode] = useState<'choose' | 'key'>(canPasskey ? 'choose' : 'key')
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = async (fn: () => Promise<void>) => {
+    setError(null)
+    setBusy(true)
+    try {
+      await fn()
+    } catch (err: any) {
+      setError(err?.message ?? 'Could not unlock. Check your passkey or recovery key.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Overlay labelledBy="verify-title">
+      <h2 id="verify-title" className="verify__title">
+        Unlock TideWork
+      </h2>
+      {mode === 'choose' && canPasskey ? (
+        <>
+          <p className="verify__body">
+            Your data is encrypted on this device. Unlock with your passkey to continue.
+          </p>
+          {error && (
+            <p className="verify__error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="verify__actions verify__actions--stacked">
+            <button
+              type="button"
+              className="verify__primary"
+              disabled={busy}
+              onClick={() => run(onPasskey)}
+            >
+              {busy ? <><Spinner />Unlocking…</> : 'Unlock with passkey'}
+            </button>
+            <button
+              type="button"
+              className="verify__link"
+              disabled={busy}
+              onClick={() => {
+                setError(null)
+                setMode('key')
+              }}
+            >
+              Use your recovery key
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="verify__body">Enter your recovery key to unlock this device.</p>
+          <input
+            type="text"
+            className="verify__input"
+            placeholder="Recovery key"
+            value={key}
+            onChange={e => setKey(e.target.value)}
+            disabled={busy}
+            autoFocus
+          />
+          {error && (
+            <p className="verify__error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="verify__actions">
+            {canPasskey && (
+              <button
+                type="button"
+                className="verify__link"
+                disabled={busy}
+                onClick={() => {
+                  setError(null)
+                  setMode('choose')
+                }}
+              >
+                Back
+              </button>
+            )}
+            <button
+              type="button"
+              className="verify__primary"
+              disabled={busy || key.trim().length === 0}
+              onClick={() => run(() => onKey(key.trim()))}
+            >
+              {busy ? <><Spinner />Unlocking…</> : 'Unlock'}
+            </button>
+          </div>
         </>
       )}
     </Overlay>

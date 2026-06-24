@@ -4,7 +4,7 @@ import { createElement } from 'react'
 import { getWasmModule } from '../wasm/loader'
 import type { OauthPopup } from '../auth/oauthPopup'
 import { hasPlatformAuthenticator, registerPasskeyPrf, unlockPasskeyPrf } from '../auth/passkeyPrf'
-import { deriveAtRestKeys, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
+import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -210,6 +210,10 @@ const LEGACY_SESSION_KEY = 'collab:session'
 function loadAccounts(): AccountSession[] {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY)
+    // Soft cutover (at-rest, c72ec5df): v1 (plaintext) entries still restore
+    // as-is and upgrade to v2 (encrypted) on their next re-login; only NEW
+    // accounts are encrypted at rest. (Hard-deleting v1 here would force a
+    // re-login but breaks the legacy-restore tests — deferred.)
     if (raw) return JSON.parse(raw)
 
     // Migrate from single-account format
@@ -323,6 +327,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // gesture before we can restore it.
   const atRestKeysRef = useRef<AtRestKeys | null>(null)
   const pendingUnlockRef = useRef<AccountSession | null>(null)
+  // Credentials held in memory through sign-in/up so we can re-key the device to
+  // an ENCRYPTED store once the master secret exists (register bootstrap / unlock).
+  const pendingRekeyRef = useRef<{ homeserver: string; user: string; password: string } | null>(null)
+  // Forward reference to rekeyToEncryptedStore (defined later) so the recovery
+  // callbacks above it can call it without a TDZ / dependency cycle.
+  const rekeyRef = useRef<((secret: string) => Promise<void>) | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>(() =>
     loadWorkspaces(loadActiveAccountId(loadAccounts())),
   )
@@ -503,6 +513,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const recoveryKey: string = await ms.enableRecoveryWithPassphrase(secret)
     passkeyEnrolledRef.current = true
     setPasskeyEnrolled(true)
+    // Re-key this just-registered device to an ENCRYPTED store now that the
+    // master secret exists (at-rest, c72ec5df). No-op if creds aren't held.
+    await rekeyRef.current?.(secret)
     setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
   }, [])
 
@@ -579,6 +592,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // future devices need no typed key. Declining proceeds into the app. The
     // passkey-unlock path never reaches here as a legacy account (it's gated on
     // enrollment), so this only fires after a master-key restore.
+    // New-device sign-in (creds held): re-key to an encrypted store now that we
+    // hold the master secret. Cold-start unlock leaves pendingRekey unset (no-op).
+    if (pendingRekeyRef.current) {
+      await rekeyRef.current?.(key)
+    }
     if (passkeyAvailableRef.current && !passkeyEnrolledRef.current) {
       setRecoveryPrompt({ kind: 'offer-passkey' })
     } else {
@@ -757,13 +775,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the account pool.
   const persistSessionBlob = useCallback((userId: string, blob: string) => {
     if (!blob) return
-    setAccounts(prev => {
-      const updated = prev.map(a =>
-        a.userId === userId ? { ...a, matrixSessionData: blob } : a,
-      )
-      saveAccounts(updated)
-      return updated
-    })
+    const write = (patch: Partial<AccountSession>) =>
+      setAccounts(prev => {
+        const updated = prev.map(a => (a.userId === userId ? { ...a, ...patch } : a))
+        saveAccounts(updated)
+        return updated
+      })
+    const keys = atRestKeysRef.current
+    if (keys) {
+      // v2 (at-rest): encrypt the session blob; drop any plaintext copy. Fired on
+      // every token refresh, so the persisted token is always ciphertext.
+      encryptString(keys.tokenKey, blob)
+        .then(secrets =>
+          write({
+            v: 2,
+            custody: passkeyEnrolledRef.current ? 'passkey' : 'manual',
+            secrets,
+            matrixSessionData: undefined,
+          }),
+        )
+        .catch(e => console.warn('[auth] session-blob encrypt failed:', e))
+    } else {
+      write({ matrixSessionData: blob }) // v1 (pre-unlock / legacy)
+    }
   }, [])
 
   // Keep the stored session blob current with the SDK's live tokens. MAS access
@@ -823,6 +857,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const accs = loadAccounts()
     const activeId = loadActiveAccountId(accs)
     const account = accs.find(a => a.userId === activeId)
+    // v2 (at-rest): the encrypted SDK store can't be opened without the master
+    // secret, so gate restore behind the unlock prompt — the gesture
+    // (unlockSessionWithPasskey / submitUnlockKey → unlockAndRestore) finishes it.
+    if (account?.v === 2 && account.secrets) {
+      console.log('[auth] Encrypted session — prompting to unlock before restore')
+      pendingUnlockRef.current = account
+      setRecoveryPrompt({ kind: 'unlock', custody: account.custody })
+      setLoading(false)
+      return
+    }
     console.log('[auth] Auto-restore: activeId =', activeId, ', account found =', !!account?.matrixSessionData)
     if (!account?.matrixSessionData) {
       console.log('[auth] No session data to restore, skipping')
@@ -897,15 +941,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (ms: any, homeserver: string, usernameHint: string) => {
       const uid = ms.userId() ?? `@${usernameHint}:unknown`
 
-      // Persist full session data including tokens
+      // Persist full session data including tokens. When at-rest keys are set
+      // (the re-keyed device), write a v2 entry with the token blob encrypted.
       const matrixSessionData: string = ms.sessionData()
-
-      const account: AccountSession = {
-        homeserverUrl: homeserver,
-        userId: uid,
-        username: usernameHint,
-        matrixSessionData,
-      }
+      const keys = atRestKeysRef.current
+      const account: AccountSession = keys
+        ? {
+            homeserverUrl: homeserver,
+            userId: uid,
+            username: usernameHint,
+            v: 2,
+            custody: passkeyEnrolledRef.current ? 'passkey' : 'manual',
+            secrets: await encryptString(keys.tokenKey, matrixSessionData),
+          }
+        : {
+            homeserverUrl: homeserver,
+            userId: uid,
+            username: usernameHint,
+            matrixSessionData,
+          }
 
       // Add or update in the account pool
       setAccounts(prev => {
@@ -935,6 +989,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [ensureHistoryAccess],
   )
 
+  /** Re-key a freshly signed-in/registered device (whose store is still
+   *  plaintext) to an ENCRYPTED store, once the master `secret` exists. Logs in
+   *  again as a fresh device WITH the store passphrase, re-downloads room keys
+   *  from the server backup (recoverWithKey), persists a v2 entry, then drops the
+   *  transient plaintext store. No-op without held credentials (e.g. OAuth — TODO
+   *  OAuth re-key has no password). */
+  const rekeyToEncryptedStore = useCallback(
+    async (secret: string) => {
+      const creds = pendingRekeyRef.current
+      if (!creds) return
+      const keys = await deriveAtRestKeys(secret)
+      atRestKeysRef.current = keys
+      let oldStoreName: string | undefined
+      try {
+        oldStoreName = JSON.parse(matrixSessionRef.current?.sessionData?.() ?? '{}').storeName
+      } catch {
+        /* ignore */
+      }
+      const wasm = await getWasmModule()
+      const ms = await wasm.MatrixSession.login(
+        creds.homeserver,
+        creds.user,
+        creds.password,
+        keys.storePassphrase,
+      )
+      await ms.initialSync()
+      await ms.recoverWithKey(secret) // re-download room keys into the encrypted store
+      try {
+        await ms.initialSync()
+      } catch {
+        /* keys finish downloading in the background */
+      }
+      await completeSignIn(ms, creds.homeserver, creds.user) // writes a v2 entry
+      pendingRekeyRef.current = null
+      if (oldStoreName) {
+        try {
+          indexedDB.deleteDatabase(oldStoreName)
+        } catch {
+          /* best-effort cleanup of the transient plaintext store */
+        }
+      }
+    },
+    [completeSignIn],
+  )
+  rekeyRef.current = rekeyToEncryptedStore
+
   // ── signIn: add or update an account in the pool ───────────────────────────
   const signIn = useCallback(
     async (homeserver: string, user: string, password: string) => {
@@ -943,6 +1043,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         const wasm = await getWasmModule()
+        // Hold creds so we can re-key to an encrypted store after unlock.
+        pendingRekeyRef.current = { homeserver, user, password }
         const ms = await wasm.MatrixSession.login(homeserver, user, password)
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
@@ -1014,6 +1116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         const wasm = await getWasmModule()
+        // Hold creds so we can re-key to an encrypted store once recovery boots.
+        pendingRekeyRef.current = { homeserver, user, password }
         const ms = await wasm.MatrixSession.register(homeserver, user, password)
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
@@ -1074,6 +1178,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActiveAccountId(targetUserId)
       saveActiveAccountId(targetUserId)
       setWorkspaces(loadWorkspaces(targetUserId))
+
+      // v2 (at-rest): gate behind the unlock prompt like cold start.
+      if (account.v === 2 && account.secrets) {
+        pendingUnlockRef.current = account
+        setRecoveryPrompt({ kind: 'unlock', custody: account.custody })
+        setLoading(false)
+        return
+      }
 
       try {
         const ms = await restoreSession(account)

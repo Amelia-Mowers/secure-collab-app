@@ -13,7 +13,7 @@ import { addPrfAuthenticator, homeserverUrl, registerDevice, uniqueUser } from '
  * for the driven implementation loop. Mirrors passkey.spec.ts for the passkey
  * enroll/unlock steps.
  */
-test.fixme(
+test(
   'at-rest: encrypted store requires passkey unlock on reload; no plaintext secrets',
   async ({ browser }) => {
     const url = homeserverUrl()
