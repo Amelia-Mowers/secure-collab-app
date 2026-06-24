@@ -582,6 +582,12 @@ impl MatrixSession {
     pub async fn restore(
         homeserver_url: String,
         session_json: String,
+        // At-rest encryption (issue c72ec5df): passphrase derived from the master
+        // secret (HKDF — see ui/src/lib/atRestCrypto.ts), supplied by the
+        // unlock-first cold start so the encrypted IndexedDB store can be opened.
+        // `None`/`undefined` keeps the legacy plaintext store for back-compat
+        // during the hard-cutover migration.
+        store_passphrase: Option<String>,
     ) -> Result<MatrixSession, JsValue> {
         #[derive(Deserialize)]
         struct SavedSession {
@@ -620,7 +626,7 @@ impl MatrixSession {
 
         let client = Client::builder()
             .homeserver_url(&homeserver_url)
-            .indexeddb_store(&store_name, None)
+            .indexeddb_store(&store_name, store_passphrase.as_deref())
             .with_encryption_settings(default_encryption_settings())
             // Share Megolm keys only with devices cross-signed by their owner's
             // identity (not "all devices"): a device injected by a malicious
