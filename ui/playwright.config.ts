@@ -27,14 +27,14 @@ function nixChromium(): string | undefined {
 /**
  * Two-browser end-to-end harness (ADR 0001 Phase D).
  *
- * `globalSetup` boots a throwaway Conduit homeserver (the same one the Rust
- * integration tests use) and exposes its URL via `E2E_HOMESERVER`. The web
+ * `globalSetup` boots a throwaway Synapse homeserver (the same one prod and the
+ * Rust integration tests use) and exposes its URL via `E2E_HOMESERVER`. The web
  * server is the Vite dev server, which serves the app + the locally-built WASM
- * bindings. Tests open two isolated browser contexts as two *devices* of one
- * user (separate IndexedDB crypto stores) and drive the real verification /
- * recovery flows.
+ * bindings. Tests open isolated browser contexts — two *devices* of one user
+ * (verification / recovery) or two distinct *users* (collaboration) — and drive
+ * the real flows.
  *
- * Run inside the Nix dev shell so `conduit` is on PATH and Playwright uses the
+ * Run inside the Nix dev shell so `synapse_homeserver` is on PATH and Playwright uses the
  * Nix-provided browsers (PLAYWRIGHT_BROWSERS_PATH):
  *   nix develop --command bash -c "cd ui && npm run e2e"
  */
