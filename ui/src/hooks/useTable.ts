@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getWasmModule } from '../wasm/loader'
+import { loadSnapshot, saveSnapshot } from '../lib/snapshotStore'
 
 // ── Cross-tab broadcast ──────────────────────────────────────────────────────
 //
@@ -68,6 +69,8 @@ export interface WorkspaceHandle {
   startSync?(onChange: () => void): void
   inviteUser?(userId: string): Promise<void>
   listMembers?(): Promise<string>
+  /** Serialize current state for incremental cold start (ConnectedWorkspace only). */
+  snapshot?(): string
 }
 
 interface TableRow {
@@ -299,6 +302,12 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
         console.log('Creating connected workspace for room:', workspaceId)
       }
 
+      // Incremental cold start (issue 6f092cf4): load the persisted snapshot so
+      // create() fills from local state and only fetches events newer than its
+      // marker, instead of re-paginating the entire room history. Best-effort —
+      // a missing/invalid snapshot just means a full gather.
+      const snapshotJson = await loadSnapshot(workspaceId)
+
       // Retry loop — handles the case where the SDK room cache is not yet
       // populated (initialSync still running in the background).
       const MAX_RETRIES = 6
@@ -306,7 +315,11 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       let lastErr: unknown
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          const cws = await wasmModule.ConnectedWorkspace.create(matrixSession, workspaceId)
+          const cws = await wasmModule.ConnectedWorkspace.create(
+            matrixSession,
+            workspaceId,
+            snapshotJson,
+          )
 
           // Note on read-only legacy rooms: enforcement lives in the bridge
           // send path, which fails closed for unencrypted rooms at SEND time
@@ -330,6 +343,17 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
           workspaceRef.current = cws
           setWorkspace(cws)
           setLoading(false)
+
+          // Persist the freshly-gathered state immediately so a quick reload
+          // already benefits from the snapshot (the periodic effect below keeps
+          // it current thereafter). Fire-and-forget.
+          try {
+            const snap = cws.snapshot()
+            if (snap) void saveSnapshot(workspaceId, snap)
+          } catch {
+            /* best-effort */
+          }
+
           if (!isRefresh) {
             console.log('Connected workspace initialized with sync')
           }
@@ -420,6 +444,38 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
     document.addEventListener('visibilitychange', handleVisibility)
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [matrixSession])
+
+  // ── Persist a workspace snapshot for incremental cold start ────
+  // Keeps the local snapshot reasonably current so the next reload skips
+  // re-paginating full history. Correctness does NOT depend on freshness — the
+  // marker-bounded gather fills any gap — so saving is best-effort: a debounced
+  // save after each sync-driven change, a periodic tick (catches same-tab local
+  // writes, which don't bump syncCount), and one when the tab is hidden.
+  useEffect(() => {
+    if (!workspace || typeof workspace.snapshot !== 'function') return
+    let cancelled = false
+    const persist = () => {
+      if (cancelled || !workspace.snapshot) return
+      try {
+        const snap = workspace.snapshot()
+        if (snap) void saveSnapshot(workspaceId, snap)
+      } catch {
+        /* best-effort */
+      }
+    }
+    const debounce = setTimeout(persist, 2_000)
+    const interval = setInterval(persist, 30_000)
+    const onHide = () => {
+      if (document.hidden) persist()
+    }
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      cancelled = true
+      clearTimeout(debounce)
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onHide)
+    }
+  }, [workspace, syncCount, workspaceId])
 
   return { workspace, loading, error, syncCount }
 }

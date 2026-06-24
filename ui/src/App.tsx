@@ -58,7 +58,7 @@ function WorkspaceShell() {
     return (
       <div className="app-loading">
         <LoadingSpinner
-          message={matrixSession ? 'Initializing workspace...' : 'Connecting...'}
+          message={matrixSession ? 'Loading history…' : 'Connecting...'}
           onReset={resetApp}
         />
       </div>

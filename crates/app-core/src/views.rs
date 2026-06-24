@@ -311,6 +311,11 @@ impl ViewManager {
         view_ids
     }
 
+    /// Winning cells of the `_views` system table for a workspace snapshot.
+    pub fn export_cells(&self) -> Vec<tables_over_matrix::Cell> {
+        self.views_table.export_cells()
+    }
+
     /// Apply updates to the views table
     pub fn apply_updates(&mut self, updates: Vec<CellUpdate>) {
         for update in updates {
