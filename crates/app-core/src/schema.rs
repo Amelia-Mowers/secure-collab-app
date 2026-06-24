@@ -611,6 +611,15 @@ impl SchemaManager {
         cutoffs
     }
 
+    /// Winning cells of the system tables (`_schema` + `_tables`) for a
+    /// workspace snapshot. Replaying them via `Workspace::apply_update` routes
+    /// them back to these tables and reconstructs the schema.
+    pub fn export_cells(&self) -> Vec<tables_over_matrix::Cell> {
+        let mut cells = self.schema_table.export_cells();
+        cells.extend(self.tables_table.export_cells());
+        cells
+    }
+
     /// Apply updates to the schema system tables
     pub fn apply_updates(&mut self, updates: Vec<CellUpdate>) {
         for update in updates {

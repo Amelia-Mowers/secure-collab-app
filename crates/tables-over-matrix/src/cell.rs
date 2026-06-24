@@ -163,6 +163,22 @@ impl CellUpdate {
     pub fn cell_id(&self) -> CellId {
         CellId::new(&self.table_id, &self.row_id, &self.column_id)
     }
+
+    /// Rebuild a `CellUpdate` from a materialized [`Cell`] — used to replay a
+    /// persisted snapshot's cells through the normal `apply_update` path. The
+    /// `server_timestamp` tiebreaker (which is `#[serde(skip)]` on the wire but
+    /// retained on a `Cell`) is preserved so LWW resolution is unchanged.
+    pub fn from_cell(cell: Cell) -> Self {
+        Self {
+            version: CELL_UPDATE_VERSION,
+            table_id: cell.id.table_id,
+            row_id: cell.id.row_id,
+            column_id: cell.id.column_id,
+            value: cell.value,
+            timestamp: cell.timestamp,
+            server_timestamp: cell.server_timestamp,
+        }
+    }
 }
 
 #[cfg(test)]

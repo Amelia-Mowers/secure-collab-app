@@ -46,6 +46,7 @@ pub struct WorkspaceMarkerEventContent {
     pub workspace: bool,
 }
 
+use crate::snapshot::{WorkspaceSnapshot, SNAPSHOT_VERSION};
 use crate::workspace::Workspace;
 use matrix_sdk::crypto::CollectStrategy;
 use tables_over_matrix::{default_encryption_settings, CellUpdate, MatrixClient};
@@ -1153,6 +1154,10 @@ pub struct ConnectedWorkspace {
     /// start / sync. Surfaced to the UI instead of being silently dropped —
     /// see `docs/adr/0001-e2e-key-management.md` / review §4.2.
     undecryptable: Rc<Cell<u32>>,
+    /// Highest Matrix `origin_server_ts` (ms) applied so far — gather + sync
+    /// both advance it. Persisted in a snapshot as the resume point so the next
+    /// cold start only fetches events newer than this marker.
+    marker_ts: Rc<Cell<u64>>,
     /// Coalescing send queue: the latest pending `CellUpdate` per cell, keyed by
     /// (table, row, column). Rapid edits to the same cell (e.g. repeatedly
     /// dragging a kanban card) collapse to a single send, and a debounced
@@ -1170,12 +1175,19 @@ impl ConnectedWorkspace {
     ///
     /// This is an async factory method that:
     /// 1. Verifies the room exists
-    /// 2. Fetches room history (backwards pagination)
-    /// 3. Replays all cell-update events to reconstruct workspace state
+    /// 2. Loads the persisted snapshot (if any) as a baseline
+    /// 3. Paginates room history backwards, replaying cell-update events —
+    ///    bounded to events newer than the snapshot marker when a usable
+    ///    snapshot was provided (incremental cold start, issue 6f092cf4)
+    ///
+    /// `snapshot_json` is the last [`WorkspaceSnapshot`] persisted by
+    /// [`snapshot`](Self::snapshot) for this room (the UI keeps it in
+    /// IndexedDB), or `None`/invalid to force a full history gather.
     #[wasm_bindgen]
     pub async fn create(
         session: &MatrixSession,
         room_id: String,
+        snapshot_json: Option<String>,
     ) -> Result<ConnectedWorkspace, JsValue> {
         let room_id: OwnedRoomId = room_id
             .as_str()
@@ -1191,18 +1203,33 @@ impl ConnectedWorkspace {
 
         let mut workspace = Workspace::new(room_id.to_string());
 
+        // ── Load the persisted snapshot as a baseline (incremental cold start) ─
+        // A usable snapshot (matching version, fully decryptable) lets us skip
+        // re-paginating history older than its marker — that state is already
+        // materialized here. A missing/old/incomplete snapshot leaves
+        // `marker_ts = 0`, which degrades to today's full backward gather.
+        let mut marker_ts: u64 = 0;
+        let mut fast_path = false;
+        if let Some(json) = snapshot_json {
+            if let Ok(snap) = WorkspaceSnapshot::from_json(&json) {
+                if snap.is_fast_path_usable() {
+                    marker_ts = snap.marker_ts;
+                    workspace.load_cells(snap.cells, snap.timestamp_counter);
+                    fast_path = true;
+                }
+            }
+        }
+
         // ── Fetch room history and replay events ──────────────────────
         // Workspace-level cold start (review §4.4): paginate backwards from the
         // end of the timeline and replay every cell-update event through
         // `Workspace::apply_update`, which routes user data, schema and view
-        // updates to the right place. This is intentionally distinct from the
-        // raw-table `TimelinePaginator` in `tables-over-matrix` — that engine
-        // materializes bare tables and has no notion of system tables. Values
-        // are LWW so order-independent; per-cell history is bounded by the
-        // order-based bumping wired in at write time (§4.3).
+        // updates to the right place. Values are LWW so order-independent;
+        // per-cell history is bounded by order-based bumping at write time
+        // (§4.3). With a snapshot we additionally stop early at the marker.
         let mut undecryptable_count = 0u32;
         let mut from_token: Option<String> = None;
-        loop {
+        'outer: loop {
             let mut options = MessagesOptions::backward();
             if let Some(ref token) = from_token {
                 options = options.from(token.as_str());
@@ -1225,6 +1252,16 @@ impl ConnectedWorkspace {
 
             for timeline_event in &response.chunk {
                 if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
+                    let ots = MatrixClient::extract_origin_server_ts(&json_str).unwrap_or(0);
+                    // Incremental bound: with a usable snapshot, everything
+                    // strictly older than the marker is already materialized.
+                    // origin_server_ts is monotonic per room on our single
+                    // homeserver and backward pagination is newest-first, so the
+                    // first older event means we've caught up. (Events exactly at
+                    // the marker are re-applied — LWW makes that idempotent.)
+                    if fast_path && ots < marker_ts {
+                        break 'outer;
+                    }
                     // One timeline event may carry many cells (a batch event).
                     let received = MatrixClient::extract_cell_updates(&json_str);
                     if !received.is_empty() {
@@ -1236,6 +1273,9 @@ impl ConnectedWorkspace {
                         // History we can't decrypt (no key) — count it so the UI
                         // can warn instead of silently materializing partial state.
                         undecryptable_count += 1;
+                    }
+                    if ots > marker_ts {
+                        marker_ts = ots;
                     }
                 }
             }
@@ -1251,9 +1291,27 @@ impl ConnectedWorkspace {
             client,
             room_id,
             undecryptable: Rc::new(Cell::new(undecryptable_count)),
+            marker_ts: Rc::new(Cell::new(marker_ts)),
             pending: Rc::new(RefCell::new(HashMap::new())),
             flushing: Rc::new(Cell::new(false)),
         })
+    }
+
+    /// Serialize the current materialized workspace state to a JSON
+    /// [`WorkspaceSnapshot`] for the UI to persist locally. On the next cold
+    /// start, passing it back to [`create`](Self::create) skips re-paginating
+    /// history older than the marker.
+    #[wasm_bindgen(js_name = snapshot)]
+    pub fn snapshot(&self) -> String {
+        let ws = self.inner.borrow();
+        let snap = WorkspaceSnapshot {
+            version: SNAPSHOT_VERSION,
+            marker_ts: self.marker_ts.get(),
+            timestamp_counter: ws.timestamp_counter(),
+            undecryptable_count: self.undecryptable.get(),
+            cells: ws.export_cells(),
+        };
+        snap.to_json().unwrap_or_default()
     }
 
     /// Start the sync loop. The provided `on_change` callback is invoked
@@ -1266,6 +1324,7 @@ impl ConnectedWorkspace {
         let room_id = self.room_id.clone();
         let workspace = Rc::clone(&self.inner);
         let undecryptable = Rc::clone(&self.undecryptable);
+        let marker_ts = Rc::clone(&self.marker_ts);
 
         spawn_local(async move {
             let settings = SyncSettings::default();
@@ -1274,6 +1333,7 @@ impl ConnectedWorkspace {
                 .sync_with_callback(settings, |response| {
                     let workspace = Rc::clone(&workspace);
                     let undecryptable = Rc::clone(&undecryptable);
+                    let marker_ts = Rc::clone(&marker_ts);
                     let room_id = room_id.clone();
                     let on_change = on_change.clone();
 
@@ -1291,6 +1351,12 @@ impl ConnectedWorkspace {
                                     if !received.is_empty() {
                                         let mut ws = workspace.borrow_mut();
                                         for r in received {
+                                            // Advance the snapshot marker from the
+                                            // event envelope before consuming `r`.
+                                            let ots: u64 = r.origin_server_ts.0.into();
+                                            if ots > marker_ts.get() {
+                                                marker_ts.set(ots);
+                                            }
                                             // Attach origin_server_ts as the LWW tiebreaker.
                                             let _ = ws.apply_update(r.into_update());
                                         }

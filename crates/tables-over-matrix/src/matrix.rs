@@ -542,6 +542,16 @@ mod matrix_impl {
             }
         }
 
+        /// Best-effort read of a raw event's `origin_server_ts` (ms since the
+        /// epoch). The incremental cold start uses this to bound back-pagination
+        /// at the snapshot marker without fully decoding every event.
+        pub fn extract_origin_server_ts(event_json: &str) -> Option<u64> {
+            serde_json::from_str::<serde_json::Value>(event_json)
+                .ok()?
+                .get("origin_server_ts")?
+                .as_u64()
+        }
+
         /// Parse a raw Matrix event JSON into a single `CellUpdate`, if it is a
         /// single `io.tidework.cell.update` event. (Batch events return `None`;
         /// use [`extract_cell_updates`] for the read path.) Retained for callers

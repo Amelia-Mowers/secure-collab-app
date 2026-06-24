@@ -40,6 +40,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 #[cfg(feature = "wasm")]
 pub mod bridge;
 pub mod schema;
+pub mod snapshot;
 pub mod views;
 pub mod workspace;
 
@@ -48,6 +49,7 @@ pub mod bridge_matrix;
 
 // Re-export main types
 pub use schema::{ColumnDefinition, ColumnType, SchemaManager, TableDefinition};
+pub use snapshot::{WorkspaceSnapshot, SNAPSHOT_VERSION};
 pub use views::{
     CalendarConfig, FilterConfig, FilterOperator, KanbanConfig, SortConfig, SortDirection,
     TaskListConfig, ViewConfig, ViewManager, ViewType,

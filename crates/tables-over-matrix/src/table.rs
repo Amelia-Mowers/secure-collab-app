@@ -261,6 +261,15 @@ impl Table {
         self.cells.len()
     }
 
+    /// All currently-materialized (winning) cells, for snapshotting. Each cell
+    /// carries its LWW timestamp and server-timestamp tiebreaker, so replaying
+    /// them via [`apply_update`](Self::apply_update) reconstructs identical
+    /// state. The cell map is keyed by `(row, column)` tuples — which JSON can't
+    /// represent as map keys — so snapshots persist this flat list instead.
+    pub fn export_cells(&self) -> Vec<Cell> {
+        self.cells.values().cloned().collect()
+    }
+
     /// Check if the table is empty.
     pub fn is_empty(&self) -> bool {
         self.cells.is_empty()

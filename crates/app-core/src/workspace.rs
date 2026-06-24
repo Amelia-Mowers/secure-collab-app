@@ -4,7 +4,7 @@ use crate::schema::{SchemaManager, TableDefinition};
 use crate::views::{ViewConfig, ViewManager};
 use crate::Result;
 use std::collections::HashMap;
-use tables_over_matrix::{CellUpdate, CompactionManager, Table, ROW_DELETED_COLUMN};
+use tables_over_matrix::{Cell, CellUpdate, CompactionManager, Table, ROW_DELETED_COLUMN};
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::info;
 
@@ -339,6 +339,41 @@ impl Workspace {
         }
 
         Ok(updates)
+    }
+
+    /// The current hybrid-logical-clock value. Captured in a snapshot so a
+    /// later reload restores the clock and post-load writes stay ordered after
+    /// the loaded history.
+    pub fn timestamp_counter(&self) -> u64 {
+        self.timestamp_counter
+    }
+
+    /// Every winning cell across user-data tables plus the system tables
+    /// (schema + views), for a workspace snapshot. Replaying these via
+    /// [`apply_update`](Self::apply_update) reconstructs the full workspace —
+    /// values are LWW so order doesn't matter.
+    pub fn export_cells(&self) -> Vec<Cell> {
+        let mut cells = Vec::new();
+        for table in self.tables.values() {
+            cells.extend(table.export_cells());
+        }
+        cells.extend(self.schema_manager.export_cells());
+        cells.extend(self.view_manager.export_cells());
+        cells
+    }
+
+    /// Rebuild workspace state from a snapshot's cells (replayed through
+    /// [`apply_update`](Self::apply_update), so routing/lazy-table-creation is
+    /// identical to live history) and restore the logical clock. Used by the
+    /// incremental cold start to avoid re-paginating full room history.
+    pub fn load_cells(&mut self, cells: Vec<Cell>, timestamp_counter: u64) {
+        for cell in cells {
+            let _ = self.apply_update(CellUpdate::from_cell(cell));
+        }
+        // apply_update already advanced the clock past every cell timestamp;
+        // also honor the snapshot's recorded counter (it may sit above the max
+        // cell ts after local writes) so new local writes win LWW.
+        self.timestamp_counter = self.timestamp_counter.max(timestamp_counter);
     }
 
     /// Apply a cell update (from network or local)
@@ -1393,6 +1428,116 @@ mod tests {
         assert_eq!(table.get_value("t1", "status"), Some(&json!("Done")));
         // Title must not be touched
         assert_eq!(table.get_value("t1", "title"), Some(&json!("Fix bug")));
+    }
+
+    // ─── Snapshot / incremental cold-start (issue 6f092cf4) ──────────────────
+
+    /// A snapshot's exported cells, replayed into a fresh workspace, must
+    /// reconstruct identical tables, rows, schema and views.
+    #[test]
+    fn test_snapshot_round_trip_preserves_state() {
+        let mut source = Workspace::new("w");
+        source.create_table(make_tasks_def()).unwrap();
+        source
+            .update_cell("tasks", "r1", "title", json!("Fix bug"))
+            .unwrap();
+        source
+            .update_cell("tasks", "r1", "status", json!("Todo"))
+            .unwrap();
+        source
+            .update_cell("tasks", "r2", "title", json!("Ship"))
+            .unwrap();
+        source.delete_row("tasks", "r2").unwrap();
+        source
+            .create_view(
+                ViewConfig::new("board", "Board", "tasks", crate::views::ViewType::Kanban)
+                    .with_kanban_config(make_kanban_config()),
+            )
+            .unwrap();
+
+        // Snapshot → fresh workspace.
+        let cells = source.export_cells();
+        let counter = source.timestamp_counter();
+        let mut loaded = Workspace::new("w");
+        loaded.load_cells(cells, counter);
+
+        // Tables + rows (r2 stays tombstoned) match.
+        assert_eq!(
+            source.get_table_rows("tasks").unwrap(),
+            loaded.get_table_rows("tasks").unwrap()
+        );
+        let rows = loaded.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("_row_id"), Some(&json!("r1")));
+        // Schema + view survive.
+        assert!(loaded.get_table_schema("tasks").is_some());
+        assert_eq!(loaded.list_views_for_table("tasks"), vec!["board"]);
+        assert!(loaded.get_view("board").unwrap().kanban_config.is_some());
+    }
+
+    /// The incremental property: snapshot + only newer events (applied in any
+    /// order) converges to the same state as a full replay. A newer event wins
+    /// LWW over the snapshot; an older one (already folded into the snapshot)
+    /// is a harmless no-op.
+    #[test]
+    fn test_snapshot_plus_new_event_converges() {
+        let mut source = Workspace::new("w");
+        source.create_table(make_tasks_def()).unwrap();
+        source
+            .update_cell("tasks", "r1", "title", json!("v1"))
+            .unwrap();
+        let marker = source.timestamp_counter();
+
+        // Reload from the snapshot, then apply one "new" event (ts > marker).
+        let mut loaded = Workspace::new("w");
+        loaded.load_cells(source.export_cells(), source.timestamp_counter());
+        loaded
+            .apply_update(CellUpdate::new(
+                "tasks",
+                "r1",
+                "title",
+                json!("v2"),
+                marker + 5,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            loaded.get_table("tasks").unwrap().get_value("r1", "title"),
+            Some(&json!("v2")),
+            "a newer-than-marker event must win over the snapshot value"
+        );
+
+        // Re-applying an event already in the snapshot (older ts) is a no-op.
+        loaded
+            .apply_update(CellUpdate::new("tasks", "r1", "title", json!("stale"), 1))
+            .unwrap();
+        assert_eq!(
+            loaded.get_table("tasks").unwrap().get_value("r1", "title"),
+            Some(&json!("v2"))
+        );
+    }
+
+    /// After loading a snapshot, a fresh local write must out-timestamp every
+    /// loaded cell (the clock is restored from the snapshot).
+    #[test]
+    fn test_write_after_snapshot_load_wins() {
+        let mut source = Workspace::new("w");
+        source.create_table(make_tasks_def()).unwrap();
+        source
+            .update_cell("tasks", "r1", "title", json!("loaded"))
+            .unwrap();
+
+        let mut loaded = Workspace::new("w");
+        loaded.load_cells(source.export_cells(), source.timestamp_counter());
+        loaded
+            .update_cell("tasks", "r1", "title", json!("edited"))
+            .unwrap();
+
+        assert_eq!(
+            loaded.get_table("tasks").unwrap().get_value("r1", "title"),
+            Some(&json!("edited")),
+            "local write after snapshot load must win (clock restored from snapshot)"
+        );
     }
 
     // ─── Hybrid logical clock (ARCHITECTURE_REVIEW §4.1) ─────────────────────
