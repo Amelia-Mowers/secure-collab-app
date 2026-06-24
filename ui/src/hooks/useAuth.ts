@@ -5,6 +5,7 @@ import { getWasmModule } from '../wasm/loader'
 import type { OauthPopup } from '../auth/oauthPopup'
 import { hasPlatformAuthenticator, registerPasskeyPrf, unlockPasskeyPrf } from '../auth/passkeyPrf'
 import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
+import { setSnapshotKey } from '../lib/atRestSession'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -628,6 +629,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const keys = await deriveAtRestKeys(secret)
     const blob = await decryptString(keys.tokenKey, account.secrets) // throws on wrong secret
     atRestKeysRef.current = keys
+    setSnapshotKey(keys.snapshotKey) // publish for useWorkspace snapshot encryption
     const ms = await restoreSession({ ...account, matrixSessionData: blob }, keys.storePassphrase)
     matrixSessionRef.current = ms
     setMatrixSession(ms)
@@ -1007,6 +1009,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!creds) return
       const keys = await deriveAtRestKeys(secret)
       atRestKeysRef.current = keys
+      setSnapshotKey(keys.snapshotKey) // publish for useWorkspace snapshot encryption
       let oldStoreName: string | undefined
       try {
         oldStoreName = JSON.parse(matrixSessionRef.current?.sessionData?.() ?? '{}').storeName
@@ -1166,6 +1169,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     matrixSessionRef.current = null
     setMatrixSession(null)
     setError(null)
+    // Reset at-rest session state so the next account doesn't inherit keys/custody.
+    atRestKeysRef.current = null
+    custodyRef.current = 'manual'
+    setSnapshotKey(null)
     // Don't clear wasm module — other accounts may still need it
   }, [activeAccountId])
 
