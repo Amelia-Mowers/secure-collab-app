@@ -1,9 +1,10 @@
 # Two-browser end-to-end tests
 
-Playwright drives **two isolated browser contexts as two devices of one user**
-(separate IndexedDB crypto stores) against a real, throwaway Conduit homeserver,
-exercising the full stack — WASM crypto, Matrix, the WASM bridge, and the React
-UI — that the unit/integration tests can't cover end to end.
+Playwright drives **isolated browser contexts** (separate IndexedDB crypto
+stores) — two *devices* of one user, or two distinct *users* — against a real,
+throwaway **Synapse** homeserver (the same one prod runs), exercising the full
+stack — WASM crypto, Matrix, the WASM bridge, and the React UI — that the
+unit/integration tests can't cover end to end.
 
 ## What's covered
 
@@ -17,6 +18,10 @@ UI — that the unit/integration tests can't cover end to end.
   filter → kanban/card views → view switching → **persists across reload**
   (cold-start materialization). Also carries a `test.fixme` documenting that
   row deletion is local-only and does not survive a reload yet.
+- `collaboration.spec.ts` — **two distinct users**: A creates a workspace +
+  table + rows, invites B; B joins and sees the **pre-join history** (MSC4268
+  history-on-invite — needs Synapse), then live A↔B propagation, the member
+  list, and same-cell **LWW convergence**.
 - `oauth.spec.ts` — **SSO sign-in via MAS** through the real UI (ADR 0002):
   next-gen-auth detection swaps the password form for the popup flow → MAS
   hosted login → recovery bootstrap → workspaces → reload-restore. Needs the
@@ -26,7 +31,7 @@ UI — that the unit/integration tests can't cover end to end.
 
 ## Running
 
-Run inside the Nix dev shell so `conduit` is on `PATH` and Playwright uses the
+Run inside the Nix dev shell so `synapse_homeserver` is on `PATH` and Playwright uses the
 Nix-provided browsers (`PLAYWRIGHT_BROWSERS_PATH`, set by `flake.nix`). Build the
 WASM bindings first (the dev server serves them from `src/wasm/generated/`):
 
@@ -38,7 +43,7 @@ nix develop --command bash -c '
 '
 ```
 
-`global-setup.ts` boots Conduit on a free port and publishes its URL via
+`global-setup.ts` boots Synapse on a free port and publishes its URL via
 `E2E_HOMESERVER`; the Vite dev server serves the app. The Playwright config pins
 `@playwright/test` to the same version as nixpkgs' `playwright-driver` (keep them
 in sync if either is bumped). The Nix browser lays Chromium out under

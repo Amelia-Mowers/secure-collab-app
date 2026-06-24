@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test'
 
-/** The throwaway Conduit URL, published by global-setup via the environment. */
+/** The throwaway Synapse URL, published by global-setup via the environment. */
 export function homeserverUrl(): string {
   const url = process.env.E2E_HOMESERVER
   if (!url) throw new Error('E2E_HOMESERVER not set — did global-setup run?')
