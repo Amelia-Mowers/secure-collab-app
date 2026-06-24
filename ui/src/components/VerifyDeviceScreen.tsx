@@ -478,7 +478,12 @@ function UnlockSession({
   onKey: (key: string) => Promise<void>
 }) {
   const canPasskey = passkeyAvailable && custody !== 'manual'
-  const [mode, setMode] = useState<'choose' | 'key'>(canPasskey ? 'choose' : 'key')
+  // Derive the view from canPasskey (it flips true asynchronously once
+  // passkeyAvailable settles) rather than a one-shot useState initializer — else
+  // the gate sticks on the recovery-key variant. `forceKey` is the explicit
+  // "use my recovery key instead" opt-out.
+  const [forceKey, setForceKey] = useState(false)
+  const showKey = forceKey || !canPasskey
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -499,7 +504,7 @@ function UnlockSession({
       <h2 id="verify-title" className="verify__title">
         Unlock TideWork
       </h2>
-      {mode === 'choose' && canPasskey ? (
+      {!showKey ? (
         <>
           <p className="verify__body">
             Your data is encrypted on this device. Unlock with your passkey to continue.
@@ -524,7 +529,7 @@ function UnlockSession({
               disabled={busy}
               onClick={() => {
                 setError(null)
-                setMode('key')
+                setForceKey(true)
               }}
             >
               Use your recovery key
@@ -556,7 +561,7 @@ function UnlockSession({
                 disabled={busy}
                 onClick={() => {
                   setError(null)
-                  setMode('choose')
+                  setForceKey(false)
                 }}
               >
                 Back
