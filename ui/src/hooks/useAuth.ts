@@ -327,6 +327,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // gesture before we can restore it.
   const atRestKeysRef = useRef<AtRestKeys | null>(null)
   const pendingUnlockRef = useRef<AccountSession | null>(null)
+  // Which unlock method this account uses — set explicitly by the recovery path
+  // (passkey enroll/unlock vs recovery-key), so the persisted v2 `custody` (which
+  // drives the unlock-gate UI) doesn't depend on the timing of passkeyEnrolledRef.
+  const custodyRef = useRef<'passkey' | 'manual'>('manual')
   // Credentials held in memory through sign-in/up so we can re-key the device to
   // an ENCRYPTED store once the master secret exists (register bootstrap / unlock).
   const pendingRekeyRef = useRef<{ homeserver: string; user: string; password: string } | null>(null)
@@ -513,6 +517,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const recoveryKey: string = await ms.enableRecoveryWithPassphrase(secret)
     passkeyEnrolledRef.current = true
     setPasskeyEnrolled(true)
+    custodyRef.current = 'passkey'
     // Re-key this just-registered device to an ENCRYPTED store now that the
     // master secret exists (at-rest, c72ec5df). No-op if creds aren't held.
     await rekeyRef.current?.(secret)
@@ -649,6 +654,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   /** 'unlock' gate, passkey path: derive the PRF secret, then unlock + restore. */
   const unlockSessionWithPasskey = useCallback(async () => {
+    custodyRef.current = 'passkey'
     await unlockAndRestore(await unlockPasskeyPrf())
   }, [unlockAndRestore])
 
@@ -789,7 +795,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .then(secrets =>
           write({
             v: 2,
-            custody: passkeyEnrolledRef.current ? 'passkey' : 'manual',
+            custody: custodyRef.current,
             secrets,
             matrixSessionData: undefined,
           }),
@@ -951,7 +957,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             userId: uid,
             username: usernameHint,
             v: 2,
-            custody: passkeyEnrolledRef.current ? 'passkey' : 'manual',
+            custody: custodyRef.current,
             secrets: await encryptString(keys.tokenKey, matrixSessionData),
           }
         : {
