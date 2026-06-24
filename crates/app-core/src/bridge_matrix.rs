@@ -1227,6 +1227,13 @@ impl ConnectedWorkspace {
         // updates to the right place. Values are LWW so order-independent;
         // per-cell history is bounded by order-based bumping at write time
         // (§4.3). With a snapshot we additionally stop early at the marker.
+        // Immutable resume threshold for the incremental bound: everything
+        // strictly older than the snapshot's marker is already materialized.
+        // Kept separate from `marker_ts` (the running max we persist next) —
+        // advancing the threshold inside the loop would raise it to the newest
+        // event and skip every event between the marker and now (data loss on a
+        // snapshot that lags the latest writes).
+        let stop_before = marker_ts;
         let mut undecryptable_count = 0u32;
         let mut from_token: Option<String> = None;
         'outer: loop {
@@ -1252,30 +1259,37 @@ impl ConnectedWorkspace {
 
             for timeline_event in &response.chunk {
                 if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
-                    let ots = MatrixClient::extract_origin_server_ts(&json_str).unwrap_or(0);
-                    // Incremental bound: with a usable snapshot, everything
-                    // strictly older than the marker is already materialized.
-                    // origin_server_ts is monotonic per room on our single
-                    // homeserver and backward pagination is newest-first, so the
-                    // first older event means we've caught up. (Events exactly at
-                    // the marker are re-applied — LWW makes that idempotent.)
-                    if fast_path && ots < marker_ts {
+                    // Incremental bound: with a usable snapshot, stop once we
+                    // reach events older than its marker (newest-first
+                    // pagination + monotonic per-room origin_server_ts on our
+                    // single homeserver, so the first older event means we've
+                    // caught up; events at the marker are re-applied — LWW makes
+                    // that idempotent). Compared against the IMMUTABLE
+                    // `stop_before`, never the running `marker_ts`. An
+                    // unparseable ts is treated as "newer" (fail-safe: process
+                    // it, never skip) so it can't trigger a premature break.
+                    let ots = MatrixClient::extract_origin_server_ts(&json_str);
+                    if fast_path && ots.is_some_and(|t| t < stop_before) {
                         break 'outer;
                     }
                     // One timeline event may carry many cells (a batch event).
                     let received = MatrixClient::extract_cell_updates(&json_str);
                     if !received.is_empty() {
                         for r in received {
-                            // Attach origin_server_ts as the LWW tiebreaker.
+                            // Advance the snapshot marker from the cell event's
+                            // envelope (same source as start_sync) so it never
+                            // sits ahead of the cell state it represents.
+                            let event_ts: u64 = r.origin_server_ts.0.into();
+                            if event_ts > marker_ts {
+                                marker_ts = event_ts;
+                            }
+                            // origin_server_ts is the LWW tiebreaker.
                             let _ = workspace.apply_update(r.into_update());
                         }
                     } else if MatrixClient::is_undecryptable_event(&json_str) {
                         // History we can't decrypt (no key) — count it so the UI
                         // can warn instead of silently materializing partial state.
                         undecryptable_count += 1;
-                    }
-                    if ots > marker_ts {
-                        marker_ts = ots;
                     }
                 }
             }

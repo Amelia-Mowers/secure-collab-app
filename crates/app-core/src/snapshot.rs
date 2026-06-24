@@ -171,4 +171,100 @@ mod tests {
             "server-timestamp tiebreaker must survive the snapshot"
         );
     }
+
+    /// Faithful reload repro: a workspace shaped like the core E2E (table +
+    /// columns added after creation + rows + an inline edit + a view) must
+    /// fully survive snapshot -> JSON -> load_cells. The earlier round-trip test
+    /// only checked a raw cell value; it never exercised `get_table_schema`
+    /// (which reads the `_tables` registry name and makes the bridge throw
+    /// "Table not found" if missing) or the views.
+    #[test]
+    fn test_full_workspace_round_trip() {
+        use crate::schema::{ColumnDefinition, ColumnType, TableDefinition};
+        use crate::views::{ViewConfig, ViewType};
+
+        let mut ws = Workspace::new("w");
+        ws.create_table(
+            TableDefinition::new("tasks", "Tasks")
+                .with_column(ColumnDefinition::new("name", "Name", ColumnType::Text)),
+        )
+        .unwrap();
+        // Columns added AFTER table creation (separate _schema writes).
+        ws.add_column(
+            "tasks",
+            ColumnDefinition::new("priority", "Priority", ColumnType::Select),
+        )
+        .unwrap();
+        ws.add_column(
+            "tasks",
+            ColumnDefinition::new("points", "Points", ColumnType::Number),
+        )
+        .unwrap();
+        ws.add_column(
+            "tasks",
+            ColumnDefinition::new("done", "Done", ColumnType::Boolean),
+        )
+        .unwrap();
+
+        ws.update_cell("tasks", "r1", "name", json!("Alpha task")).unwrap();
+        ws.update_cell("tasks", "r1", "priority", json!("High")).unwrap();
+        ws.update_cell("tasks", "r1", "points", json!(3)).unwrap();
+        ws.update_cell("tasks", "r1", "done", json!(true)).unwrap();
+        ws.update_cell("tasks", "r2", "name", json!("Beta task")).unwrap();
+        ws.update_cell("tasks", "r3", "name", json!("Gamma task")).unwrap();
+        // Inline edit: the later write must win LWW after reload.
+        ws.update_cell("tasks", "r2", "name", json!("Beta task v2")).unwrap();
+
+        ws.create_view(ViewConfig::new("tasks-board", "Board", "tasks", ViewType::Kanban))
+            .unwrap();
+
+        // snapshot -> json -> load into a fresh workspace
+        let snap = WorkspaceSnapshot {
+            version: SNAPSHOT_VERSION,
+            marker_ts: 0,
+            timestamp_counter: ws.timestamp_counter(),
+            undecryptable_count: 0,
+            cells: ws.export_cells(),
+        };
+        let json = snap.to_json().unwrap();
+        let back = WorkspaceSnapshot::from_json(&json).unwrap();
+        let mut loaded = Workspace::new("w");
+        loaded.load_cells(back.cells, back.timestamp_counter);
+
+        // Table is listed.
+        assert!(
+            loaded.list_tables().contains(&"tasks".to_string()),
+            "table not listed after reload"
+        );
+        // Schema (registry name + every column) survives.
+        let schema = loaded
+            .get_table_schema("tasks")
+            .expect("get_table_schema returned None after reload");
+        assert_eq!(schema.name, "Tasks");
+        let col_ids: std::collections::HashSet<&str> =
+            schema.columns.values().map(|c| c.id.as_str()).collect();
+        for c in ["name", "priority", "points", "done"] {
+            assert!(col_ids.contains(c), "column {c} missing after reload");
+        }
+        // Row values incl. the edited one.
+        let t = loaded.get_table("tasks").unwrap();
+        assert_eq!(t.get_value("r1", "name"), Some(&json!("Alpha task")));
+        assert_eq!(t.get_value("r1", "done"), Some(&json!(true)));
+        assert_eq!(
+            t.get_value("r2", "name"),
+            Some(&json!("Beta task v2")),
+            "inline edit lost after reload"
+        );
+        // Views survive and resolve.
+        assert!(
+            loaded
+                .list_views_for_table("tasks")
+                .contains(&"tasks-board".to_string()),
+            "view not listed after reload"
+        );
+        assert!(
+            loaded.get_view("tasks-board").is_some(),
+            "get_view returned None after reload"
+        );
+    }
 }
