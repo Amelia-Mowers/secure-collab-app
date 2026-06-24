@@ -1518,6 +1518,48 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Delete a table. Writes a `deleted` tombstone (+ `deleted_at` cutoff) on
+    /// the `_tables` registry row and syncs it, like `deleteRow`/`deleteColumn`:
+    /// durable, propagates to other devices, and hides the table everywhere.
+    #[wasm_bindgen(js_name = deleteTable)]
+    pub async fn delete_table(&self, table_id: String) -> Result<(), JsValue> {
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.delete_table(&table_id)
+                .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        };
+        self.send_updates(&updates).await?;
+        Ok(())
+    }
+
+    /// Set a table's manual-ordering key (fractional index) and sync it. The UI
+    /// computes the key (same `fractionalIndex.ts` as row reorder) and calls
+    /// this per moved table.
+    #[wasm_bindgen(js_name = setTableOrder)]
+    pub async fn set_table_order(
+        &self,
+        table_id: String,
+        order_key: String,
+    ) -> Result<(), JsValue> {
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.set_table_order(&table_id, &order_key)
+                .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        };
+        self.send_updates(&updates).await?;
+        Ok(())
+    }
+
+    /// Map of `table_id -> manual-ordering key` as a JSON object, for the UI's
+    /// drag-to-reorder of the table list.
+    #[wasm_bindgen(js_name = getTableOrderKeys)]
+    pub fn get_table_order_keys(&self) -> String {
+        let ws = self.inner.borrow();
+        let map: std::collections::HashMap<String, String> =
+            ws.get_table_order_keys().into_iter().collect();
+        serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+    }
+
     /// Get all rows from a table as JSON.
     #[wasm_bindgen(js_name = getTableRows)]
     pub fn get_table_rows(&self, table_id: String) -> Result<String, JsValue> {

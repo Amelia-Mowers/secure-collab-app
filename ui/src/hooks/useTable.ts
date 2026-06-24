@@ -65,6 +65,10 @@ export interface WorkspaceHandle {
   listTables(): string
   listViewsForTable(tableId: string): string
   deleteRow(tableId: string, rowId: string): void | Promise<void>
+  // Table-level delete / reorder (issue c36f496d). Present on both bridges.
+  deleteTable?(tableId: string): void | Promise<void>
+  setTableOrder?(tableId: string, orderKey: string): void | Promise<void>
+  getTableOrderKeys?(): string
   // ConnectedWorkspace-only methods (optional)
   startSync?(onChange: () => void): void
   inviteUser?(userId: string): Promise<void>

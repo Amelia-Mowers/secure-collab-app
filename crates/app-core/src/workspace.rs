@@ -77,6 +77,25 @@ impl Workspace {
         }
     }
 
+    /// Per-column read/bump cutoffs for a table: the column-deletion cutoffs
+    /// (`column_clear_cutoffs`) plus the table-level `deleted_at` (if the table
+    /// was deleted) applied as a floor across every column. This is what makes a
+    /// re-created table id start blank — row data written at/before the table's
+    /// deletion is filtered at read time and skipped by bump selection (so it
+    /// can't be kept alive or resurrected), exactly like a deleted column.
+    fn effective_cutoffs(&self, table_id: &str) -> HashMap<String, u64> {
+        let mut cutoffs = self.schema_manager.column_clear_cutoffs(table_id);
+        if let Some(floor) = self.schema_manager.table_deleted_at(table_id) {
+            if let Some(table) = self.tables.get(table_id) {
+                for col in table.columns() {
+                    let e = cutoffs.entry(col).or_insert(0);
+                    *e = (*e).max(floor);
+                }
+            }
+        }
+        cutoffs
+    }
+
     /// Generate the next timestamp for a *local* write using a hybrid logical
     /// clock: `max(last_seen + 1, wall_clock_ms)`.
     ///
@@ -140,9 +159,12 @@ impl Workspace {
         let table_id = definition.id.clone();
 
         // Reject a name/id that already exists, rather than silently merging the
-        // new definition's columns into the existing table.
-        if self.tables.contains_key(&table_id)
-            || self.schema_manager.get_table_schema(&table_id).is_some()
+        // new definition's columns into the existing table. A *deleted* table id
+        // is treated as free: re-creating it is allowed (and clears the
+        // tombstone via create_table's `deleted = false` write).
+        if (self.tables.contains_key(&table_id)
+            || self.schema_manager.get_table_schema(&table_id).is_some())
+            && !self.schema_manager.is_table_deleted(&table_id)
         {
             return Err(crate::Error::TableAlreadyExists);
         }
@@ -300,9 +322,10 @@ impl Workspace {
 
         // Pick the stalest cell to bump from the table state *before* the user
         // write, and never bump the cell we're about to write. Exclude cells that
-        // should decay (deleted rows / columns past their deletion cutoff) so a
-        // bump can't keep dead data alive or resurrect it past a column delete.
-        let cutoffs = self.schema_manager.column_clear_cutoffs(table_id);
+        // should decay (deleted rows / columns past their deletion cutoff, and a
+        // deleted table's data past its cutoff) so a bump can't keep dead data
+        // alive or resurrect it past a column/table delete.
+        let cutoffs = self.effective_cutoffs(table_id);
         let candidate = {
             let table = self
                 .tables
@@ -424,9 +447,31 @@ impl Workspace {
         self.tables.get_mut(table_id)
     }
 
-    /// List all tables in the workspace
+    /// List all (non-deleted) tables in the workspace, sorted by their manual
+    /// ordering key (tables with a key first, in key order, ties by id; unkeyed
+    /// tables after, by id) — mirrors row ordering. Deleted tables are hidden
+    /// (their tombstone lives on the `_tables` registry row); a stray data cell
+    /// for a deleted table can't resurrect it here since the deleted flag is
+    /// read from the registry, not from `self.tables`.
     pub fn list_tables(&self) -> Vec<String> {
-        self.tables.keys().cloned().collect()
+        let mut ids: Vec<String> = self
+            .tables
+            .keys()
+            .filter(|id| !self.schema_manager.is_table_deleted(id))
+            .cloned()
+            .collect();
+        ids.sort_by(|a, b| {
+            match (
+                self.schema_manager.table_order(a),
+                self.schema_manager.table_order(b),
+            ) {
+                (Some(ka), Some(kb)) => ka.cmp(&kb).then_with(|| a.cmp(b)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.cmp(b),
+            }
+        });
+        ids
     }
 
     /// Get the schema for a table
@@ -490,13 +535,26 @@ impl Workspace {
         &self,
         table_id: &str,
     ) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>> {
+        let cutoffs = self.effective_cutoffs(table_id);
+        let floor = self.schema_manager.table_deleted_at(table_id).unwrap_or(0);
         let table = self
             .tables
             .get(table_id)
             .ok_or(crate::Error::TableNotFound)?;
-
-        let cutoffs = self.schema_manager.column_clear_cutoffs(table_id);
-        Ok(table.get_all_rows_excluding_stale(&cutoffs))
+        let mut rows = table.get_all_rows_excluding_stale(&cutoffs);
+        if floor > 0 {
+            // The table was deleted at `floor` (and likely re-created): drop any
+            // row whose every cell predates the deletion, so old rows don't
+            // reappear as empty rows. Rows added after re-create (with a cell
+            // newer than `floor`) survive. See `Table::row_has_cell_newer_than`.
+            rows.retain(|row| {
+                row.get("_row_id")
+                    .and_then(|v| v.as_str())
+                    .map(|rid| table.row_has_cell_newer_than(rid, floor))
+                    .unwrap_or(true)
+            });
+        }
+        Ok(rows)
     }
 
     /// Map of `row_id -> manual-ordering key` for rows that have one. The
@@ -513,6 +571,49 @@ impl Workspace {
             .into_iter()
             .filter_map(|id| table.row_order(&id).map(|key| (id, key)))
             .collect())
+    }
+
+    /// Delete a table by tombstoning its `_tables` registry row (decay model,
+    /// mirrors [`delete_row`](Self::delete_row)). Returns the CellUpdates to
+    /// sync. The table's data cells are left in place and decay; re-creating the
+    /// id starts blank (the `deleted_at` cutoff hides the old rows). A deleted
+    /// table is hidden by [`list_tables`](Self::list_tables) and has no schema.
+    pub fn delete_table(&mut self, table_id: &str) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id)
+            && self.schema_manager.get_table_schema(table_id).is_none()
+        {
+            return Err(crate::Error::TableNotFound);
+        }
+        let timestamp = self.next_timestamp();
+        let updates = self.schema_manager.delete_table(table_id, timestamp);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        info!("Tombstoned table: {}", table_id);
+
+        Ok(updates)
+    }
+
+    /// Set a table's manual-ordering key (a fractional-index string). The UI
+    /// computes the key (`ui/src/fractionalIndex.ts`, same as row reorder) and
+    /// calls this for each moved table. Returns the CellUpdate to sync.
+    pub fn set_table_order(&mut self, table_id: &str, order_key: &str) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+        let timestamp = self.next_timestamp();
+        Ok(self
+            .schema_manager
+            .set_table_order(table_id, order_key, timestamp))
+    }
+
+    /// Map of `table_id -> manual-ordering key` for (non-deleted) tables that
+    /// have one (mirrors [`get_row_order_keys`](Self::get_row_order_keys)); the
+    /// UI reads it to compute fractional keys when drag-reordering the table list.
+    pub fn get_table_order_keys(&self) -> Vec<(String, String)> {
+        self.list_tables()
+            .into_iter()
+            .filter_map(|id| self.schema_manager.table_order(&id).map(|key| (id, key)))
+            .collect()
     }
 }
 
@@ -1655,5 +1756,128 @@ mod tests {
         assert!(ws
             .update_cell_with_bump("ghost", "r1", "c", json!("x"))
             .is_err());
+    }
+
+    // ── Table delete / reorder (issue c36f496d) ────────────────────────────
+
+    fn text_table(id: &str, name: &str) -> TableDefinition {
+        TableDefinition::new(id, name).with_column(ColumnDefinition::new(
+            "title",
+            "Title",
+            ColumnType::Text,
+        ))
+    }
+
+    #[test]
+    fn test_delete_table_hides_from_list_and_schema() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(text_table("a", "A")).unwrap();
+        ws.create_table(text_table("b", "B")).unwrap();
+        assert_eq!(ws.list_tables(), vec!["a".to_string(), "b".to_string()]);
+
+        ws.delete_table("a").unwrap();
+        assert_eq!(ws.list_tables(), vec!["b".to_string()]);
+        assert!(ws.get_table_schema("a").is_none());
+        assert!(ws.get_table_schema("b").is_some());
+
+        // Deleting a non-existent table errors.
+        assert!(ws.delete_table("ghost").is_err());
+    }
+
+    #[test]
+    fn test_data_cell_cannot_resurrect_deleted_table_in_listing() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(text_table("a", "A")).unwrap();
+        ws.delete_table("a").unwrap();
+        assert!(ws.list_tables().is_empty());
+
+        // A late data write to the deleted table must NOT bring it back in the
+        // listing — the deleted flag lives on the registry row, not the data.
+        let ts = ws.next_timestamp_pub();
+        ws.apply_update(CellUpdate::new("a", "r1", "title", json!("late"), ts))
+            .unwrap();
+        assert!(ws.list_tables().is_empty());
+        assert!(ws.get_table_schema("a").is_none());
+    }
+
+    #[test]
+    fn test_deleted_table_tombstone_and_cutoff_survive_replay() {
+        // Build the full update stream (create → row → delete → re-create →
+        // new row), then replay it into a fresh workspace exactly as cold-start
+        // history would. The re-created table is listed; the pre-deletion row is
+        // filtered by the table-level deleted_at cutoff; the new row survives.
+        let mut src = Workspace::new("w");
+        let mut stream: Vec<CellUpdate> = Vec::new();
+        stream.extend(src.create_table(text_table("tasks", "Tasks")).unwrap());
+        stream.extend(
+            src.update_cell_with_bump("tasks", "r1", "title", json!("old row"))
+                .unwrap(),
+        );
+        stream.extend(src.delete_table("tasks").unwrap());
+        // Re-create the same id (allowed — the id is free once deleted).
+        stream.extend(
+            src.create_table(text_table("tasks", "Tasks Again"))
+                .unwrap(),
+        );
+        stream.extend(
+            src.update_cell_with_bump("tasks", "r2", "title", json!("new row"))
+                .unwrap(),
+        );
+
+        let mut replay = Workspace::new("w");
+        for u in &stream {
+            let _ = replay.apply_update(u.clone());
+        }
+
+        assert_eq!(replay.list_tables(), vec!["tasks".to_string()]);
+        assert!(replay.get_table_schema("tasks").is_some());
+        let ids: Vec<String> = replay
+            .get_table_rows("tasks")
+            .unwrap()
+            .into_iter()
+            .filter_map(|r| {
+                r.get("_row_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        assert!(ids.contains(&"r2".to_string()), "new row present: {ids:?}");
+        assert!(
+            !ids.contains(&"r1".to_string()),
+            "pre-deletion row must not resurrect on re-create: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn test_reorder_tables_sorts_list() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(text_table("a", "A")).unwrap();
+        ws.create_table(text_table("b", "B")).unwrap();
+        ws.create_table(text_table("c", "C")).unwrap();
+        // Fractional keys placing c < a < b.
+        ws.set_table_order("a", "V").unwrap();
+        ws.set_table_order("b", "l").unwrap();
+        ws.set_table_order("c", "G").unwrap();
+        assert_eq!(
+            ws.list_tables(),
+            vec!["c".to_string(), "a".to_string(), "b".to_string()]
+        );
+
+        // The keys are exposed for the UI's fractional-index computation.
+        let keys: HashMap<String, String> = ws.get_table_order_keys().into_iter().collect();
+        assert_eq!(keys.get("c"), Some(&"G".to_string()));
+    }
+
+    #[test]
+    fn test_keyed_tables_sort_before_unkeyed() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(text_table("z", "Z")).unwrap();
+        ws.create_table(text_table("a", "A")).unwrap();
+        ws.create_table(text_table("m", "M")).unwrap();
+        ws.set_table_order("m", "V").unwrap(); // only m is keyed
+        assert_eq!(
+            ws.list_tables(),
+            vec!["m".to_string(), "a".to_string(), "z".to_string()]
+        );
     }
 }

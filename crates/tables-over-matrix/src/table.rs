@@ -199,6 +199,20 @@ impl Table {
             .unwrap_or(false)
     }
 
+    /// Whether `row_id` has any cell written strictly after `ts`.
+    ///
+    /// Used by the table-level deletion cutoff: when a table id is deleted and
+    /// later re-created, its pre-deletion rows must vanish entirely rather than
+    /// linger as empty rows (a per-column value cutoff hides the *values* but
+    /// the row itself still exists). A row whose every cell predates the table's
+    /// `deleted_at` is dropped; one with a post-deletion cell survives. This is
+    /// the row-level analogue of [`get_row_excluding_stale`]'s column cutoff.
+    pub fn row_has_cell_newer_than(&self, row_id: &str, ts: u64) -> bool {
+        self.cells
+            .iter()
+            .any(|((r, _), cell)| r == row_id && cell.timestamp > ts)
+    }
+
     /// A row's manual-ordering key ([`ROW_ORDER_COLUMN`]), if set to a string.
     pub fn row_order(&self, row_id: &str) -> Option<String> {
         self.get_value(row_id, ROW_ORDER_COLUMN)
