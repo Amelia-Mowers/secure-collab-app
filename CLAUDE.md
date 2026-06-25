@@ -9,7 +9,7 @@ not in a markdown file. The backlog is the `Issues` table in the **TideWork PM**
 workspace on the production homeserver:
 
 - Homeserver: `https://matrix.tidework.io`
-- Workspace: **TideWork PM** — room `!LMfjStzneNvPmmnGWJ:tidework.io`
+- Workspace: **TideWork PM** — room `!JGjEYLjqGJRfCDfSAG:tidework.io`
 - Table: **Issues** — `name`, `status` (open · in-progress · closed),
   `description` (markdown), `priority` (0 = highest), `opened`, `closed`
 

@@ -171,6 +171,15 @@
   cursor: not-allowed;
 }
 
+/* Always-available way out of a blocking gate — visually separated from the
+   primary unlock/verify actions so it reads as the exit, not a shortcut. */
+.verify__escape {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
 .verify__spinner {
   display: inline-block;
   width: 13px;

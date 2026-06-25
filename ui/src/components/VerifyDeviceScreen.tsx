@@ -73,6 +73,7 @@ export function VerifyDeviceScreen() {
         onMasterKey={submitRecoveryKey}
         canUnlockWithPasskey={passkeyAvailable && passkeyEnrolled}
         onPasskey={unlockWithPasskey}
+        onSignOut={signOut}
       />
     )
   }
@@ -84,6 +85,7 @@ export function VerifyDeviceScreen() {
         passkeyAvailable={passkeyAvailable}
         onPasskey={unlockSessionWithPasskey}
         onKey={submitUnlockKey}
+        onSignOut={signOut}
       />
     )
   }
@@ -337,11 +339,13 @@ function VerifyThisDevice({
   onMasterKey,
   canUnlockWithPasskey,
   onPasskey,
+  onSignOut,
 }: {
   onVerify: () => Promise<void>
   onMasterKey: (key: string) => Promise<void>
   canUnlockWithPasskey: boolean
   onPasskey: () => Promise<void>
+  onSignOut: () => void
 }) {
   const [mode, setMode] = useState<'choose' | 'key'>('choose')
   const [key, setKey] = useState('')
@@ -459,6 +463,7 @@ function VerifyThisDevice({
           )}
         </>
       )}
+      <EscapeHatch onSignOut={onSignOut} />
     </Overlay>
   )
 }
@@ -471,11 +476,13 @@ function UnlockSession({
   passkeyAvailable,
   onPasskey,
   onKey,
+  onSignOut,
 }: {
   custody?: 'passkey' | 'manual'
   passkeyAvailable: boolean
   onPasskey: () => Promise<void>
   onKey: (key: string) => Promise<void>
+  onSignOut: () => void
 }) {
   const canPasskey = passkeyAvailable && custody !== 'manual'
   // Derive the view from canPasskey (it flips true asynchronously once
@@ -578,7 +585,22 @@ function UnlockSession({
           </div>
         </>
       )}
+      <EscapeHatch onSignOut={onSignOut} />
     </Overlay>
+  )
+}
+
+// ── Escape hatch: never let a gate trap the user. Signing out clears the
+//    prompt and returns to sign-in, even when unlock/verify can't succeed
+//    (lost or rotated key, PRF-less passkey). Always enabled — including mid
+//    busy state — so a hung passkey prompt is still escapable. (issue 7495dd9a)
+function EscapeHatch({ onSignOut }: { onSignOut: () => void }) {
+  return (
+    <div className="verify__escape">
+      <button type="button" className="verify__link" onClick={() => onSignOut()}>
+        Sign out
+      </button>
+    </div>
   )
 }
 
