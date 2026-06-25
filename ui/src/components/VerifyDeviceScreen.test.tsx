@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   setupPasskeyRecovery: vi.fn(async () => undefined),
   setupKeyRecovery: vi.fn(async () => undefined),
   unlockWithPasskey: vi.fn(async () => undefined),
+  unlockSessionWithPasskey: vi.fn(async () => undefined),
+  submitUnlockKey: vi.fn(async () => undefined),
   migrateToPasskey: vi.fn(async () => undefined),
   signOut: vi.fn(),
   startVerification: vi.fn(),
@@ -32,6 +34,8 @@ vi.mock('../hooks/useAuth', () => ({
     setupPasskeyRecovery: h.setupPasskeyRecovery,
     setupKeyRecovery: h.setupKeyRecovery,
     unlockWithPasskey: h.unlockWithPasskey,
+    unlockSessionWithPasskey: h.unlockSessionWithPasskey,
+    submitUnlockKey: h.submitUnlockKey,
     migrateToPasskey: h.migrateToPasskey,
     signOut: h.signOut,
     startVerification: h.startVerification,
@@ -190,6 +194,40 @@ describe('VerifyDeviceScreen', () => {
       fireEvent.change(screen.getByPlaceholderText(/master key/i), { target: { value: '  k  ' } })
       fireEvent.click(screen.getByRole('button', { name: /^restore$/i }))
       await waitFor(() => expect(h.submitRecoveryKey).toHaveBeenCalledWith('k'))
+    })
+
+    it('always offers a way out — sign out (no hard lockout)', () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
+      expect(h.signOut).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('at-rest unlock gate', () => {
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'unlock', custody: 'passkey' }
+      h.passkeyAvailable = true
+    })
+
+    it('prompts to unlock with the passkey', async () => {
+      h.unlockSessionWithPasskey.mockResolvedValue(undefined)
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
+      await waitFor(() => expect(h.unlockSessionWithPasskey).toHaveBeenCalledTimes(1))
+    })
+
+    it('offers a sign-out escape even when unlock is impossible', () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
+      expect(h.signOut).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the escape in the recovery-key view (manual custody)', () => {
+      h.recoveryPrompt = { kind: 'unlock', custody: 'manual' }
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByPlaceholderText(/recovery key/i)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
+      expect(h.signOut).toHaveBeenCalledTimes(1)
     })
   })
 

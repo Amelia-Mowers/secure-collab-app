@@ -1173,6 +1173,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     atRestKeysRef.current = null
     custodyRef.current = 'manual'
     setSnapshotKey(null)
+    // Dismiss any blocking gate (verify / at-rest unlock / active verification) so
+    // signing out from the device-security screen always returns to sign-in instead
+    // of leaving the overlay stuck. The auto-restore effect is one-shot, so it won't
+    // re-raise the prompt for the account we just removed. (issue 7495dd9a)
+    pendingUnlockRef.current = null
+    setRecoveryPrompt(null)
+    setVerification(null)
     // Don't clear wasm module — other accounts may still need it
   }, [activeAccountId])
 
