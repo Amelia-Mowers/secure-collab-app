@@ -195,7 +195,6 @@ describe('AuthProvider', () => {
       expect(mockRestore).toHaveBeenCalledWith(
         'http://localhost:6167',
         SESSION_DATA_JSON,
-        undefined, // store passphrase: v1 (plaintext store) restore
       )
     })
 
