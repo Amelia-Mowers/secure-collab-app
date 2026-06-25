@@ -3,7 +3,12 @@ import type { ReactNode } from 'react'
 import { createElement } from 'react'
 import { getWasmModule } from '../wasm/loader'
 import type { OauthPopup } from '../auth/oauthPopup'
-import { hasPlatformAuthenticator, registerPasskeyPrf, unlockPasskeyPrf } from '../auth/passkeyPrf'
+import {
+  hasPlatformAuthenticator,
+  registerPasskeyPrf,
+  unlockPasskeyPrf,
+  confirmPasskeyPrf,
+} from '../auth/passkeyPrf'
 import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
 import { setSnapshotKey } from '../lib/atRestSession'
 
@@ -663,15 +668,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** `offer-passkey` prompt: a legacy account (just unlocked with its master
    *  key) adds passkey custody — register a passkey, re-key secure backup to its
    *  PRF secret (the old recovery key stops working), and surface the fresh
-   *  break-glass key to save. Throws on failure so the screen can surface it. */
+   *  break-glass key to save. Throws on failure so the screen can surface it.
+   *
+   *  CONFIRM BEFORE ROTATE (issue 05a98123): re-keying is destructive — it
+   *  invalidates the user's existing master key. So before rotating, prove the
+   *  passkey actually re-derives the same secret via the real unlock path. A
+   *  PRF-less passkey (e.g. a password manager without PRF) fails this, so we
+   *  abort with the old key intact instead of locking the user out — the exact
+   *  incident this guards against. */
   const migrateToPasskey = useCallback(async () => {
     const ms = matrixSessionRef.current
     if (!ms) throw new Error('Not signed in')
     const uid = (typeof ms.userId === 'function' ? ms.userId() : null) ?? 'tidework'
     const secret = await registerPasskeyPrf(uid, uid)
+    await confirmPasskeyPrf(secret) // abort (no rotation) if it can't unlock
     const recoveryKey: string = await ms.resetRecoveryWithPassphrase(secret)
     passkeyEnrolledRef.current = true
     setPasskeyEnrolled(true)
+    custodyRef.current = 'passkey'
     setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
   }, [])
 

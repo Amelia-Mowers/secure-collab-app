@@ -120,6 +120,31 @@ export async function unlockPasskeyPrf(): Promise<string> {
   return derivePrfSecret([])
 }
 
+const PASSKEY_CANNOT_UNLOCK =
+  "This passkey can't unlock TideWork on this device, so it wasn't enabled. " +
+  'Your existing key still works — keep using it, or try a different passkey.'
+
+/**
+ * Confirm a just-registered passkey can re-derive the SAME secret via the real
+ * unlock path (a discoverable-credential assertion) BEFORE a caller relies on
+ * it — e.g. before rotating away a working recovery key. A PRF-less or flaky
+ * authenticator (a password manager without PRF, say) can't reproduce the
+ * secret, so this throws and the caller aborts, leaving the existing key intact.
+ *
+ * This is the "confirm before rotate" guard against passkey enrollment burning
+ * the only working key (issue 05a98123). Pass the secret `registerPasskeyPrf`
+ * returned; costs one extra authenticator gesture (the confirming assertion).
+ */
+export async function confirmPasskeyPrf(expected: string): Promise<void> {
+  let actual: string
+  try {
+    actual = await unlockPasskeyPrf()
+  } catch {
+    throw new Error(PASSKEY_CANNOT_UNLOCK)
+  }
+  if (actual !== expected) throw new Error(PASSKEY_CANNOT_UNLOCK)
+}
+
 /** Drive a WebAuthn assertion that evaluates the PRF and returns its output. */
 async function derivePrfSecret(allow: ArrayBuffer[]): Promise<string> {
   const assertion = (await navigator.credentials.get({

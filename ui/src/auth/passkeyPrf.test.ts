@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import {
+  confirmPasskeyPrf,
   hasPlatformAuthenticator,
   isPasskeyPrfSupported,
   registerPasskeyPrf,
@@ -137,6 +138,31 @@ describe('passkeyPrf', () => {
     it('throws when unlock is cancelled', async () => {
       get.mockResolvedValue(null)
       await expect(unlockPasskeyPrf()).rejects.toThrow(/cancelled/i)
+    })
+  })
+
+  describe('confirmPasskeyPrf (confirm-before-rotate guard)', () => {
+    it('resolves when the passkey re-derives the same secret', async () => {
+      get.mockResolvedValue(fakeCred({ results: { first: PRF_FIRST } }))
+      await expect(confirmPasskeyPrf(PRF_SECRET)).resolves.toBeUndefined()
+      // It exercises the *real* unlock path (discoverable, empty allowCredentials).
+      expect(get.mock.calls[0][0].publicKey.allowCredentials).toEqual([])
+    })
+
+    it('rejects when the passkey produces a DIFFERENT secret (PRF mismatch)', async () => {
+      // base64url of [4,5,6] is "BAUG" — not the expected "AQID".
+      get.mockResolvedValue(fakeCred({ results: { first: new Uint8Array([4, 5, 6]).buffer } }))
+      await expect(confirmPasskeyPrf(PRF_SECRET)).rejects.toThrow(/wasn.t enabled|existing key/i)
+    })
+
+    it('rejects when the authenticator exposes no PRF at unlock (PRF-less, e.g. password manager)', async () => {
+      get.mockResolvedValue(fakeCred({}))
+      await expect(confirmPasskeyPrf(PRF_SECRET)).rejects.toThrow(/wasn.t enabled|existing key/i)
+    })
+
+    it('rejects when the confirming assertion is cancelled', async () => {
+      get.mockResolvedValue(null)
+      await expect(confirmPasskeyPrf(PRF_SECRET)).rejects.toThrow(/wasn.t enabled|existing key/i)
     })
   })
 })
