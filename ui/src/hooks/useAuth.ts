@@ -4,8 +4,6 @@ import { createElement } from 'react'
 import { getWasmModule } from '../wasm/loader'
 import type { OauthPopup } from '../auth/oauthPopup'
 import { hasPlatformAuthenticator, registerPasskeyPrf, unlockPasskeyPrf } from '../auth/passkeyPrf'
-import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
-import { setSnapshotKey } from '../lib/atRestSession'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,11 +34,6 @@ export type RecoveryPrompt =
    *  account, so the key is a break-glass backup rather than the only way in. */
   | { kind: 'save'; recoveryKey: string; viaPasskey?: boolean }
   | { kind: 'verify' }
-  /** Unlock-first cold start (issue c72ec5df): an at-rest-encrypted (v2) session
-   *  needs the master secret BEFORE the encrypted SDK store can be opened, so
-   *  restore is gated behind a passkey touch ('passkey') or a typed recovery key
-   *  ('manual'). `custody` picks the default UI; both paths stay available. */
-  | { kind: 'unlock'; custody?: 'passkey' | 'manual' }
   /** A legacy account (raw recovery key) just unlocked with its master key on a
    *  passkey-capable device — offer to protect it with a passkey so future
    *  devices need no typed key. Optional: declining proceeds into the app. */
@@ -66,24 +59,13 @@ export interface VerificationState {
   emoji: SasEmoji[]
 }
 
-/** Persisted per-account data (shared across tabs via localStorage).
- *
- * At-rest encryption (issue c72ec5df): v2 entries hold the session blob
- * AES-GCM-encrypted (`secrets`) under a master-key-derived key; the SDK store is
- * likewise encrypted. v1 (no `v`) is the legacy PLAINTEXT format — purged on
- * load by the hard cutover (the user re-logs in once, producing a v2 entry). */
+/** Persisted per-account data (shared across tabs via localStorage). */
 export interface AccountSession {
   homeserverUrl: string
   userId: string
   username: string
-  /** Format version. Absent = legacy v1 (plaintext `matrixSessionData`). */
-  v?: 2
-  /** v2: which unlock method the account uses (drives the unlock gate UI). */
-  custody?: 'passkey' | 'manual'
-  /** v1 only: opaque JSON blob from MatrixSession.sessionData() (PLAINTEXT). */
-  matrixSessionData?: string
-  /** v2 only: AES-GCM(tokenKey) over the sessionData() blob (base64url). */
-  secrets?: string
+  /** Opaque JSON blob returned by MatrixSession.sessionData() */
+  matrixSessionData: string
 }
 
 interface AuthState {
@@ -171,12 +153,6 @@ interface AuthState {
   /** New device (`verify` prompt): unlock history with the account's passkey
    *  instead of typing the master key. */
   unlockWithPasskey: () => Promise<void>
-  /** `unlock` prompt (at-rest, c72ec5df): obtain the master secret BEFORE restore
-   *  so the encrypted SDK store can be opened — passkey path. */
-  unlockSessionWithPasskey: () => Promise<void>
-  /** `unlock` prompt: manual recovery-key path — derive the at-rest keys, decrypt
-   *  the v2 session, open the encrypted store, restore, then unlock secret storage. */
-  submitUnlockKey: (key: string) => Promise<void>
   /** `offer-passkey` prompt: a legacy account that just unlocked with its master
    *  key adds passkey custody — registers a passkey, re-keys secure backup to
    *  its PRF secret, and surfaces a fresh break-glass key. */
@@ -211,10 +187,6 @@ const LEGACY_SESSION_KEY = 'collab:session'
 function loadAccounts(): AccountSession[] {
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY)
-    // Soft cutover (at-rest, c72ec5df): v1 (plaintext) entries still restore
-    // as-is and upgrade to v2 (encrypted) on their next re-login; only NEW
-    // accounts are encrypted at rest. (Hard-deleting v1 here would force a
-    // re-login but breaks the legacy-restore tests — deferred.)
     if (raw) return JSON.parse(raw)
 
     // Migrate from single-account format
@@ -322,22 +294,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return loadActiveAccountId(accs)
   })
   const [matrixSession, setMatrixSession] = useState<any>(null)
-  // At-rest encryption (c72ec5df): keys derived from the master secret at unlock,
-  // held in memory for the session (to re-encrypt the session blob + snapshot).
-  // `pendingUnlock` is the v2 account whose encrypted store awaits its unlock
-  // gesture before we can restore it.
-  const atRestKeysRef = useRef<AtRestKeys | null>(null)
-  const pendingUnlockRef = useRef<AccountSession | null>(null)
-  // Which unlock method this account uses — set explicitly by the recovery path
-  // (passkey enroll/unlock vs recovery-key), so the persisted v2 `custody` (which
-  // drives the unlock-gate UI) doesn't depend on the timing of passkeyEnrolledRef.
-  const custodyRef = useRef<'passkey' | 'manual'>('manual')
-  // Credentials held in memory through sign-in/up so we can re-key the device to
-  // an ENCRYPTED store once the master secret exists (register bootstrap / unlock).
-  const pendingRekeyRef = useRef<{ homeserver: string; user: string; password: string } | null>(null)
-  // Forward reference to rekeyToEncryptedStore (defined later) so the recovery
-  // callbacks above it can call it without a TDZ / dependency cycle.
-  const rekeyRef = useRef<((secret: string) => Promise<void>) | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>(() =>
     loadWorkspaces(loadActiveAccountId(loadAccounts())),
   )
@@ -399,25 +355,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // tab to hang.  We race it against a short timeout so the UI can proceed.
   // The session is still fully usable — `ConnectedWorkspace.create()` may need
   // to retry until the SDK cache is populated.
-  const restoreSession = useCallback(async (account: AccountSession, storePassphrase?: string) => {
+  const restoreSession = useCallback(async (account: AccountSession) => {
     console.log('[auth] Loading WASM module...')
     const wasm = await getWasmModule()
     console.log('[auth] WASM loaded, restoring Matrix session for', account.userId)
 
-    // The session blob is plaintext for v1 accounts and the just-decrypted blob
-    // for v2 (the caller decrypts it at unlock and stashes it on matrixSessionData).
-    if (!account.matrixSessionData) throw new Error('restoreSession: missing session blob')
-
     // Race MatrixSession.restore() against a timeout.  The Rust side builds
     // a Client (connects to homeserver) and calls restore_session — both are
     // async and can hang if the homeserver is unreachable or slow.
-    // storePassphrase (v2) opens the at-rest-ENCRYPTED IndexedDB store; undefined
-    // = plaintext store (v1 / legacy).
     const RESTORE_TIMEOUT_MS = 10_000
     const restorePromise = wasm.MatrixSession.restore(
       account.homeserverUrl,
       account.matrixSessionData,
-      storePassphrase,
     )
     const restoreTimeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('MatrixSession.restore() timed out')), RESTORE_TIMEOUT_MS),
@@ -518,10 +467,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const recoveryKey: string = await ms.enableRecoveryWithPassphrase(secret)
     passkeyEnrolledRef.current = true
     setPasskeyEnrolled(true)
-    custodyRef.current = 'passkey'
-    // Re-key this just-registered device to an ENCRYPTED store now that the
-    // master secret exists (at-rest, c72ec5df). No-op if creds aren't held.
-    await rekeyRef.current?.(secret)
     setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
   }, [])
 
@@ -598,11 +543,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // future devices need no typed key. Declining proceeds into the app. The
     // passkey-unlock path never reaches here as a legacy account (it's gated on
     // enrollment), so this only fires after a master-key restore.
-    // New-device sign-in (creds held): re-key to an encrypted store now that we
-    // hold the master secret. Cold-start unlock leaves pendingRekey unset (no-op).
-    if (pendingRekeyRef.current) {
-      await rekeyRef.current?.(key)
-    }
     if (passkeyAvailableRef.current && !passkeyEnrolledRef.current) {
       setRecoveryPrompt({ kind: 'offer-passkey' })
     } else {
@@ -617,48 +557,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const secret = await unlockPasskeyPrf()
     await submitRecoveryKey(secret)
   }, [submitRecoveryKey])
-
-  /** Unlock-first cold start (c72ec5df): the master `secret` (passkey-PRF or a
-   *  typed recovery key) derives the at-rest keys, decrypts the v2 session blob,
-   *  opens the ENCRYPTED SDK store, restores, then unlocks secret storage with
-   *  the same secret. A wrong secret fails at AES-GCM decryption (before we
-   *  touch the SDK), so the gate can surface an error and re-prompt. */
-  const unlockAndRestore = useCallback(async (secret: string) => {
-    const account = pendingUnlockRef.current
-    if (!account?.secrets) throw new Error('No encrypted session awaiting unlock')
-    const keys = await deriveAtRestKeys(secret)
-    const blob = await decryptString(keys.tokenKey, account.secrets) // throws on wrong secret
-    atRestKeysRef.current = keys
-    setSnapshotKey(keys.snapshotKey) // publish for useWorkspace snapshot encryption
-    const ms = await restoreSession({ ...account, matrixSessionData: blob }, keys.storePassphrase)
-    matrixSessionRef.current = ms
-    setMatrixSession(ms)
-    // Unlock secret storage with the same secret so encrypted history decrypts.
-    await ms.recoverWithKey(secret)
-    try {
-      await ms.initialSync()
-    } catch {
-      /* room keys download in the background; the next sync picks them up */
-    }
-    pendingUnlockRef.current = null
-    setRecoveryPrompt(null)
-    setLoading(false)
-    try {
-      const entries = parseWorkspaceRooms(await ms.listRooms())
-      if (entries.length > 0) {
-        setWorkspaces(entries)
-        saveWorkspaces(account.userId, entries)
-      }
-    } catch (e) {
-      console.warn('[auth] listRooms after unlock failed:', e)
-    }
-  }, [restoreSession])
-
-  /** 'unlock' gate, passkey path: derive the PRF secret, then unlock + restore. */
-  const unlockSessionWithPasskey = useCallback(async () => {
-    custodyRef.current = 'passkey'
-    await unlockAndRestore(await unlockPasskeyPrf())
-  }, [unlockAndRestore])
 
   /** `offer-passkey` prompt: a legacy account (just unlocked with its master
    *  key) adds passkey custody — register a passkey, re-key secure backup to its
@@ -783,29 +681,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the account pool.
   const persistSessionBlob = useCallback((userId: string, blob: string) => {
     if (!blob) return
-    const write = (patch: Partial<AccountSession>) =>
-      setAccounts(prev => {
-        const updated = prev.map(a => (a.userId === userId ? { ...a, ...patch } : a))
-        saveAccounts(updated)
-        return updated
-      })
-    const keys = atRestKeysRef.current
-    if (keys) {
-      // v2 (at-rest): encrypt the session blob; drop any plaintext copy. Fired on
-      // every token refresh, so the persisted token is always ciphertext.
-      encryptString(keys.tokenKey, blob)
-        .then(secrets =>
-          write({
-            v: 2,
-            custody: custodyRef.current,
-            secrets,
-            matrixSessionData: undefined,
-          }),
-        )
-        .catch(e => console.warn('[auth] session-blob encrypt failed:', e))
-    } else {
-      write({ matrixSessionData: blob }) // v1 (pre-unlock / legacy)
-    }
+    setAccounts(prev => {
+      const updated = prev.map(a =>
+        a.userId === userId ? { ...a, matrixSessionData: blob } : a,
+      )
+      saveAccounts(updated)
+      return updated
+    })
   }, [])
 
   // Keep the stored session blob current with the SDK's live tokens. MAS access
@@ -865,16 +747,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const accs = loadAccounts()
     const activeId = loadActiveAccountId(accs)
     const account = accs.find(a => a.userId === activeId)
-    // v2 (at-rest): the encrypted SDK store can't be opened without the master
-    // secret, so gate restore behind the unlock prompt — the gesture
-    // (unlockSessionWithPasskey / submitUnlockKey → unlockAndRestore) finishes it.
-    if (account?.v === 2 && account.secrets) {
-      console.log('[auth] Encrypted session — prompting to unlock before restore')
-      pendingUnlockRef.current = account
-      setRecoveryPrompt({ kind: 'unlock', custody: account.custody })
-      setLoading(false)
-      return
-    }
     console.log('[auth] Auto-restore: activeId =', activeId, ', account found =', !!account?.matrixSessionData)
     if (!account?.matrixSessionData) {
       console.log('[auth] No session data to restore, skipping')
@@ -949,25 +821,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (ms: any, homeserver: string, usernameHint: string) => {
       const uid = ms.userId() ?? `@${usernameHint}:unknown`
 
-      // Persist full session data including tokens. When at-rest keys are set
-      // (the re-keyed device), write a v2 entry with the token blob encrypted.
+      // Persist full session data including tokens
       const matrixSessionData: string = ms.sessionData()
-      const keys = atRestKeysRef.current
-      const account: AccountSession = keys
-        ? {
-            homeserverUrl: homeserver,
-            userId: uid,
-            username: usernameHint,
-            v: 2,
-            custody: custodyRef.current,
-            secrets: await encryptString(keys.tokenKey, matrixSessionData),
-          }
-        : {
-            homeserverUrl: homeserver,
-            userId: uid,
-            username: usernameHint,
-            matrixSessionData,
-          }
+
+      const account: AccountSession = {
+        homeserverUrl: homeserver,
+        userId: uid,
+        username: usernameHint,
+        matrixSessionData,
+      }
 
       // Add or update in the account pool
       setAccounts(prev => {
@@ -997,53 +859,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [ensureHistoryAccess],
   )
 
-  /** Re-key a freshly signed-in/registered device (whose store is still
-   *  plaintext) to an ENCRYPTED store, once the master `secret` exists. Logs in
-   *  again as a fresh device WITH the store passphrase, re-downloads room keys
-   *  from the server backup (recoverWithKey), persists a v2 entry, then drops the
-   *  transient plaintext store. No-op without held credentials (e.g. OAuth — TODO
-   *  OAuth re-key has no password). */
-  const rekeyToEncryptedStore = useCallback(
-    async (secret: string) => {
-      const creds = pendingRekeyRef.current
-      if (!creds) return
-      const keys = await deriveAtRestKeys(secret)
-      atRestKeysRef.current = keys
-      setSnapshotKey(keys.snapshotKey) // publish for useWorkspace snapshot encryption
-      let oldStoreName: string | undefined
-      try {
-        oldStoreName = JSON.parse(matrixSessionRef.current?.sessionData?.() ?? '{}').storeName
-      } catch {
-        /* ignore */
-      }
-      const wasm = await getWasmModule()
-      const ms = await wasm.MatrixSession.login(
-        creds.homeserver,
-        creds.user,
-        creds.password,
-        keys.storePassphrase,
-      )
-      await ms.initialSync()
-      await ms.recoverWithKey(secret) // re-download room keys into the encrypted store
-      try {
-        await ms.initialSync()
-      } catch {
-        /* keys finish downloading in the background */
-      }
-      await completeSignIn(ms, creds.homeserver, creds.user) // writes a v2 entry
-      pendingRekeyRef.current = null
-      if (oldStoreName) {
-        try {
-          indexedDB.deleteDatabase(oldStoreName)
-        } catch {
-          /* best-effort cleanup of the transient plaintext store */
-        }
-      }
-    },
-    [completeSignIn],
-  )
-  rekeyRef.current = rekeyToEncryptedStore
-
   // ── signIn: add or update an account in the pool ───────────────────────────
   const signIn = useCallback(
     async (homeserver: string, user: string, password: string) => {
@@ -1052,8 +867,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         const wasm = await getWasmModule()
-        // Hold creds so we can re-key to an encrypted store after unlock.
-        pendingRekeyRef.current = { homeserver, user, password }
         const ms = await wasm.MatrixSession.login(homeserver, user, password)
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
@@ -1125,8 +938,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         const wasm = await getWasmModule()
-        // Hold creds so we can re-key to an encrypted store once recovery boots.
-        pendingRekeyRef.current = { homeserver, user, password }
         const ms = await wasm.MatrixSession.register(homeserver, user, password)
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
@@ -1169,10 +980,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     matrixSessionRef.current = null
     setMatrixSession(null)
     setError(null)
-    // Reset at-rest session state so the next account doesn't inherit keys/custody.
-    atRestKeysRef.current = null
-    custodyRef.current = 'manual'
-    setSnapshotKey(null)
     // Don't clear wasm module — other accounts may still need it
   }, [activeAccountId])
 
@@ -1191,14 +998,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActiveAccountId(targetUserId)
       saveActiveAccountId(targetUserId)
       setWorkspaces(loadWorkspaces(targetUserId))
-
-      // v2 (at-rest): gate behind the unlock prompt like cold start.
-      if (account.v === 2 && account.secrets) {
-        pendingUnlockRef.current = account
-        setRecoveryPrompt({ kind: 'unlock', custody: account.custody })
-        setLoading(false)
-        return
-      }
 
       try {
         const ms = await restoreSession(account)
@@ -1475,8 +1274,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setupPasskeyRecovery,
     setupKeyRecovery,
     unlockWithPasskey,
-    unlockSessionWithPasskey,
-    submitUnlockKey: unlockAndRestore,
     migrateToPasskey,
     verification,
     startVerification,
