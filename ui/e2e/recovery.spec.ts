@@ -23,8 +23,8 @@ test('a second device restores access with the master key', async ({ browser }) 
     timeout: 90_000,
   })
 
-  // Restore with the master key.
-  await dialogB.getByRole('button', { name: /use your master key/i }).click()
+  // Restore with the master key. With no passkey available the gate shows the
+  // master-key field directly (no SAS / "verify with another device" step).
   await dialogB.locator('.verify__input').fill(masterKey)
   await dialogB.getByRole('button', { name: /^restore$/i }).click()
 

@@ -11,8 +11,6 @@ unit/integration tests can't cover end to end.
 - `smoke.spec.ts` — app boots, registers an account, first device bootstraps
   recovery (sanity check for the whole harness).
 - `recovery.spec.ts` — a second device restores access with the **master key**.
-- `verification.spec.ts` — two devices complete an **SAS (emoji) verification**
-  and the new device's gate clears once trusted.
 - `core.spec.ts` — the single-device product journey: workspace → table →
   a column of each type → entries → inline grid edit → header sort → global
   filter → kanban/card views → view switching → **persists across reload**

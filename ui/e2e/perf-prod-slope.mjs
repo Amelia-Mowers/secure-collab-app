@@ -65,7 +65,9 @@ try {
 
   step('verify device with the master key (one-time; persists for reloads)')
   await page.getByRole('heading', { name: /verify this device/i }).waitFor({ timeout: 90_000 })
-  await page.getByRole('button', { name: /use your master key instead/i }).click()
+  // The "use your master key instead" link only appears when a passkey is also
+  // offered; without one the master-key field shows directly. Click if present.
+  try { await page.getByRole('button', { name: /use your master key instead/i }).click({ timeout: 5_000 }) } catch {}
   await page.locator('.verify__input').fill(RECOVERY)
   await page.locator('.verify__primary').last().click()
   await page.locator('.verify__overlay').waitFor({ state: 'detached', timeout: 180_000 })
