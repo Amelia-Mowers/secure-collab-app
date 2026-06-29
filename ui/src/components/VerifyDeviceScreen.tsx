@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import type { VerificationState } from '../hooks/useAuth'
+import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './VerifyDeviceScreen.css'
 
 /**
@@ -452,7 +453,9 @@ function VerifyThisDevice({
           )}
         </>
       )}
-      <EscapeHatch onSignOut={onSignOut} />
+      <EscapeHatch onSignOut={onSignOut}>
+        <ManageSubscriptionButton className="verify__link" errorClassName="verify__error" />
+      </EscapeHatch>
     </Overlay>
   )
 }
@@ -583,12 +586,13 @@ function UnlockSession({
 //    prompt and returns to sign-in, even when unlock/verify can't succeed
 //    (lost or rotated key, PRF-less passkey). Always enabled — including mid
 //    busy state — so a hung passkey prompt is still escapable. (issue 7495dd9a)
-function EscapeHatch({ onSignOut }: { onSignOut: () => void }) {
+function EscapeHatch({ onSignOut, children }: { onSignOut: () => void; children?: ReactNode }) {
   return (
     <div className="verify__escape">
       <button type="button" className="verify__link" onClick={() => onSignOut()}>
         Sign out
       </button>
+      {children}
     </div>
   )
 }

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import type { AccountSession } from '@/hooks/useAuth'
 import { RecoveryKeyModal } from './RecoveryKeyModal'
+import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './AccountSwitcher.css'
 
 interface AccountSwitcherProps {
@@ -185,6 +186,16 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
             </svg>
             Recovery key
           </button>
+          <ManageSubscriptionButton
+            className="account-switcher__add"
+            errorClassName="account-switcher__billing-error"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <rect x="1.5" y="3" width="9" height="6.5" rx="1" />
+              <path d="M1.5 5.2h9" />
+            </svg>
+            Manage subscription
+          </ManageSubscriptionButton>
           <button
             className="account-switcher__add"
             onClick={handleAddAccount}

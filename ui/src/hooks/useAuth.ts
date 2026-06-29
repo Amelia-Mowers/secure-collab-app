@@ -11,6 +11,7 @@ import {
 } from '../auth/passkeyPrf'
 import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
 import { setSnapshotKey } from '../lib/atRestSession'
+import { fetchPortalUrl } from '../lib/billing'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -197,6 +198,11 @@ interface AuthState {
    *  passkey) stops working. For a signed-in recovery-key account that lost or
    *  wants to rotate its key. */
   regenerateRecoveryKey: () => Promise<string>
+  /** Account view (row_1782751521723): open the Stripe billing portal to manage
+   *  or CANCEL the subscription. Mints a Matrix OpenID token (account-level, so
+   *  it works while E2E is locked — e.g. at the verify gate) and exchanges it
+   *  for a portal URL. Needs a live Matrix client. */
+  openBillingPortal: () => Promise<void>
 
   /** An in-progress (incoming) device verification, or null. Drives the verify
    *  screen's incoming-request prompt and emoji-compare step. */
@@ -697,6 +703,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const ms = matrixSessionRef.current
     if (!ms) throw new Error('Not signed in')
     return await ms.resetRecovery()
+  }, [])
+
+  /** Account view: open the Stripe billing portal to manage / cancel the
+   *  subscription (issue row_1782751521723). Mint a Matrix OpenID token (works
+   *  while E2E is locked — it's account-level), exchange it at the billing
+   *  Worker for a portal URL, and navigate there. The at-rest unlock gate has no
+   *  client (the token is encrypted at rest), so this needs a built session —
+   *  the verify gate / signed-in app have one. */
+  const openBillingPortal = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms || typeof ms.requestOpenIdToken !== 'function') {
+      throw new Error('Please sign in again to manage your subscription.')
+    }
+    const url = await fetchPortalUrl(await ms.requestOpenIdToken())
+    window.location.assign(url)
   }, [])
 
   /** `offer-passkey` prompt: a legacy account (just unlocked with its master
@@ -1517,6 +1538,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     migrateToPasskey,
     revealRecoveryKey,
     regenerateRecoveryKey,
+    openBillingPortal,
     verification,
     acceptIncomingVerification,
     confirmVerification,
