@@ -32,7 +32,6 @@ export function VerifyDeviceScreen() {
     migrateToPasskey,
     signOut,
     verification,
-    startVerification,
     acceptIncomingVerification,
     confirmVerification,
     cancelVerification,
@@ -69,7 +68,6 @@ export function VerifyDeviceScreen() {
   if (recoveryPrompt?.kind === 'verify') {
     return (
       <VerifyThisDevice
-        onVerify={startVerification}
         onMasterKey={submitRecoveryKey}
         canUnlockWithPasskey={passkeyAvailable && passkeyEnrolled}
         onPasskey={unlockWithPasskey}
@@ -332,22 +330,27 @@ function SaveRecoveryKey({
   )
 }
 
-// ── New device: verify (SAS) or restore with the master key. No bypass. ──────
+// ── New device: unlock with passkey or master key. No SAS, no bypass. ────────
 
 function VerifyThisDevice({
-  onVerify,
   onMasterKey,
   canUnlockWithPasskey,
   onPasskey,
   onSignOut,
 }: {
-  onVerify: () => Promise<void>
   onMasterKey: (key: string) => Promise<void>
   canUnlockWithPasskey: boolean
   onPasskey: () => Promise<void>
   onSignOut: () => void
 }) {
-  const [mode, setMode] = useState<'choose' | 'key'>('choose')
+  // Passkey or master key — the between-device (SAS) path is gone (issue
+  // bef6b220): unlocking imports the cross-signing self-signing key, so the
+  // device signs ITSELF into the trusted set; a second device isn't needed.
+  // Derive the view from canUnlockWithPasskey reactively (it can flip true
+  // async, like the at-rest unlock gate); `forceKey` is the explicit
+  // "use my master key" opt-out.
+  const [forceKey, setForceKey] = useState(false)
+  const showKey = forceKey || !canUnlockWithPasskey
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -369,13 +372,11 @@ function VerifyThisDevice({
       <h2 id="verify-title" className="verify__title">
         Verify this device
       </h2>
-      {mode === 'choose' ? (
+      {!showKey ? (
         <>
           <p className="verify__body">
-            To keep your workspace history end-to-end encrypted, confirm this is really you.
-            {canUnlockWithPasskey
-              ? ' Unlock with your passkey, verify with another signed-in device, or use your master key.'
-              : ' Verify with another device you’re signed in on, or use your master key.'}
+            To keep your workspace history end-to-end encrypted, unlock this device with your
+            passkey — or use your master key.
           </p>
           {error && (
             <p className="verify__error" role="alert">
@@ -383,27 +384,13 @@ function VerifyThisDevice({
             </p>
           )}
           <div className="verify__actions verify__actions--stacked">
-            {canUnlockWithPasskey && (
-              <button
-                type="button"
-                className="verify__primary"
-                disabled={busy}
-                onClick={() => run(onPasskey)}
-              >
-                {busy ? <><Spinner />Working…</> : 'Unlock with passkey'}
-              </button>
-            )}
             <button
               type="button"
-              className={canUnlockWithPasskey ? 'verify__link' : 'verify__primary'}
+              className="verify__primary"
               disabled={busy}
-              onClick={() => run(onVerify)}
+              onClick={() => run(onPasskey)}
             >
-              {!canUnlockWithPasskey && busy ? (
-                <><Spinner />Working…</>
-              ) : (
-                'Verify with another device'
-              )}
+              {busy ? <><Spinner />Working…</> : 'Unlock with passkey'}
             </button>
             <button
               type="button"
@@ -411,7 +398,7 @@ function VerifyThisDevice({
               disabled={busy}
               onClick={() => {
                 setError(null)
-                setMode('key')
+                setForceKey(true)
               }}
             >
               Use your master key instead
@@ -436,17 +423,19 @@ function VerifyThisDevice({
             </p>
           )}
           <div className="verify__actions">
-            <button
-              type="button"
-              className="verify__link"
-              disabled={busy}
-              onClick={() => {
-                setError(null)
-                setMode('choose')
-              }}
-            >
-              Back
-            </button>
+            {canUnlockWithPasskey && (
+              <button
+                type="button"
+                className="verify__link"
+                disabled={busy}
+                onClick={() => {
+                  setError(null)
+                  setForceKey(false)
+                }}
+              >
+                Back
+              </button>
+            )}
             <button
               type="button"
               className="verify__primary"

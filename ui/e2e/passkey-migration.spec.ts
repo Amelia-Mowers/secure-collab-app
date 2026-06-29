@@ -53,9 +53,9 @@ test('passkey migration: legacy account adds a passkey, then unlocks with it', a
     timeout: 90_000,
   })
   // Phase 4a: a legacy (not-enrolled) account is never offered passkey unlock,
-  // even on a passkey-capable device — only the master-key / SAS paths.
+  // even on a passkey-capable device — only the master-key path (no SAS). With
+  // no passkey available the gate shows the master-key field directly.
   await expect(dialogB.getByRole('button', { name: /unlock with passkey/i })).toHaveCount(0)
-  await dialogB.getByRole('button', { name: /use your master key/i }).click()
   await dialogB.locator('.verify__input').fill(masterKey)
   await dialogB.getByRole('button', { name: /^restore$/i }).click()
 

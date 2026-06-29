@@ -67,7 +67,9 @@ try {
 
   step('verify-this-device gate: restoring with the master key')
   await page.getByRole('heading', { name: /verify this device/i }).waitFor({ timeout: 90_000 })
-  await page.getByRole('button', { name: /use your master key instead/i }).click()
+  // With a passkey the gate shows a "use your master key instead" link; without
+  // one it shows the master-key field directly. Click the link only if present.
+  try { await page.getByRole('button', { name: /use your master key instead/i }).click({ timeout: 5_000 }) } catch {}
   await page.locator('.verify__input').fill(RECOVERY)
   await page.locator('.verify__primary').last().click()
 

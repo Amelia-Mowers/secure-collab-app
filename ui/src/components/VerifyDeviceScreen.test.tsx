@@ -142,29 +142,23 @@ describe('VerifyDeviceScreen', () => {
       h.recoveryPrompt = { kind: 'verify' }
     })
 
-    it('offers SAS and master key — and has NO bypass', () => {
+    it('shows the master-key path with no SAS and no bypass', () => {
+      // Default: no passkey available → straight to the master-key field.
       render(<VerifyDeviceScreen />)
-      expect(
-        screen.getByRole('button', { name: /verify with another device/i }),
-      ).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /use your master key/i })).toBeInTheDocument()
-      // No "continue without history" / skip escape hatch.
+      expect(screen.getByPlaceholderText(/master key/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^restore$/i })).toBeInTheDocument()
+      // The between-device (SAS) path is gone — and still no skip/continue bypass.
+      expect(screen.queryByRole('button', { name: /verify with another device/i })).toBeNull()
       expect(screen.queryByText(/continue without/i)).not.toBeInTheDocument()
       expect(screen.queryByText(/skip/i)).not.toBeInTheDocument()
     })
 
-    it('starts SAS verification', async () => {
-      h.startVerification.mockResolvedValue(undefined)
-      render(<VerifyDeviceScreen />)
-      fireEvent.click(screen.getByRole('button', { name: /verify with another device/i }))
-      await waitFor(() => expect(h.startVerification).toHaveBeenCalledTimes(1))
-    })
-
-    it('offers passkey unlock when the browser supports it AND the account is enrolled', async () => {
+    it('offers passkey unlock — and no SAS — when supported AND enrolled', async () => {
       h.passkeyAvailable = true
       h.passkeyEnrolled = true
       h.unlockWithPasskey.mockResolvedValue(undefined)
       render(<VerifyDeviceScreen />)
+      expect(screen.queryByRole('button', { name: /verify with another device/i })).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
       await waitFor(() => expect(h.unlockWithPasskey).toHaveBeenCalledTimes(1))
     })
@@ -173,24 +167,24 @@ describe('VerifyDeviceScreen', () => {
       h.passkeyEnrolled = true // enrolled, but the browser has no authenticator
       render(<VerifyDeviceScreen />) // passkeyAvailable false
       expect(screen.queryByRole('button', { name: /unlock with passkey/i })).toBeNull()
+      // Falls back to the master-key field.
+      expect(screen.getByPlaceholderText(/master key/i)).toBeInTheDocument()
     })
 
-    it('hides passkey unlock for a legacy account (authenticator present but no passkey enrolled)', () => {
+    it('hides passkey unlock for a legacy account (authenticator present, no passkey enrolled)', () => {
       h.passkeyAvailable = true
       h.passkeyEnrolled = false // raw-recovery-key account — no passkey to use
       render(<VerifyDeviceScreen />)
       expect(screen.queryByRole('button', { name: /unlock with passkey/i })).toBeNull()
-      // The non-passkey paths are still offered.
-      expect(
-        screen.getByRole('button', { name: /verify with another device/i }),
-      ).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /use your master key/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /verify with another device/i })).toBeNull()
+      // The master-key field is the way in.
+      expect(screen.getByPlaceholderText(/master key/i)).toBeInTheDocument()
     })
 
     it('restores with the trimmed master key', async () => {
       h.submitRecoveryKey.mockResolvedValue(undefined)
       render(<VerifyDeviceScreen />)
-      fireEvent.click(screen.getByRole('button', { name: /use your master key/i }))
+      // No passkey → the master-key field is shown directly (no "choose" step).
       fireEvent.change(screen.getByPlaceholderText(/master key/i), { target: { value: '  k  ' } })
       fireEvent.click(screen.getByRole('button', { name: /^restore$/i }))
       await waitFor(() => expect(h.submitRecoveryKey).toHaveBeenCalledWith('k'))
