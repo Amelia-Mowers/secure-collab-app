@@ -97,6 +97,23 @@ mod matrix_impl {
             .map_err(|e| anyhow::anyhow!("Failed to reset recovery key: {e}"))
     }
 
+    /// Reset Secure Backup to a fresh **random recovery key** (Base58), rotating
+    /// the secret-storage key and re-uploading the secrets under it. Like
+    /// [`reset_recovery_with_passphrase`] but keyed by a random key, not a
+    /// passphrase — for a signed-in, recovered device that wants a brand-new
+    /// typed recovery key (the old one was lost, or is being rotated). Returns
+    /// the new recovery key; the old key (and any passphrase/passkey) stops
+    /// working. The device must already hold the secrets so they can be
+    /// re-uploaded under the new key.
+    pub async fn reset_recovery(client: &Client) -> Result<String> {
+        client
+            .encryption()
+            .recovery()
+            .reset_key()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to reset recovery key: {e}"))
+    }
+
     /// One enable attempt, optionally keyed by a passphrase. The builder chain is
     /// kept inline (not bound to a `let`) so the intermediate `Encryption` /
     /// `Recovery` temporaries it borrows live across the `.await`.
