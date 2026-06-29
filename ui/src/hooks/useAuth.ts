@@ -186,6 +186,12 @@ interface AuthState {
    *  key adds passkey custody — registers a passkey, re-keys secure backup to
    *  its PRF secret, and surfaces a fresh break-glass key. */
   migrateToPasskey: () => Promise<void>
+  /** Account view (d00dda45): re-derive and reveal the account's master unlock
+   *  key (the passkey's PRF secret) so it can be used to sign in on another
+   *  device or with the CLI. Requires a fresh passkey gesture — the tap IS the
+   *  re-auth, and nothing is retained between reveals. Passkey-custody accounts
+   *  only; the value is exactly what `recoverWithKey` / the CLI accept. */
+  revealRecoveryKey: () => Promise<string>
 
   /** An in-progress device verification, or null. Drives the verify screen's
    *  emoji-compare step and the incoming-request prompt. */
@@ -663,7 +669,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const unlockSessionWithPasskey = useCallback(async () => {
     custodyRef.current = 'passkey'
     await unlockAndRestore(await unlockPasskeyPrf())
+    // Unlocking via passkey proves the account has one — mark it enrolled so the
+    // account view can offer "reveal recovery key" (the cold-start unlock path
+    // doesn't run ensureHistoryAccess, which is the other place this is set).
+    passkeyEnrolledRef.current = true
+    setPasskeyEnrolled(true)
   }, [unlockAndRestore])
+
+  /** Account view: re-derive and reveal the master unlock key via a fresh passkey
+   *  gesture (the re-auth). Nothing is retained between reveals — `unlockPasskeyPrf`
+   *  re-runs the assertion each time. The returned PRF secret is the same secret
+   *  `recoverWithKey` / the CLI's `recover_with_key` / the verify gate accept, so
+   *  it ports the account to another device or the CLI. (issue d00dda45) */
+  const revealRecoveryKey = useCallback(async (): Promise<string> => {
+    return await unlockPasskeyPrf()
+  }, [])
 
   /** `offer-passkey` prompt: a legacy account (just unlocked with its master
    *  key) adds passkey custody — register a passkey, re-key secure backup to its
@@ -1499,6 +1519,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     unlockSessionWithPasskey,
     submitUnlockKey: unlockAndRestore,
     migrateToPasskey,
+    revealRecoveryKey,
     verification,
     startVerification,
     acceptIncomingVerification,
