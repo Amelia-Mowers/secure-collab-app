@@ -243,3 +243,15 @@
   color: var(--text);
   border: none;
 }
+
+.account-switcher__add:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.account-switcher__billing-error {
+  margin: 4px 8px 2px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--red, #c0392b);
+}

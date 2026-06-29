@@ -28,6 +28,10 @@ export const SUBSCRIBE_URL = 'https://billing.tidework.io/subscribe'
 /** Billing status endpoint for the trial badge / locked gate. */
 export const BILLING_STATUS_URL = 'https://billing.tidework.io/status'
 
+/** Manage/cancel endpoint — exchanges a Matrix OpenID token for a Stripe billing
+ *  portal URL (issue row_1782751521723). POST, authenticated, CORS. */
+export const BILLING_PORTAL_URL = 'https://billing.tidework.io/portal'
+
 /** Checkout for a specific account (trial-first flow — ADR 0002 amended). */
 export function subscribeUrlFor(username: string): string {
   return SUBSCRIBE_URL + '?username=' + encodeURIComponent(username)

@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { BILLING_STATUS_URL, OFFICIAL_HOMESERVER_URL, subscribeUrlFor } from '@/branding'
+import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './TrialStatus.css'
 
 interface Billing {
@@ -86,6 +87,7 @@ export function TrialGate() {
         <a className="trial-gate__subscribe" href={subscribeUrlFor(username)}>
           Subscribe — $12/month
         </a>
+        <ManageSubscriptionButton className="trial-gate__manage" errorClassName="trial-gate__error" />
         <button type="button" className="trial-gate__signout" onClick={signOut}>
           Sign out
         </button>
