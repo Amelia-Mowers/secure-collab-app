@@ -30,6 +30,8 @@ import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial } from '@/components/AddColumnModal'
 import { CellDisplay, CellEditor, type CellColumn } from '@/cells/cellRegistry'
+import { FilterBar } from './FilterBar'
+import { applyFilters, type FilterCondition } from '@/lib/filters'
 import './TableView.css'
 
 interface TableViewProps {
@@ -235,7 +237,11 @@ function SortableTableRow({
 }
 
 export function TableView({ workspace, syncCount }: TableViewProps) {
-  const { workspaceId, tableId } = useParams<{ workspaceId: string; tableId: string }>()
+  const { workspaceId, tableId, viewId } = useParams<{
+    workspaceId: string
+    tableId: string
+    viewId: string
+  }>()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -268,6 +274,15 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
   const [showFilter, setShowFilter] = useState(false)
+  // Per-column "where" conditions (issue: Real filter UI). Applied client-side
+  // and saveable into a view (filters + sort). Loaded from a saved view below.
+  const [conditions, setConditions] = useState<FilterCondition[]>([])
+  const [savingView, setSavingView] = useState(false)
+  const [newViewName, setNewViewName] = useState('')
+  /** The saved view currently open (for "Save changes"); null on a raw table. */
+  const [loadedView, setLoadedView] = useState<{ id: string; name: string } | null>(null)
+  /** Guards the load-once-per-view effect against re-runs (workspace identity). */
+  const loadedViewIdRef = useRef<string | null>(null)
 
   const columnsMeta: ColumnMeta[] = React.useMemo(() => {
     const columnSet = new Set<string>()
@@ -302,6 +317,18 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       })
   }, [rows, schema])
 
+  const columnsById = React.useMemo(
+    () =>
+      Object.fromEntries(columnsMeta.map(c => [c.id, { id: c.id, column_type: c.column_type }])),
+    [columnsMeta],
+  )
+  // Pre-filter rows with the per-column conditions; TanStack still applies the
+  // global text search + sort on top of the result.
+  const filteredRows = React.useMemo(
+    () => applyFilters(rows as Record<string, unknown>[], conditions, columnsById),
+    [rows, conditions, columnsById],
+  )
+
   useEffect(() => {
     if (workspace && tableId) {
       try {
@@ -311,6 +338,35 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       }
     }
   }, [workspace, tableId, rows])
+
+  // Load a saved view's filters + sort once when it opens (issue: Real filter UI).
+  // Ad-hoc filtering on a raw table (no viewId) starts empty.
+  useEffect(() => {
+    if (!workspace || !viewId) {
+      loadedViewIdRef.current = null
+      setLoadedView(null)
+      return
+    }
+    if (loadedViewIdRef.current === viewId) return
+    loadedViewIdRef.current = viewId
+    try {
+      const cfg = JSON.parse(workspace.getView(viewId))
+      setLoadedView({ id: viewId, name: cfg.name ?? '' })
+      setConditions(
+        (cfg.filters ?? []).map((f: any) => ({
+          columnId: f.column_id,
+          operator: f.operator,
+          value: f.value ?? undefined,
+        })),
+      )
+      setSorting(
+        (cfg.sort ?? []).map((s: any) => ({ id: s.column_id, desc: s.direction === 'descending' })),
+      )
+      if ((cfg.filters?.length ?? 0) > 0) setShowFilter(true)
+    } catch (err) {
+      console.error('Failed to load view config:', err)
+    }
+  }, [workspace, viewId])
 
   const showCellError = (err: any) => {
     const msg = err?.message ?? String(err)
@@ -583,7 +639,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   }, [columnsMeta, editing, updateCell, referenceLookup, moveEditing])
 
   const table = useReactTable({
-    data: rows as TableRow[],
+    data: filteredRows as TableRow[],
     columns,
     state: { sorting, globalFilter },
     onSortingChange: setSorting,
@@ -606,7 +662,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // Manual row reordering applies only to the natural (unsorted, unfiltered)
   // view — a column sort or filter defines its own order, so drag is disabled
   // then to avoid an ambiguous result.
-  const rowsReorderable = sorting.length === 0 && !globalFilter
+  const rowsReorderable = sorting.length === 0 && !globalFilter && conditions.length === 0
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
@@ -654,6 +710,48 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     )
   }
 
+  // ── Saving the current filters + sort into a view ──────────────────────────
+  const buildViewPayload = (id: string, name: string) =>
+    JSON.stringify({
+      id,
+      name,
+      table_id: tableId,
+      view_type: 'table',
+      sort: sorting.map(s => ({ column_id: s.id, direction: s.desc ? 'descending' : 'ascending' })),
+      filters: conditions.map(c => ({
+        column_id: c.columnId,
+        operator: c.operator,
+        value: c.value ?? null,
+      })),
+    })
+
+  const saveAsView = async () => {
+    const name = newViewName.trim()
+    if (!name) return
+    const id = globalThis.crypto?.randomUUID?.() ?? `view_${Date.now()}`
+    try {
+      await workspace.createView(buildViewPayload(id, name))
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+      setSavingView(false)
+      setNewViewName('')
+      navigate(`/workspace/${workspaceId}/table/${tableId}/view/${id}`)
+    } catch (err: any) {
+      showCellError(err)
+    }
+  }
+
+  const saveChanges = async () => {
+    if (!loadedView) return
+    try {
+      await workspace.createView(buildViewPayload(loadedView.id, loadedView.name))
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+      setToast('View updated')
+      setTimeout(() => setToast(null), 2000)
+    } catch (err: any) {
+      showCellError(err)
+    }
+  }
+
   const tableTitle = schema?.name || tableId
 
   return (
@@ -671,22 +769,67 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       />
 
       {showFilter && (
-        <div className="table-filter-bar">
-          <input
-            className="table-filter-input"
-            placeholder="Filter rows…"
-            value={globalFilter}
-            autoFocus
-            onChange={e => setGlobalFilter(e.target.value)}
-          />
-          {globalFilter && (
+        <div className="table-filter-bar table-filter-bar--stacked">
+          <div className="table-filter-row">
+            <input
+              className="table-filter-input"
+              placeholder="Search all columns…"
+              value={globalFilter}
+              onChange={e => setGlobalFilter(e.target.value)}
+            />
             <span className="table-filter-count">
-              {tableRows.length} match{tableRows.length === 1 ? '' : 'es'}
+              {tableRows.length} row{tableRows.length === 1 ? '' : 's'}
             </span>
-          )}
-          {globalFilter && (
-            <button className="ghost table-filter-clear" onClick={() => setGlobalFilter('')}>Clear</button>
-          )}
+            {(globalFilter || conditions.length > 0) && (
+              <button
+                className="ghost table-filter-clear"
+                onClick={() => {
+                  setGlobalFilter('')
+                  setConditions([])
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <FilterBar columns={columnsMeta} conditions={conditions} onChange={setConditions} />
+          <div className="table-filter-actions">
+            {loadedView && (
+              <button className="ghost" onClick={saveChanges}>
+                Save changes to “{loadedView.name}”
+              </button>
+            )}
+            {!savingView ? (
+              <button
+                className="ghost"
+                onClick={() => {
+                  setNewViewName('')
+                  setSavingView(true)
+                }}
+              >
+                Save as view
+              </button>
+            ) : (
+              <span className="table-save-view">
+                <input
+                  className="table-filter-input"
+                  placeholder="View name"
+                  value={newViewName}
+                  autoFocus
+                  onChange={e => setNewViewName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') void saveAsView()
+                  }}
+                />
+                <button className="ghost" onClick={() => void saveAsView()} disabled={!newViewName.trim()}>
+                  Save
+                </button>
+                <button className="ghost" onClick={() => setSavingView(false)}>
+                  Cancel
+                </button>
+              </span>
+            )}
+          </div>
         </div>
       )}
 

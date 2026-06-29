@@ -52,6 +52,29 @@
 
 .table-filter-clear:hover { color: var(--text); }
 
+/* Per-column filter bar: stacked layout (search row + conditions + actions). */
+.table-filter-bar--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.table-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.table-filter-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.table-save-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* ── States ─────────────────────────────────────────────────── */
 .state-empty,
 .state-error {
