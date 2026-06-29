@@ -24,6 +24,10 @@ TRIAL_DAYS = "14"
 EXEMPT_USERNAMES = "opcheck,opcheck2"
 SITE_URL = "https://tidework.io"
 APP_URL = "https://app.tidework.io"
+# Matrix homeserver — verifies OpenID tokens for /portal (manage/cancel). The
+# server name pins which server the token may come from (anti-SSRF).
+HOMESERVER_URL = "https://matrix.tidework.io"
+MATRIX_SERVER_NAME = "tidework.io"
 
 # Secrets (pushed by CI via `wrangler secret put` from GitHub secrets — the
 # recorded two-tier exception, since Cloudflare is this component's runtime):

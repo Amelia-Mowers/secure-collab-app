@@ -31,6 +31,9 @@ export interface Env {
   STRIPE_API_KEY: string
   STRIPE_WEBHOOK_SIGNING_SECRET: string
   MAS_BILLING_CLIENT_SECRET: string
+  // Matrix homeserver, for verifying OpenID tokens on /portal (manage/cancel).
+  HOMESERVER_URL: string // e.g. https://matrix.tidework.io
+  MATRIX_SERVER_NAME: string // e.g. tidework.io — pins the token's server (anti-SSRF)
 }
 
 const stripeClient = (env: Env) =>
@@ -200,6 +203,68 @@ async function status(env: Env, url: URL): Promise<Response> {
   }
 }
 
+// ── Manage / cancel subscription (issue row_1782751521723) ───────────────────
+
+const corsHeaders = (env: Env) => ({
+  'Access-Control-Allow-Origin': env.APP_URL,
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+})
+
+/**
+ * Return a Stripe billing-portal URL (manage payment methods, invoices, and
+ * CANCEL) for the authenticated user. Identity is proven by a Matrix OpenID
+ * token — `{ access_token, matrix_server_name }`, verified against the
+ * homeserver's federation openid userinfo — NOT by a guessable username, since
+ * this exposes PII and cancellation. Account-level, so it works while the app's
+ * E2E is locked (the whole point: a locked-out user must still be able to cancel).
+ */
+async function portal(env: Env, req: Request): Promise<Response> {
+  const cors = corsHeaders(env)
+  const json = (status: number, obj: unknown) =>
+    new Response(JSON.stringify(obj), {
+      status,
+      headers: { ...cors, 'Content-Type': 'application/json' },
+    })
+
+  let body: { access_token?: string; matrix_server_name?: string }
+  try {
+    body = (await req.json()) as typeof body
+  } catch {
+    return json(400, { error: 'bad_request' })
+  }
+  // Pin the server name — never verify against an attacker-supplied host (SSRF).
+  if (!body.access_token || body.matrix_server_name !== env.MATRIX_SERVER_NAME) {
+    return json(401, { error: 'invalid_token' })
+  }
+
+  // Verify the OpenID token with the (pinned) homeserver → the real user id.
+  const info = await fetch(
+    `${env.HOMESERVER_URL}/_matrix/federation/v1/openid/userinfo?access_token=${encodeURIComponent(body.access_token)}`,
+  )
+  if (!info.ok) return json(401, { error: 'verification_failed' })
+  const sub = ((await info.json()) as { sub?: string }).sub
+  const username = sub?.replace(/^@/, '').split(':')[0]
+  if (!username) return json(401, { error: 'verification_failed' })
+
+  // Find the Stripe customer behind this user's subscription (any status, so a
+  // lapsed/cancelled one can still be managed).
+  const stripe = stripeClient(env)
+  const found = await stripe.subscriptions.search({
+    query: `metadata['tidework_username']:'${username.replace(/'/g, '')}'`,
+    limit: 1,
+  })
+  const customer = found.data[0]?.customer
+  if (!customer) return json(404, { error: 'no_subscription' })
+  const customerId = typeof customer === 'string' ? customer : customer.id
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: env.APP_URL,
+  })
+  return json(200, { url: session.url })
+}
+
 async function webhook(env: Env, req: Request): Promise<Response> {
   const stripe = stripeClient(env)
   const sig = req.headers.get('stripe-signature')
@@ -308,6 +373,9 @@ export default {
       if (req.method === 'GET' && url.pathname === '/subscribe') return await subscribe(env, url)
       if (req.method === 'GET' && url.pathname === '/success') return await success(env, url)
       if (req.method === 'GET' && url.pathname === '/status') return await status(env, url)
+      if (req.method === 'OPTIONS' && url.pathname === '/portal')
+        return new Response(null, { status: 204, headers: corsHeaders(env) })
+      if (req.method === 'POST' && url.pathname === '/portal') return await portal(env, req)
       if (req.method === 'POST' && url.pathname === '/webhook') return await webhook(env, req)
       // Manually triggerable sweep for operations/validation — guarded by the
       // billing client secret.
