@@ -47,7 +47,19 @@ pub enum FilterOperator {
     Contains,
     NotContains,
     GreaterThan,
+    GreaterThanOrEqual,
     LessThan,
+    LessThanOrEqual,
+    /// Cell equals one of the values in the (array) filter value — select "is any of".
+    IsAnyOf,
+    /// Cell array shares at least one value with the (array) filter value — multiselect.
+    HasAnyOf,
+    /// Cell array contains every value in the (array) filter value — multiselect.
+    HasAllOf,
+    /// Cell array shares no value with the (array) filter value — multiselect.
+    HasNoneOf,
+    /// Date cell equals the current date at evaluation time (client-side).
+    IsToday,
     IsEmpty,
     IsNotEmpty,
 }
@@ -605,7 +617,14 @@ mod tests {
             FilterOperator::Contains,
             FilterOperator::NotContains,
             FilterOperator::GreaterThan,
+            FilterOperator::GreaterThanOrEqual,
             FilterOperator::LessThan,
+            FilterOperator::LessThanOrEqual,
+            FilterOperator::IsAnyOf,
+            FilterOperator::HasAnyOf,
+            FilterOperator::HasAllOf,
+            FilterOperator::HasNoneOf,
+            FilterOperator::IsToday,
             FilterOperator::IsEmpty,
             FilterOperator::IsNotEmpty,
         ];
