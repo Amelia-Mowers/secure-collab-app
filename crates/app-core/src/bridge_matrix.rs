@@ -349,6 +349,17 @@ impl MatrixSession {
             .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
+    /// Reset Secure Backup to a fresh **random recovery key** (Base58), rotating
+    /// the secret-storage key. For a signed-in, recovered device that wants a
+    /// brand-new typed recovery key (lost the old one, or rotating). Returns the
+    /// new key; the previous recovery key / passphrase / passkey stops working.
+    #[wasm_bindgen(js_name = resetRecovery)]
+    pub async fn reset_recovery(&self) -> Result<String, JsValue> {
+        tables_over_matrix::reset_recovery(&self.client)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     /// Restore secrets from Secure Backup so this (returning) device can decrypt
     /// history sent before it existed. `recovery_key` may be a Base58 recovery
     /// key **or a passphrase** (e.g. a passkey-PRF-derived secret) — the SDK

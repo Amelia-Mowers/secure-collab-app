@@ -192,6 +192,11 @@ interface AuthState {
    *  re-auth, and nothing is retained between reveals. Passkey-custody accounts
    *  only; the value is exactly what `recoverWithKey` / the CLI accept. */
   revealRecoveryKey: () => Promise<string>
+  /** Account view (d00dda45): rotate Secure Backup to a fresh random recovery
+   *  key and return it. DESTRUCTIVE — the previous recovery key (and any
+   *  passkey) stops working. For a signed-in recovery-key account that lost or
+   *  wants to rotate its key. */
+  regenerateRecoveryKey: () => Promise<string>
 
   /** An in-progress device verification, or null. Drives the verify screen's
    *  emoji-compare step and the incoming-request prompt. */
@@ -683,6 +688,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *  it ports the account to another device or the CLI. (issue d00dda45) */
   const revealRecoveryKey = useCallback(async (): Promise<string> => {
     return await unlockPasskeyPrf()
+  }, [])
+
+  /** Account view: rotate Secure Backup to a fresh random recovery key (the
+   *  SDK's `reset_key` with no passphrase) and return it. Destructive — the old
+   *  recovery key / passkey stops working, and the new key is the only way in.
+   *  The current session keeps running; a v2 (at-rest) account's local cache is
+   *  keyed by the OLD secret, so its next cold start needs a fresh sign-in with
+   *  the new key (recoverable via the gate's sign-out). (issue d00dda45) */
+  const regenerateRecoveryKey = useCallback(async (): Promise<string> => {
+    const ms = matrixSessionRef.current
+    if (!ms) throw new Error('Not signed in')
+    return await ms.resetRecovery()
   }, [])
 
   /** `offer-passkey` prompt: a legacy account (just unlocked with its master
@@ -1520,6 +1537,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     submitUnlockKey: unlockAndRestore,
     migrateToPasskey,
     revealRecoveryKey,
+    regenerateRecoveryKey,
     verification,
     startVerification,
     acceptIncomingVerification,
