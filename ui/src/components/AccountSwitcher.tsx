@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import type { AccountSession } from '@/hooks/useAuth'
+import { RecoveryKeyModal } from './RecoveryKeyModal'
 import './AccountSwitcher.css'
 
 interface AccountSwitcherProps {
@@ -28,6 +29,7 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [switching, setSwitching] = useState(false)
+  const [showRecoveryKey, setShowRecoveryKey] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Close on outside click
@@ -172,6 +174,19 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
           <div className="account-switcher__divider" />
           <button
             className="account-switcher__add"
+            onClick={() => {
+              setOpen(false)
+              setShowRecoveryKey(true)
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <circle cx="4.5" cy="4.5" r="2.5" />
+              <path d="M6.3 6.3 L10.5 10.5 M9 9 L10 8" />
+            </svg>
+            Recovery key
+          </button>
+          <button
+            className="account-switcher__add"
             onClick={handleAddAccount}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -182,6 +197,8 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
           </button>
         </div>
       )}
+
+      {showRecoveryKey && <RecoveryKeyModal onClose={() => setShowRecoveryKey(false)} />}
     </div>
   )
 }
