@@ -360,6 +360,17 @@ impl MatrixSession {
             .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
+    /// Mint a Matrix OpenID token (JSON `{ access_token, matrix_server_name }`)
+    /// proving the user's identity to a third party (the billing Worker) without
+    /// exposing the access token. Account-level, so it works before E2E unlock —
+    /// the billing screen must be reachable from the locked gate (row_1782751521723).
+    #[wasm_bindgen(js_name = requestOpenIdToken)]
+    pub async fn request_openid_token(&self) -> Result<String, JsValue> {
+        tables_over_matrix::request_openid_token(&self.client)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     /// Restore secrets from Secure Backup so this (returning) device can decrypt
     /// history sent before it existed. `recovery_key` may be a Base58 recovery
     /// key **or a passphrase** (e.g. a passkey-PRF-derived secret) — the SDK

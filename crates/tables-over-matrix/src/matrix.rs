@@ -114,6 +114,29 @@ mod matrix_impl {
             .map_err(|e| anyhow::anyhow!("Failed to reset recovery key: {e}"))
     }
 
+    /// Mint a Matrix OpenID token proving the signed-in user's identity to a
+    /// third party (e.g. the billing Worker) WITHOUT exposing the access token.
+    /// The verifier checks it against the homeserver's federation openid
+    /// userinfo endpoint (`GET /_matrix/federation/v1/openid/userinfo`). Account-
+    /// level, so it works before E2E unlock. Returns JSON
+    /// `{ access_token, matrix_server_name }`.
+    pub async fn request_openid_token(client: &Client) -> Result<String> {
+        use matrix_sdk::ruma::api::client::account::request_openid_token::v3::Request;
+        let user_id = client
+            .user_id()
+            .ok_or_else(|| anyhow::anyhow!("Not signed in"))?
+            .to_owned();
+        let resp = client
+            .send(Request::new(user_id))
+            .await
+            .map_err(|e| anyhow::anyhow!("OpenID token request failed: {e}"))?;
+        Ok(serde_json::json!({
+            "access_token": resp.access_token,
+            "matrix_server_name": resp.matrix_server_name.as_str(),
+        })
+        .to_string())
+    }
+
     /// One enable attempt, optionally keyed by a passphrase. The builder chain is
     /// kept inline (not bound to a `let`) so the intermediate `Encryption` /
     /// `Recovery` temporaries it borrows live across the `.await`.
