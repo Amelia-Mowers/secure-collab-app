@@ -893,40 +893,6 @@ impl MatrixSession {
 
     // ── Device verification (ADR 0001 Phase D-3) ────────────────────────
 
-    /// Start verifying THIS device against another of the user's signed-in
-    /// devices (the new device's "verify with another device"). Sends an SAS
-    /// verification request to the user's other devices and returns a handle to
-    /// drive the emoji flow. Errors if the account has no cross-signing identity
-    /// yet (the user should use their master key instead).
-    #[wasm_bindgen(js_name = requestSelfVerification)]
-    pub async fn request_self_verification(&self) -> Result<DeviceVerification, JsValue> {
-        let user_id = self
-            .client
-            .user_id()
-            .ok_or_else(|| JsValue::from_str("Not logged in"))?
-            .to_owned();
-        let identity = self
-            .client
-            .encryption()
-            .get_user_identity(&user_id)
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Identity lookup failed: {e}")))?
-            .ok_or_else(|| {
-                JsValue::from_str("No cross-signing identity yet — use your master key instead")
-            })?;
-        let request = identity
-            .request_verification()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Verification request failed: {e}")))?;
-        Ok(DeviceVerification {
-            client: self.client.clone(),
-            user_id,
-            flow_id: request.flow_id().to_owned(),
-            we_started: true,
-            sas: Rc::new(RefCell::new(None)),
-        })
-    }
-
     /// Build a handle for an INCOMING verification request (receiver side),
     /// identified by its flow id (surfaced by `startVerificationListener`).
     /// Returns null if no such in-flight request exists.
@@ -967,19 +933,6 @@ impl MatrixSession {
     #[wasm_bindgen(js_name = pendingVerificationFlow)]
     pub fn pending_verification_flow(&self) -> Option<String> {
         PENDING_VERIFICATION.with(|p| p.borrow_mut().take())
-    }
-
-    /// A single short-timeout sync, for driving an interactive flow (e.g. the
-    /// verify screen) on a device that has no continuous sync running yet.
-    /// Bounded so it returns promptly instead of long-polling for ~30s.
-    #[wasm_bindgen(js_name = pumpSync)]
-    pub async fn pump_sync(&self) -> Result<(), JsValue> {
-        let settings = SyncSettings::default().timeout(Duration::from_millis(500));
-        self.client
-            .sync_once(settings)
-            .await
-            .map_err(|e| JsValue::from_str(&format!("Sync failed: {e}")))?;
-        Ok(())
     }
 }
 

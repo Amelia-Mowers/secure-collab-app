@@ -198,12 +198,9 @@ interface AuthState {
    *  wants to rotate its key. */
   regenerateRecoveryKey: () => Promise<string>
 
-  /** An in-progress device verification, or null. Drives the verify screen's
-   *  emoji-compare step and the incoming-request prompt. */
+  /** An in-progress (incoming) device verification, or null. Drives the verify
+   *  screen's incoming-request prompt and emoji-compare step. */
   verification: VerificationState | null
-  /** New device: ask to verify this device against another signed-in one
-   *  (starts the SAS flow). */
-  startVerification: () => Promise<void>
   /** Existing device: accept an incoming verification request and begin the
    *  emoji comparison. */
   acceptIncomingVerification: () => Promise<void>
@@ -730,15 +727,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRecoveryPrompt(null)
   }, [])
 
-  // ── Device verification (SAS) driver ───────────────────────────────────────
+  // ── Device verification driver (incoming only) ──────────────────────────────
   //
-  // Drives a DeviceVerification handle to completion by repeatedly advancing it
-  // (one protocol step) and mirroring its state into React. A `self` flow (this
-  // new device asked to verify) pumps its own bounded sync, since no continuous
-  // sync runs on the gated verify screen; an `incoming` flow relies on the sync
-  // already running in the app. On `done`, the device is trusted and gets its
-  // keys, so we clear the gate and re-sync. (ADR 0001 Phase D-3.)
-  const runVerificationLoop = useCallback((handle: any, role: 'self' | 'incoming') => {
+  // Drives an INCOMING DeviceVerification handle (another of the user's devices
+  // asked to verify this one) to completion by repeatedly advancing it and
+  // mirroring its state into React. It relies on the sync already running in the
+  // app. On `done`, the device is trusted and gets its keys, so we clear the gate
+  // and re-sync. The self-initiated SAS flow was removed (issue 73d01ae2); the
+  // between-device replacement is reveal/regenerate recovery key. (ADR 0001 D-3.)
+  const runVerificationLoop = useCallback((handle: any) => {
     verificationStopRef.current?.()
     let stopped = false
     verificationStopRef.current = () => {
@@ -748,13 +745,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const tick = async () => {
       if (stopped) return
       try {
-        if (role === 'self') {
-          try {
-            await matrixSessionRef.current?.pumpSync()
-          } catch {
-            /* a missed sync just means another iteration */
-          }
-        }
         const status: string = await handle.advance()
         let emoji: SasEmoji[] = []
         try {
@@ -762,7 +752,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
           /* emoji not ready */
         }
-        setVerification({ role, status: status as VerificationState['status'], emoji })
+        setVerification({ role: 'incoming', status: status as VerificationState['status'], emoji })
 
         if (status === 'done') {
           stopped = true
@@ -795,22 +785,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tick()
   }, [])
 
-  const startVerification = useCallback(async () => {
-    const ms = matrixSessionRef.current
-    if (!ms || typeof ms.requestSelfVerification !== 'function') {
-      throw new Error('Verification is not available')
-    }
-    const handle = await ms.requestSelfVerification()
-    verificationRef.current = handle
-    setVerification({ role: 'self', status: 'pending', emoji: [] })
-    runVerificationLoop(handle, 'self')
-  }, [runVerificationLoop])
-
   const acceptIncomingVerification = useCallback(async () => {
     const handle = verificationRef.current
     if (!handle) return
     await handle.accept()
-    runVerificationLoop(handle, 'incoming')
+    runVerificationLoop(handle)
   }, [runVerificationLoop])
 
   const confirmVerification = useCallback(async () => {
@@ -1539,7 +1518,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     revealRecoveryKey,
     regenerateRecoveryKey,
     verification,
-    startVerification,
     acceptIncomingVerification,
     confirmVerification,
     cancelVerification,
