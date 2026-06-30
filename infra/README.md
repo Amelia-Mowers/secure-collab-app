@@ -6,11 +6,12 @@ Postgres**, behind host nginx with certbot TLS. The app + demo stay on
 CDN/static hosting; the billing Worker (phase D) lives on Cloudflare.
 
 ```
-                   ┌─ /sync,/events,/messages,… ─→ synapse-sync1/2 :8081/2 (reads)
+                   ┌─ /sync,/events,/messages,… ─→ synapse-sync1/2  (reads / collab)
 matrix.tidework.io ─ nginx:443 ┤
-                   └─ everything else ──────────→ synapse :8008  (client+fed, writes)
-auth.tidework.io   ─ nginx:443 ─────────────────→ mas     :8090  (OIDC issuer/pages)
-                          synapse ↔ workers replicate via redis (compose-internal)
+                   └─ everything else ──────────→ synapse  (main: client + federation)
+auth.tidework.io   ─ nginx:443 ─────────────────→ mas      (OIDC issuer / pages)
+                        main ── events stream ──→ synapse-persister1  (write persistence)
+                        all processes ↔ replicate via redis (compose-internal)
                                   └──→ DO managed Postgres (synapse, mas DBs)
 ```
 
@@ -22,31 +23,78 @@ playbook earns its complexity at fleet scale, which this isn't yet.
 
 ## Scaling: Synapse workers
 
-The load test (`ui/e2e/LOADTEST.md`) found the homeserver is single-process
-CPU-bound — the sync **fan-out** (every write delivered to all room members'
-`/sync`) dominates collaborative-editing latency. The fix is Synapse workers:
+The load test (`ui/e2e/LOADTEST.md`) found the monolith is single-process and
+single-threaded — capped at ~1.2 of 2 cores, leaving the rest idle. Synapse
+workers shard work off `main` along two axes:
 
-- **Redis** is the replication backbone (compose-internal, no host port).
-- **`synapse-sync1` / `synapse-sync2`** are `generic_worker`s that serve the
-  read/sync endpoints; nginx routes those to them (sticky per access token),
-  everything else to the main process. Event persistence + stream writers stay
-  on `main` (single-writer) — only reads are sharded.
-- Config: `synapse/workers/*.yaml` (+ `log.config`), the `redis`/`instance_map`
-  /replication-listener block in `synapse/homeserver.yaml.tmpl`, and the
-  `upstream`/`location` routing in `nginx/matrix.conf`.
+- **Reads / collab fan-out** → **`synapse-sync1` / `synapse-sync2`**
+  (`generic_worker`s). nginx routes `/sync`, `/events`, `/messages`, … to them
+  (sticky per access token); everything else goes to `main`. *Measured:* routing
+  `/sync` to the workers cut 25-editor collab p95 propagation 6.0s → 1.6s on the
+  2-vCPU box (combined Synapse CPU 120% → 164–188%) — they use the idle core.
+- **Writes** → **`synapse-persister1`**, an event-persister stream writer that
+  owns the `events` stream (`stream_writers.events`). Lifts event persistence
+  off `main`. One *room* is still single-writer (event ordering), but *aggregate*
+  writes shard across persisters by room.
 
-**Workers need spare cores.** On a 2-vCPU box (Synapse already ~1.2 cores) the
-processes just contend — resize to ≥4 vCPU to get the benefit. Add more
-`synapse-syncN` workers (config + compose service + an nginx `upstream` entry)
-as cores allow; lifting the *write* ceiling additionally needs a dedicated
-event-persister stream-writer worker.
+Redis is the replication backbone (compose-internal). Config: `synapse/workers/`
+`*.yaml` (+ `log.config`), the `redis`/`instance_map`/`stream_writers` block in
+`synapse/homeserver.yaml.tmpl`, and the `upstream`/`location` routing in
+`nginx/matrix.conf`.
 
-**Workers also need Postgres connections.** Each Synapse process opens its own
-pool, all sharing the managed cluster's `max_connections` (the smallest tier is
-**25**). `homeserver.yaml.tmpl` keeps `cp_max` small so main + 2 workers + MAS
-fit; running more workers (or real load) needs a larger PG plan or a PgBouncer
-pooler in front of Postgres. This is a hard limit — check it before adding
-workers (`SHOW max_connections;` and `pg_stat_activity`).
+**Scaling ≈ a bigger machine + a config nudge.** All the roles are wired now, so
+growth is: resize the droplet to more vCPU, then add `synapse-syncN` /
+`synapse-persisterN` copies — each is a `workers/*.yaml`, a compose service, and
+one `instance_map`/`stream_writers` or nginx `upstream` line — to put the new
+cores to work. On 2 vCPU the extra processes just contend; the win needs cores.
+
+**Postgres scales separately.** Each Synapse process opens its own pool, all
+sharing the managed cluster's `max_connections` (smallest tier = **25**).
+`homeserver.yaml.tmpl` keeps `cp_max` small so main + 2 sync + 1 persister + MAS
+fit; more workers or real load needs a bigger PG plan or a PgBouncer pooler — a
+hard limit to check first (`SHOW max_connections;`, `pg_stat_activity`).
+
+### Scale-up runbook
+
+When the homeserver needs more capacity, do these **in order**. The worker
+*roles* are already wired (above), so scaling is resize + config nudge, not
+surgery.
+
+1. **Resize the droplet** (DO console / `doctl`): power off → resize **CPU/RAM
+   only** (reversible) → power on (~1–2 min downtime). The prerequisite — on
+   2 vCPU the worker processes just contend; they need cores. Rule of thumb:
+   ~1 core per active Synapse process (main + each sync/persister worker).
+
+2. **Bump the Postgres plan _before_ adding workers.** The managed cluster's
+   `max_connections` (smallest tier = **25**) is the binding limit on worker
+   count, *not* cores — every Synapse process opens a `cp_max` pool, all sharing
+   it with MAS. Larger DO PG tiers raise the cap. Check head-room:
+   `SHOW max_connections;` and
+   `SELECT datname,count(*) FROM pg_stat_activity GROUP BY 1;`.
+
+3. **Raise the pool sizes** once PG has room: `cp_min`/`cp_max` in
+   `synapse/homeserver.yaml.tmpl` (now 1/2 — a validation-tier floor) and
+   `max_connections` in `mas/config.yaml.tmpl` (now 5). Keep
+   `Σ(Synapse cp_max) + MAS max_connections + ~5 admin/overhead ≤ max_connections`.
+
+4. **Add workers to use the new cores:**
+   - More **reads/collab** → copy `synapse-sync2` → `sync3`: a
+     `workers/syncN.yaml` (fresh port), a compose service publishing it, and a
+     `server 127.0.0.1:<port>;` line in nginx's `synapse_sync` upstream.
+   - More **write** throughput → copy `persister1` → `persister2`: a
+     `workers/persisterN.yaml` (fresh replication port), a compose service, an
+     `instance_map` entry, and add it to `stream_writers.events` (events shard
+     across the list by room).
+   - Other hot streams (typing, receipts, to_device, account_data, presence) →
+     move each to its own stream-writer worker the same way.
+
+5. **Deploy + verify:** `infra/deploy.ps1`, then *eyeball* `docker compose ps`
+   — every container healthy, new workers connected to redis + replicating,
+   connections fit (`pg_stat_activity`). Re-run `ui/e2e/loadtest-collab-nginx.sh`
+   for the before/after.
+
+> Deploy gotcha: `deploy.ps1` prints "DEPLOYED" even if `remote-setup.sh` aborts
+> (e.g. PG out of connection slots) — always check `docker compose ps` after.
 
 ## Deploying
 

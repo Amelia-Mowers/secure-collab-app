@@ -1,0 +1,17 @@
+# Event-persister stream writer: owns persistence for the `events` stream — the
+# WRITE path. Lifts event persistence off the main process. Scale writes by
+# adding persister2..N to stream_writers.events + instance_map (events shard
+# across them by room — roughly one machine's worth of cores per persister).
+# Pure stream writer: no client listener; other processes reach it via its
+# replication listener (instance_map) over the compose network.
+worker_app: synapse.app.generic_worker
+worker_name: persister1
+
+worker_listeners:
+  - type: http
+    port: 9094
+    bind_addresses: ["0.0.0.0"] # compose-internal; never published to the host
+    resources:
+      - names: [replication]
+
+worker_log_config: /data/workers/log.config
