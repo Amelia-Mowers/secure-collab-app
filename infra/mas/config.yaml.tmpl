@@ -34,8 +34,13 @@ http:
 
 # verify-full: encrypt + authenticate the server against the DO cluster CA
 # (db-ca.crt mounted at /config). sqlx parses sslrootcert from the URL.
+# max_connections capped so MAS leaves room in the shared 25-connection managed
+# Postgres budget for Synapse's 4 worker processes (see synapse/homeserver.yaml
+# .tmpl). Raise alongside the PG plan when scaling.
 database:
   uri: "postgresql://${PG_USER}:${PG_PASSWORD}@${PG_HOST}:${PG_PORT}/mas?sslmode=verify-full&sslrootcert=/config/db-ca.crt"
+  max_connections: 5
+  min_connections: 1
 
 matrix:
   homeserver: "tidework.io"

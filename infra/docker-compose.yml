@@ -84,3 +84,25 @@ services:
     depends_on:
       - synapse
       - redis
+
+  # Event-persister stream writer — owns the `events` (write) stream, lifting
+  # event persistence off main. Replication listener only (9094, compose-
+  # internal); no host port — clients reach it via main delegating over the
+  # replication API. This is the write-scaling lever: add synapse-persister2…N
+  # (each a copy with its own port + workers/persisterN.yaml) to shard events.
+  synapse-persister1:
+    image: matrixdotorg/synapse:v1.148.0
+    restart: unless-stopped
+    user: "991:991"
+    entrypoint: ["python", "-m", "synapse.app.generic_worker"]
+    command: ["--config-path", "/data/homeserver.yaml", "--config-path", "/data/workers/persister1.yaml"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fSs http://localhost:9094/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+    volumes:
+      - /srv/tidework/synapse:/data
+    depends_on:
+      - synapse
+      - redis

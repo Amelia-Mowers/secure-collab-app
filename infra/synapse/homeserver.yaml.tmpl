@@ -33,11 +33,16 @@ listeners:
     resources:
       - names: [replication]
 
-# Worker support (ADR 0002 amendment). Generic "sync" workers offload the
-# read/sync fan-out — the cost that dominates collaborative-editing propagation
-# latency. Redis is the replication backbone; instance_map points workers at
-# the main process's replication listener. Event persistence and all stream
-# writers stay on main (single-writer); only reads are sharded across workers.
+# Worker support (ADR 0002 amendment). Redis is the replication backbone. Two
+# axes are sharded off the main process:
+#   - READS:  generic "sync" workers serve /sync etc. (the collab fan-out).
+#   - WRITES: an event-persister stream writer owns the `events` stream.
+# instance_map lists every process that owns a stream (main + each writer) by
+# its replication listener; stream_writers assigns streams to them. Scale by
+# adding more sync workers and/or event persisters (events shard across the
+# list) — roughly one machine's worth of cores per added worker. Other
+# low-volume streams (typing, receipts, to_device, account_data, presence) stay
+# on main; split them the same way if they ever become hot.
 redis:
   enabled: true
   host: redis
@@ -47,6 +52,13 @@ instance_map:
   main:
     host: synapse
     port: 9093
+  persister1:
+    host: synapse-persister1
+    port: 9094
+
+stream_writers:
+  events:
+    - persister1
 
 # DO managed Postgres (tier-2 secrets). verify-full encrypts the link AND
 # authenticates the server against the cluster CA (db-ca.crt, shipped in the
@@ -62,11 +74,14 @@ database:
     sslmode: verify-full
     sslrootcert: /data/db-ca.crt
     # Pool sized for the SHARED managed-Postgres budget (max_connections=25):
-    # main + each sync worker open up to cp_max, alongside MAS + DO's own
-    # connections. Scaling for real load needs a bigger PG plan or PgBouncer in
-    # front of Postgres (see infra/README.md "Scaling").
-    cp_min: 2
-    cp_max: 4
+    # FOUR Synapse processes now (main + 2 sync workers + 1 event persister) each
+    # open up to cp_max, alongside MAS (capped at 5 in mas/config.yaml.tmpl) and
+    # DO's own connections. cp_max=2 → 8 Synapse + 5 MAS + ~3 admin ≈ 16 of 25.
+    # This is the validation ceiling: real load needs a bigger PG plan or a
+    # PgBouncer pooler (see infra/README.md "Scaling") — the droplet and PG scale
+    # independently, and the connection budget — not cores — caps worker count.
+    cp_min: 1
+    cp_max: 2
 
 # Auth is delegated to MAS (MSC3861) — Synapse does no registration or
 # password handling itself. Registration happens only through MAS, which is
