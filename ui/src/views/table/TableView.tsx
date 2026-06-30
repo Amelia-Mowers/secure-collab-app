@@ -794,9 +794,11 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           </div>
           <FilterBar columns={columnsMeta} conditions={conditions} onChange={setConditions} />
           <div className="table-filter-actions">
+            {/* Filters are ephemeral until saved: tweak freely, then either
+                commit to this view ("Save view") or fork a new one. */}
             {loadedView && (
-              <button className="ghost" onClick={saveChanges}>
-                Save changes to “{loadedView.name}”
+              <button className="ghost" onClick={saveChanges} title={`Update “${loadedView.name}”`}>
+                Save view
               </button>
             )}
             {!savingView ? (
@@ -807,7 +809,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                   setSavingView(true)
                 }}
               >
-                Save as view
+                {loadedView ? 'Save as separate view' : 'Save view'}
               </button>
             ) : (
               <span className="table-save-view">

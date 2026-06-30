@@ -156,8 +156,9 @@ test('core journey: table, typed cells, sort/filter, views, reload persistence',
     await expect(gridRow(page, 'Alpha task')).toBeVisible()
     await expect(gridRow(page, 'Beta task v2')).toBeHidden()
 
-    // Save as a view; the navigation lands on the (still-filtered) saved view.
-    await page.getByRole('button', { name: 'Save as view' }).click()
+    // Save it as a view; the navigation lands on the (still-filtered) saved view.
+    // On the raw table the create button is "Save view".
+    await page.getByRole('button', { name: 'Save view' }).click()
     await page.getByPlaceholder('View name').fill('High priority')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page).toHaveURL(/\/view\//, { timeout: 30_000 })
