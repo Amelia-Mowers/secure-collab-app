@@ -248,9 +248,13 @@ describe('TableView', () => {
       await waitFor(() => screen.getByText('Design homepage'))
       fireEvent.click(screen.getByText('Filter'))
       fireEvent.click(await screen.findByText('+ Add condition'))
-      // A condition row is created (lead label + Save-as-view affordance present).
+      // A condition row is created (lead label + save affordance present).
       expect(screen.getByText('Where')).toBeInTheDocument()
-      expect(screen.getByText('Save as view')).toBeInTheDocument()
+      // Raw table (no saved view open) → "Save view" creates one.
+      expect(screen.getByText('Save view')).toBeInTheDocument()
+      // Reset clears the ephemeral condition (raw table → no filters).
+      fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
+      expect(screen.queryByText('Where')).not.toBeInTheDocument()
     })
   })
 

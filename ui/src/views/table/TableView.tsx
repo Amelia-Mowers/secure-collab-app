@@ -77,6 +77,23 @@ function globalTextFilter(row: any, columnId: string, filterValue: string): bool
   return hay.toLowerCase().includes(String(filterValue).toLowerCase())
 }
 
+/** Map a view's persisted FilterConfig[] / SortConfig[] into the table's
+ *  ephemeral filter conditions + TanStack sorting state (the inverse of what
+ *  `buildViewPayload` writes). Shared by the load-view effect and Reset. */
+function mapViewFilters(cfg: any): { conditions: FilterCondition[]; sorting: SortingState } {
+  return {
+    conditions: (cfg?.filters ?? []).map((f: any) => ({
+      columnId: f.column_id,
+      operator: f.operator,
+      value: f.value ?? undefined,
+    })),
+    sorting: (cfg?.sort ?? []).map((s: any) => ({
+      id: s.column_id,
+      desc: s.direction === 'descending',
+    })),
+  }
+}
+
 /** A draggable, sortable column header with a ⋯ menu (edit / delete). A small
  *  drag distance is required to start a reorder (see the PointerSensor), so a
  *  plain click still toggles the TanStack sort; the ⋯ trigger sits at the right
@@ -352,17 +369,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     try {
       const cfg = JSON.parse(workspace.getView(viewId))
       setLoadedView({ id: viewId, name: cfg.name ?? '' })
-      setConditions(
-        (cfg.filters ?? []).map((f: any) => ({
-          columnId: f.column_id,
-          operator: f.operator,
-          value: f.value ?? undefined,
-        })),
-      )
-      setSorting(
-        (cfg.sort ?? []).map((s: any) => ({ id: s.column_id, desc: s.direction === 'descending' })),
-      )
-      if ((cfg.filters?.length ?? 0) > 0) setShowFilter(true)
+      const { conditions: c, sorting: s } = mapViewFilters(cfg)
+      setConditions(c)
+      setSorting(s)
+      if (c.length > 0) setShowFilter(true)
     } catch (err) {
       console.error('Failed to load view config:', err)
     }
@@ -752,6 +762,24 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     }
   }
 
+  /** Reset ephemeral filter edits back to the baseline: a saved view's persisted
+   *  filters + sort, or empty on a raw table. Also clears the text search. */
+  const resetFilters = () => {
+    setGlobalFilter('')
+    if (loadedView) {
+      try {
+        const { conditions: c, sorting: s } = mapViewFilters(JSON.parse(workspace.getView(loadedView.id)))
+        setConditions(c)
+        setSorting(s)
+        return
+      } catch (err) {
+        console.error('Failed to reset to the saved view:', err)
+      }
+    }
+    setConditions([])
+    setSorting([])
+  }
+
   const tableTitle = schema?.name || tableId
 
   return (
@@ -783,20 +811,20 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             {(globalFilter || conditions.length > 0) && (
               <button
                 className="ghost table-filter-clear"
-                onClick={() => {
-                  setGlobalFilter('')
-                  setConditions([])
-                }}
+                onClick={resetFilters}
+                title={loadedView ? 'Reset to this view’s saved filters' : 'Clear all filters'}
               >
-                Clear
+                Reset
               </button>
             )}
           </div>
           <FilterBar columns={columnsMeta} conditions={conditions} onChange={setConditions} />
           <div className="table-filter-actions">
+            {/* Filters are ephemeral until saved: tweak freely, then either
+                commit to this view ("Save view") or fork a new one. */}
             {loadedView && (
-              <button className="ghost" onClick={saveChanges}>
-                Save changes to “{loadedView.name}”
+              <button className="ghost" onClick={saveChanges} title={`Update “${loadedView.name}”`}>
+                Save view
               </button>
             )}
             {!savingView ? (
@@ -807,7 +835,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                   setSavingView(true)
                 }}
               >
-                Save as view
+                {loadedView ? 'Save as separate view' : 'Save view'}
               </button>
             ) : (
               <span className="table-save-view">
