@@ -147,6 +147,40 @@ test('core journey: table, typed cells, sort/filter, views, reload persistence',
     await expect(gridRow(page, 'Alpha task')).toBeVisible()
   })
 
+  await test.step('a per-column filter saves into a view and re-opens filtered from the sidebar', async () => {
+    // Filter to High-priority rows via a per-column "where" condition.
+    await page.getByRole('button', { name: 'Filter' }).click()
+    await page.getByRole('button', { name: /Add condition/ }).click()
+    await page.locator('.filter-condition__col').selectOption({ label: 'Priority' })
+    await page.locator('.filter-condition__value').selectOption('High')
+    await expect(gridRow(page, 'Alpha task')).toBeVisible()
+    await expect(gridRow(page, 'Beta task v2')).toBeHidden()
+
+    // Save as a view; the navigation lands on the (still-filtered) saved view.
+    await page.getByRole('button', { name: 'Save as view' }).click()
+    await page.getByPlaceholder('View name').fill('High priority')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(page).toHaveURL(/\/view\//, { timeout: 30_000 })
+    await expect(gridRow(page, 'Alpha task')).toBeVisible({ timeout: 30_000 })
+    await expect(gridRow(page, 'Beta task v2')).toBeHidden()
+
+    // Leave to the raw (unfiltered) table, then RE-OPEN the saved view from the
+    // sidebar: a table view must route to /view/:id (not the raw table) so its
+    // filter re-applies. This is the exact regression we hit.
+    await page
+      .locator('.sidebar__section', { hasText: 'Tables' })
+      .getByRole('button', { name: 'Tasks' })
+      .click()
+    await expect(gridRow(page, 'Beta task v2')).toBeVisible({ timeout: 30_000 })
+    await page
+      .locator('.sidebar__section', { hasText: 'Views' })
+      .getByText('High priority', { exact: true })
+      .click()
+    await expect(page).toHaveURL(/\/view\//, { timeout: 30_000 })
+    await expect(gridRow(page, 'Alpha task')).toBeVisible({ timeout: 30_000 })
+    await expect(gridRow(page, 'Beta task v2')).toBeHidden()
+  })
+
   await test.step('create a kanban view grouped by Priority', async () => {
     await page.getByRole('button', { name: 'New view' }).click()
     const dialog = page.getByRole('dialog')
