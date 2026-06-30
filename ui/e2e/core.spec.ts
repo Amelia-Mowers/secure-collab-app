@@ -148,8 +148,8 @@ test('core journey: table, typed cells, sort/filter, views, reload persistence',
   })
 
   await test.step('a per-column filter saves into a view and re-opens filtered from the sidebar', async () => {
-    // Filter to High-priority rows via a per-column "where" condition.
-    await page.getByRole('button', { name: 'Filter' }).click()
+    // The filter bar is already open from the previous step (Clear doesn't close
+    // it). Add a per-column "where" condition: Priority is High.
     await page.getByRole('button', { name: /Add condition/ }).click()
     await page.locator('.filter-condition__col').selectOption({ label: 'Priority' })
     await page.locator('.filter-condition__value').selectOption('High')
