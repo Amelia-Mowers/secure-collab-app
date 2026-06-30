@@ -233,12 +233,24 @@ describe('TableView', () => {
       renderTable(ws)
       await waitFor(() => screen.getByText('Design homepage'))
       fireEvent.click(screen.getByText('Filter'))
-      const input = await screen.findByPlaceholderText(/Filter rows/)
+      const input = await screen.findByPlaceholderText(/Search all columns/)
       fireEvent.change(input, { target: { value: 'CI/CD' } })
       await waitFor(() => {
         expect(screen.getByText('Set up CI/CD')).toBeInTheDocument()
         expect(screen.queryByText('Design homepage')).not.toBeInTheDocument()
       })
+    })
+
+    it('adds a per-column "where" condition from the filter bar', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      await waitFor(() => screen.getByText('Design homepage'))
+      fireEvent.click(screen.getByText('Filter'))
+      fireEvent.click(await screen.findByText('+ Add condition'))
+      // A condition row is created (lead label + Save-as-view affordance present).
+      expect(screen.getByText('Where')).toBeInTheDocument()
+      expect(screen.getByText('Save as view')).toBeInTheDocument()
     })
   })
 
