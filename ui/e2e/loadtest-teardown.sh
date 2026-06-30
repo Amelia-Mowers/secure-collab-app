@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Remove the loadtestN accounts created by loadtest-provision.sh. Run ON the
-# droplet AFTER load testing. N defaults to 100.
+# Remove the <PREFIX>N accounts created by loadtest-provision.sh. Run ON the
+# droplet AFTER load testing.  Usage: loadtest-teardown.sh [N] [PREFIX]
+# (N defaults to 100, PREFIX to "loadtest" — pass the prefix you provisioned).
 #
 #   - Best-effort: full deactivate+erase via the Synapse admin API (removes the
 #     user from all rooms and frees data). The admin token is read from the
@@ -9,6 +10,7 @@
 #     disables the account) even if the admin API path is unavailable.
 set -u
 N="${1:-100}"
+PREFIX="${2:-loadtest}"
 MAS=tidework-mas-1
 CFG=/config/config.yaml
 SYN_CFG=/srv/tidework/synapse/homeserver.yaml
@@ -20,7 +22,7 @@ mas() { local sub="$1"; shift; docker exec "$MAS" mas-cli manage "$sub" -c "$CFG
 
 deactivated=0; locked=0; fail=0
 for i in $(seq 1 "$N"); do
-  u="loadtest$i"
+  u="${PREFIX}$i"
   uid="@$u:tidework.io"
   if [ -n "$ADMIN_TOKEN" ]; then
     code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \

@@ -127,3 +127,40 @@ one event, so day-to-day headroom is larger than the raw numbers suggest.
 - Collab latencies partly reflect send-side saturation (server already pegged).
 - Rate limits were relaxed during the test and **restored** afterward; the
   `loadtestN` accounts were torn down.
+
+---
+
+## Update — Synapse workers, measured (2026-06-30, still 2 vCPU)
+
+Workers were built (redis + 2 generic sync workers, nginx routing reads to them
+— `infra/`, PR #116) and re-tested on the **same 2-vCPU box**. They **help even
+without a resize**, once `/sync` is actually routed to them:
+
+| Collaborative editing | Monolith | **Workers (via nginx)** |
+|---|---|---|
+| 25 in a room — propagation p95 | 6079 ms | **1642 ms** |
+| 25 — combined Synapse CPU | 120% (1.2 cores) | **164%** |
+| 50 in a room — throughput | 5.3/s | **14.1/s** |
+| 50 — propagation p95 | 10110 ms | **8541 ms** |
+| 50 — combined Synapse CPU | 120% | **188%** |
+
+(Workers runs were driven off-box, so they *carry* extra RTT and still won — the
+real gain is larger.)
+
+**Why a win on only 2 cores:** the monolith is **single-threaded** (one
+GIL-bound reactor), capped ~1.2 cores — ~0.8 core sat idle/unusable. The worker
+processes use that idle core, running the sync fan-out in parallel with main's
+writes (combined CPU 120% → 164–188%). **Writes still go to main, so the ~20/s
+write ceiling is unchanged** — workers help the read/sync/collab path only.
+
+**How to drive the workers** (`loadtest-collab-nginx.sh`): capacity mode never
+calls `/sync`, so only **collab** exercises workers, and it must go **through
+nginx** (`HOMESERVER=https://…`, not `:8008` — the `:8008` runner bypasses nginx
+so workers sit idle). DO-droplet **hairpin NAT** can't drive the concurrent
+collab setup on-box; drive from an off-box machine. Managed PG caps at **25
+connections**, so `cp_max` is shrunk to fit main + workers + MAS — a real worker
+fleet needs a bigger PG plan or PgBouncer.
+
+**Next:** resize to ≥4 vCPU (operator action in DO) to add more sync workers and
+scale further; a dedicated event-persister stream-writer would lift the *write*
+ceiling too.
