@@ -132,6 +132,12 @@ if [ ! -f "$SRV/synapse/tidework.io.signing.key" ]; then
   rm -rf "$TMP"
   echo "  generated synapse signing key"
 fi
+# Generic-worker configs (static, no secrets) — placed in the synapse data dir
+# (the worker containers mount /srv/tidework/synapse:/data). The chown below
+# covers them.
+mkdir -p "$SRV/synapse/workers"
+cp "$DEPLOY/synapse/workers/"* "$SRV/synapse/workers/"
+
 mkdir -p "$SRV/synapse/media_store"
 chown -R 991:991 "$SRV/synapse" # synapse container UID
 

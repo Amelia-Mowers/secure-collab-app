@@ -1,0 +1,14 @@
+# Second generic sync worker — see sync1.yaml. nginx load-balances /sync etc.
+# across sync1/sync2 sticky by access token.
+worker_app: synapse.app.generic_worker
+worker_name: sync2
+
+worker_listeners:
+  - type: http
+    port: 8082
+    bind_addresses: ["0.0.0.0"] # container-internal; host nginx publishes 127.0.0.1:8082
+    x_forwarded: true
+    resources:
+      - names: [client]
+
+worker_log_config: /data/workers/log.config

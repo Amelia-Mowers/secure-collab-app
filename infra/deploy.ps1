@@ -24,7 +24,7 @@ if (Test-Path "$here\secrets\upstream-oauth.sops.env") {
 }
 
 Write-Host "==> running remote setup"
-ssh -o BatchMode=yes $Target "sed -i 's/\r$//' /srv/tidework/deploy/remote-setup.sh /srv/tidework/deploy/healthcheck.sh /srv/tidework/deploy/*/*.tmpl /srv/tidework/deploy/nginx/*.conf /srv/tidework/deploy/systemd/* /srv/tidework/deploy/ssh/*.conf 2>/dev/null; bash /srv/tidework/deploy/remote-setup.sh"
+ssh -o BatchMode=yes $Target "sed -i 's/\r$//' /srv/tidework/deploy/remote-setup.sh /srv/tidework/deploy/healthcheck.sh /srv/tidework/deploy/*/*.tmpl /srv/tidework/deploy/synapse/workers/* /srv/tidework/deploy/nginx/*.conf /srv/tidework/deploy/systemd/* /srv/tidework/deploy/ssh/*.conf 2>/dev/null; bash /srv/tidework/deploy/remote-setup.sh"
 
 Write-Host "==> smoke checks"
 ssh -o BatchMode=yes $Target 'curl -fsS https://matrix.tidework.io/_matrix/client/versions >/dev/null && echo "  synapse: OK"'
