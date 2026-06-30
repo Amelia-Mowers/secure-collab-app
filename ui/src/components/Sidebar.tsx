@@ -216,9 +216,10 @@ function viewIcon(viewType: string) {
   return <TableIcon />
 }
 
-/** Build a navigation path for a view based on its type. */
+/** Build a navigation path for a view. All view types — including `table` —
+ *  route to `/view/:viewId`, so a saved table view's filters + sort actually
+ *  apply (a table view is no longer identical to the raw table). */
 export function viewPath(view: ViewInfo, workspaceId: string): string {
-  if (view.view_type === 'table') return `/workspace/${workspaceId}/table/${view.table_id}`
   return `/workspace/${workspaceId}/table/${view.table_id}/view/${view.id}`
 }
 

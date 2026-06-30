@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
-import { Sidebar } from './Sidebar'
+import { Sidebar, viewPath } from './Sidebar'
 import { AuthProvider } from '@/hooks/useAuth'
 import { MockWorkspace, makeKanbanWorkspace } from '@/test/mockWorkspace'
 
@@ -20,6 +20,20 @@ function renderSidebar(workspace: any, initialPath = '/') {
     </MemoryRouter>,
   )
 }
+
+describe('viewPath', () => {
+  // A table view must route to /view/:id (not the raw table) so its saved
+  // filters + sort apply — the "Open Issues opens the raw table" regression.
+  it('routes every view type, including table, to the view route', () => {
+    const base = { id: 'v1', name: 'Open Issues', table_id: 'issues' }
+    expect(viewPath({ ...base, view_type: 'table' }, 'ws')).toBe(
+      '/workspace/ws/table/issues/view/v1',
+    )
+    expect(viewPath({ ...base, view_type: 'kanban' }, 'ws')).toBe(
+      '/workspace/ws/table/issues/view/v1',
+    )
+  })
+})
 
 describe('Sidebar', () => {
   describe('empty workspace', () => {
