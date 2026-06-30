@@ -143,7 +143,7 @@ test('core journey: table, typed cells, sort/filter, views, reload persistence',
     await expect(page.locator('.table-filter-count')).toHaveText('1 row')
     await expect(gridRow(page, 'Beta task v2')).toBeVisible()
     await expect(gridRow(page, 'Alpha task')).toBeHidden()
-    await page.getByRole('button', { name: 'Clear' }).click()
+    await page.getByRole('button', { name: 'Reset' }).click()
     await expect(gridRow(page, 'Alpha task')).toBeVisible()
   })
 
@@ -179,6 +179,15 @@ test('core journey: table, typed cells, sort/filter, views, reload persistence',
       .click()
     await expect(page).toHaveURL(/\/view\//, { timeout: 30_000 })
     await expect(gridRow(page, 'Alpha task')).toBeVisible({ timeout: 30_000 })
+    await expect(gridRow(page, 'Beta task v2')).toBeHidden()
+
+    // An ephemeral edit (Low) doesn't touch the saved view; Reset restores its
+    // saved filter (High).
+    await page.locator('.filter-condition__value').selectOption('Low')
+    await expect(gridRow(page, 'Beta task v2')).toBeVisible()
+    await expect(gridRow(page, 'Alpha task')).toBeHidden()
+    await page.getByRole('button', { name: 'Reset' }).click()
+    await expect(gridRow(page, 'Alpha task')).toBeVisible()
     await expect(gridRow(page, 'Beta task v2')).toBeHidden()
   })
 

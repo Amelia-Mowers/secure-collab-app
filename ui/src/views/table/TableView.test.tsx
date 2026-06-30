@@ -252,6 +252,9 @@ describe('TableView', () => {
       expect(screen.getByText('Where')).toBeInTheDocument()
       // Raw table (no saved view open) → "Save view" creates one.
       expect(screen.getByText('Save view')).toBeInTheDocument()
+      // Reset clears the ephemeral condition (raw table → no filters).
+      fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
+      expect(screen.queryByText('Where')).not.toBeInTheDocument()
     })
   })
 
