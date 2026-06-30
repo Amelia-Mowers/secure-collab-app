@@ -22,6 +22,7 @@ services:
       SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
     depends_on:
       - mas
+      - redis
 
   mas:
     image: ghcr.io/element-hq/matrix-authentication-service:1.12.0
@@ -32,3 +33,54 @@ services:
       - "127.0.0.1:8091:8081"
     volumes:
       - /srv/tidework/mas:/config
+
+  # ── Workers (ADR 0002 amendment) ──────────────────────────────────────────
+  # Redis is the replication backbone; the generic "sync" workers offload the
+  # read/sync fan-out from the main process (the cost behind collab propagation
+  # latency). Both run the same image via the generic_worker module + their own
+  # config, sharing the synapse data dir (homeserver.yaml, signing key, the
+  # redis/instance_map settings). Sends/writes stay on the main process.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Internal only — no host port; reached over the compose network as redis:6379.
+
+  synapse-sync1:
+    image: matrixdotorg/synapse:v1.148.0
+    restart: unless-stopped
+    user: "991:991" # match the synapse data-dir owner; run the worker module directly
+    entrypoint: ["python", "-m", "synapse.app.generic_worker"]
+    command: ["--config-path", "/data/homeserver.yaml", "--config-path", "/data/workers/sync1.yaml"]
+    ports:
+      - "127.0.0.1:8081:8081"
+    # The image's built-in healthcheck probes :8008 (main only); point it at
+    # this worker's own listener so its status is accurate.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fSs http://localhost:8081/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+    volumes:
+      - /srv/tidework/synapse:/data
+    depends_on:
+      - synapse
+      - redis
+
+  synapse-sync2:
+    image: matrixdotorg/synapse:v1.148.0
+    restart: unless-stopped
+    user: "991:991"
+    entrypoint: ["python", "-m", "synapse.app.generic_worker"]
+    command: ["--config-path", "/data/homeserver.yaml", "--config-path", "/data/workers/sync2.yaml"]
+    ports:
+      - "127.0.0.1:8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fSs http://localhost:8082/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+    volumes:
+      - /srv/tidework/synapse:/data
+    depends_on:
+      - synapse
+      - redis

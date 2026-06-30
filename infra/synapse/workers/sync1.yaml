@@ -1,0 +1,18 @@
+# Generic worker handling read-heavy client endpoints (/sync, /events,
+# /messages, initialSync) — offloads the sync fan-out that dominates collab
+# propagation latency. Read-only: sends/writes stay on the main process.
+#
+# Shares the main homeserver.yaml (database, redis, instance_map) as the first
+# --config-path; this file only sets worker identity + its client listener.
+worker_app: synapse.app.generic_worker
+worker_name: sync1
+
+worker_listeners:
+  - type: http
+    port: 8081
+    bind_addresses: ["0.0.0.0"] # container-internal; host nginx publishes 127.0.0.1:8081
+    x_forwarded: true # host nginx terminates TLS + sets X-Forwarded-For
+    resources:
+      - names: [client]
+
+worker_log_config: /data/workers/log.config

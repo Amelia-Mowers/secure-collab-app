@@ -24,6 +24,29 @@ listeners:
     resources:
       - names: [client, federation]
         compress: false
+  # Replication listener for workers — compose-internal only, never published
+  # to the host. Workers reach it over the compose network at synapse:9093.
+  - port: 9093
+    type: http
+    tls: false
+    bind_addresses: ["0.0.0.0"]
+    resources:
+      - names: [replication]
+
+# Worker support (ADR 0002 amendment). Generic "sync" workers offload the
+# read/sync fan-out — the cost that dominates collaborative-editing propagation
+# latency. Redis is the replication backbone; instance_map points workers at
+# the main process's replication listener. Event persistence and all stream
+# writers stay on main (single-writer); only reads are sharded across workers.
+redis:
+  enabled: true
+  host: redis
+  port: 6379
+
+instance_map:
+  main:
+    host: synapse
+    port: 9093
 
 # DO managed Postgres (tier-2 secrets). verify-full encrypts the link AND
 # authenticates the server against the cluster CA (db-ca.crt, shipped in the
@@ -38,8 +61,12 @@ database:
     port: ${PG_PORT}
     sslmode: verify-full
     sslrootcert: /data/db-ca.crt
-    cp_min: 5
-    cp_max: 10
+    # Pool sized for the SHARED managed-Postgres budget (max_connections=25):
+    # main + each sync worker open up to cp_max, alongside MAS + DO's own
+    # connections. Scaling for real load needs a bigger PG plan or PgBouncer in
+    # front of Postgres (see infra/README.md "Scaling").
+    cp_min: 2
+    cp_max: 4
 
 # Auth is delegated to MAS (MSC3861) — Synapse does no registration or
 # password handling itself. Registration happens only through MAS, which is
