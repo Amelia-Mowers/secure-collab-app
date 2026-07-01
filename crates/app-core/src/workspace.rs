@@ -418,7 +418,26 @@ impl Workspace {
         let as_of = crate::history::state_as_of(events, target_server_ts);
 
         let base_ts = self.next_timestamp();
-        let restores = crate::history::rollback_updates(&current, &as_of, scope, base_ts);
+        // Scope predicate: the target table's data cells, PLUS its `_schema` rows
+        // (row_id "<table>.<col>") and its `_tables` registry row — so a rollback
+        // also reverts column/table deletions, bringing back data that a
+        // `deleted_at` cutoff was hiding ("stale before the reversion, live
+        // after"). A whole-workspace rollback (scope None) reverts everything
+        // except the revert log itself (never rewind the history of reverts).
+        let restores = crate::history::rollback_updates(
+            &current,
+            &as_of,
+            |id: &CellId| match scope {
+                Some(t) => {
+                    id.table_id == t
+                        || (id.table_id == crate::schema::SCHEMA_TABLE_ID
+                            && id.row_id.starts_with(&format!("{t}.")))
+                        || (id.table_id == crate::schema::TABLES_TABLE_ID && id.row_id == t)
+                }
+                None => id.table_id != crate::history::HISTORY_TABLE_ID,
+            },
+            base_ts,
+        );
         if restores.is_empty() {
             return Vec::new();
         }
@@ -681,6 +700,88 @@ mod tests {
     use crate::schema::{ColumnDefinition, ColumnType};
     use crate::views::ViewConfig;
     use serde_json::json;
+
+    /// Exotic rollback: data hidden by a column's `deleted_at` cutoff ("stale")
+    /// BEFORE the reversion becomes live AFTER — because a table rollback also
+    /// reverts the table's `_schema` rows, un-deleting the column and clearing
+    /// the cutoff. End-to-end through the materialized `get_table_rows`.
+    #[test]
+    fn build_rollback_undeletes_a_column_so_stale_data_returns() {
+        fn record(events: &mut Vec<CellUpdate>, updates: Vec<CellUpdate>, server_ts: u64) {
+            for u in updates {
+                events.push(u.with_server_timestamp(server_ts));
+            }
+        }
+
+        let mut ws = Workspace::new("test");
+        let mut events: Vec<CellUpdate> = Vec::new();
+
+        // Phase 1 (server_ts 100): table + `title` column + a data cell.
+        let created = ws
+            .create_table(
+                TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+                    "title",
+                    "Title",
+                    ColumnType::Text,
+                )),
+            )
+            .unwrap();
+        record(&mut events, created, 100);
+        let wrote = ws
+            .update_cell_with_bump("tasks", "r1", "title", json!("hello"))
+            .unwrap();
+        record(&mut events, wrote, 100);
+
+        let rows = ws.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("title"), Some(&json!("hello")));
+
+        // Phase 2 (server_ts 200): delete the column → it leaves the live schema
+        // and its `deleted_at` cutoff hides the data ("stale").
+        let deleted = ws.delete_column("tasks", "title").unwrap();
+        record(&mut events, deleted, 200);
+        assert!(
+            !ws.get_table_schema("tasks")
+                .unwrap()
+                .columns
+                .contains_key("title"),
+            "column is deleted (data stale) before the reversion"
+        );
+
+        // Roll the table back to a point BEFORE the deletion (server_ts 150).
+        let out = ws.build_rollback(
+            &events,
+            150,
+            Some("tasks"),
+            RevertRecord {
+                id: "rev-1".into(),
+                actor: "@a:b".into(),
+                target: 150,
+                scope: "tasks".into(),
+                label: None,
+            },
+        );
+        assert!(
+            !out.is_empty(),
+            "the un-delete must produce restoring updates"
+        );
+
+        // The column is live again AND the previously-stale data is back.
+        assert!(
+            ws.get_table_schema("tasks")
+                .unwrap()
+                .columns
+                .contains_key("title"),
+            "column un-deleted after the reversion"
+        );
+        let after = ws.get_table_rows("tasks").unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0].get("title"),
+            Some(&json!("hello")),
+            "data that was stale before the reversion is live after"
+        );
+    }
 
     #[test]
     fn test_workspace_creation() {

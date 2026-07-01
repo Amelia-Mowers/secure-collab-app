@@ -67,9 +67,14 @@ pub fn state_as_of(events: &[CellUpdate], target_server_ts: u64) -> HashMap<Cell
 }
 
 /// Produce the `cell.update`s that transform `current` into `as_of`, restricted
-/// to `scope` (a `table_id`, or `None` for the whole workspace). Each successive
-/// update is stamped `next_ts, next_ts + 1, …` (the caller passes a fresh HLC
-/// base so the restores LWW-win over the current values).
+/// to the cells for which `in_scope` returns true. Each successive update is
+/// stamped `next_ts, next_ts + 1, …` (the caller passes a fresh HLC base so the
+/// restores LWW-win over the current values).
+///
+/// Scope is a predicate (not just a `table_id`) so a table rollback can also
+/// pull in that table's `_schema`/`_tables` rows — reverting a column/table
+/// deletion so previously-hidden data (gone "stale" past a `deleted_at` cutoff)
+/// comes back **live**, not merely restored-but-still-hidden.
 ///
 /// A cell present now but absent at the target point is reverted to `Value::Null`
 /// (an addition being undone); a cell whose value already matches is skipped.
@@ -77,11 +82,9 @@ pub fn state_as_of(events: &[CellUpdate], target_server_ts: u64) -> HashMap<Cell
 pub fn rollback_updates(
     current: &HashMap<CellId, Cell>,
     as_of: &HashMap<CellId, Cell>,
-    scope: Option<&str>,
+    in_scope: impl Fn(&CellId) -> bool,
     next_ts: u64,
 ) -> Vec<CellUpdate> {
-    let in_scope = |id: &CellId| scope.map_or(true, |t| id.table_id == t);
-
     let mut ids: Vec<&CellId> = current
         .keys()
         .chain(as_of.keys())
@@ -274,7 +277,7 @@ mod tests {
         ];
         let current = state_as_of(&events, 999);
         let as_of = state_as_of(&events, 150); // r1=orig, r2 absent
-        let updates = rollback_updates(&current, &as_of, Some("t"), 1000);
+        let updates = rollback_updates(&current, &as_of, |id: &CellId| id.table_id == "t", 1000);
 
         // r1 restored to "orig"; r2 cleared to null.
         let by_cell: HashMap<(String, String), Value> = updates
@@ -297,7 +300,9 @@ mod tests {
         let current = state_as_of(&events, 999);
         let as_of = state_as_of(&events, 150);
         // Nothing changed between the point and now → no updates.
-        assert!(rollback_updates(&current, &as_of, Some("t"), 1000).is_empty());
+        assert!(
+            rollback_updates(&current, &as_of, |id: &CellId| id.table_id == "t", 1000).is_empty()
+        );
     }
 
     #[test]
@@ -312,9 +317,63 @@ mod tests {
             CellUpdate::new("t2", "r", "c", json!("y"), 2).to_cell(),
         );
         let as_of = HashMap::new(); // both absent at the point
-        let updates = rollback_updates(&current, &as_of, Some("t1"), 500);
+        let updates = rollback_updates(&current, &as_of, |id: &CellId| id.table_id == "t1", 500);
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].table_id, "t1");
+    }
+
+    #[test]
+    fn rollback_scope_can_include_schema_rows_to_undelete() {
+        // A column deleted AFTER the target point: current carries deleted=true +
+        // a deleted_at cutoff (which hides the data); at the target neither
+        // exists. A table rollback whose scope predicate covers the table's
+        // `_schema` rows must revert those markers so the (unchanged) data stops
+        // being hidden — "stale before the reversion, live after".
+        let mut current: HashMap<CellId, Cell> = HashMap::new();
+        current.insert(
+            CellId::new("_schema", "tasks.title", "deleted"),
+            CellUpdate::new("_schema", "tasks.title", "deleted", json!(true), 5).to_cell(),
+        );
+        current.insert(
+            CellId::new("_schema", "tasks.title", "deleted_at"),
+            CellUpdate::new("_schema", "tasks.title", "deleted_at", json!(2000), 5).to_cell(),
+        );
+        current.insert(
+            CellId::new("tasks", "r1", "title"),
+            CellUpdate::new("tasks", "r1", "title", json!("hello"), 1).to_cell(),
+        );
+
+        // At the point: no deletion markers, same data.
+        let mut as_of: HashMap<CellId, Cell> = HashMap::new();
+        as_of.insert(
+            CellId::new("tasks", "r1", "title"),
+            CellUpdate::new("tasks", "r1", "title", json!("hello"), 1).to_cell(),
+        );
+
+        let updates = rollback_updates(
+            &current,
+            &as_of,
+            |id: &CellId| {
+                id.table_id == "tasks"
+                    || (id.table_id == "_schema" && id.row_id.starts_with("tasks."))
+            },
+            1000,
+        );
+        let by: HashMap<(String, String), Value> = updates
+            .iter()
+            .map(|u| ((u.row_id.clone(), u.column_id.clone()), u.value.clone()))
+            .collect();
+        // Deletion markers cleared (→ null), so the cutoff no longer hides data.
+        assert_eq!(
+            by.get(&("tasks.title".into(), "deleted".into())),
+            Some(&json!(null))
+        );
+        assert_eq!(
+            by.get(&("tasks.title".into(), "deleted_at".into())),
+            Some(&json!(null))
+        );
+        // The data cell itself was unchanged across the deletion → not re-emitted.
+        assert!(!by.contains_key(&("r1".into(), "title".into())));
     }
 
     #[test]
@@ -328,7 +387,7 @@ mod tests {
         ];
         let current = state_as_of(&events, 999);
         let as_of = state_as_of(&events, 150);
-        let restore = rollback_updates(&current, &as_of, Some("t"), 3);
+        let restore = rollback_updates(&current, &as_of, |id: &CellId| id.table_id == "t", 3);
         assert_eq!(restore[0].value, json!("A"));
         // Simulate the restore landing on the timeline at server=300.
         events.push(restore[0].clone().with_server_timestamp(300));
@@ -338,7 +397,7 @@ mod tests {
         let current2 = state_as_of(&events, 999);
         assert_eq!(val_at(&current2, "r", "c"), Some(json!("A")));
         let as_of2 = state_as_of(&events, 250);
-        let restore2 = rollback_updates(&current2, &as_of2, Some("t"), 5);
+        let restore2 = rollback_updates(&current2, &as_of2, |id: &CellId| id.table_id == "t", 5);
         assert_eq!(restore2[0].value, json!("B"));
     }
 
