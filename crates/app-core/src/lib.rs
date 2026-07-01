@@ -39,6 +39,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[cfg(feature = "wasm")]
 pub mod bridge;
+pub mod history;
 pub mod schema;
 pub mod snapshot;
 pub mod views;
@@ -48,6 +49,7 @@ pub mod workspace;
 pub mod bridge_matrix;
 
 // Re-export main types
+pub use history::{HistoryManager, RevertRecord, HISTORY_TABLE_ID};
 pub use schema::{ColumnDefinition, ColumnType, SchemaManager, TableDefinition};
 pub use snapshot::{WorkspaceSnapshot, SNAPSHOT_VERSION};
 pub use views::{

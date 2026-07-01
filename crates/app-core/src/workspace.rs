@@ -1,10 +1,11 @@
 //! Workspace lifecycle and management.
 
+use crate::history::{HistoryManager, RevertRecord};
 use crate::schema::{SchemaManager, TableDefinition};
 use crate::views::{ViewConfig, ViewManager};
 use crate::Result;
 use std::collections::HashMap;
-use tables_over_matrix::{Cell, CellUpdate, CompactionManager, Table, ROW_DELETED_COLUMN};
+use tables_over_matrix::{Cell, CellId, CellUpdate, CompactionManager, Table, ROW_DELETED_COLUMN};
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::info;
 
@@ -47,6 +48,8 @@ pub struct Workspace {
     schema_manager: SchemaManager,
     /// View manager
     view_manager: ViewManager,
+    /// History manager for the `_history` system table (revert records)
+    history_manager: HistoryManager,
     /// Compaction helper for order-based bumping
     compaction_manager: CompactionManager,
     /// Hybrid logical clock: the highest timestamp seen or generated so far
@@ -68,6 +71,7 @@ impl Workspace {
             tables: HashMap::new(),
             schema_manager: SchemaManager::new(),
             view_manager: ViewManager::new(),
+            history_manager: HistoryManager::new(),
             compaction_manager: CompactionManager::new(),
             timestamp_counter: 0,
             #[cfg(feature = "matrix")]
@@ -382,7 +386,59 @@ impl Workspace {
         }
         cells.extend(self.schema_manager.export_cells());
         cells.extend(self.view_manager.export_cells());
+        cells.extend(self.history_manager.export_cells());
         cells
+    }
+
+    /// Roll a scope back to its state at `target_server_ts` (a Matrix
+    /// `origin_server_ts` point) using the already-fetched timeline `events`.
+    /// Emits the batched `cell.update`s that restore the differences (fresh HLC
+    /// timestamps → they LWW-win) and records the revert as a row in the
+    /// `_history` table (the user-facing "rollback message"). All returned
+    /// updates are applied locally already; the caller sends them over Matrix.
+    /// Returns empty (and records nothing) if the scope already matches the
+    /// target point — a revert to "now" is a no-op, not a history entry.
+    ///
+    /// `scope` is a `table_id`, or `None` for the whole workspace. `revert`
+    /// supplies the record's id/actor/scope/label — the caller mints the id.
+    pub fn build_rollback(
+        &mut self,
+        events: &[CellUpdate],
+        target_server_ts: u64,
+        scope: Option<&str>,
+        revert: RevertRecord,
+    ) -> Vec<CellUpdate> {
+        // Current materialized state is authoritative (it includes local writes
+        // that may not have echoed back through `events` yet).
+        let current: HashMap<CellId, Cell> = self
+            .export_cells()
+            .into_iter()
+            .map(|c| (c.id.clone(), c))
+            .collect();
+        let as_of = crate::history::state_as_of(events, target_server_ts);
+
+        let base_ts = self.next_timestamp();
+        let restores = crate::history::rollback_updates(&current, &as_of, scope, base_ts);
+        if restores.is_empty() {
+            return Vec::new();
+        }
+        // Apply restores locally (routes to the user tables and advances the HLC
+        // past them, so the revert-row timestamps below can't collide).
+        for update in &restores {
+            let _ = self.apply_update(update.clone());
+        }
+
+        let hist_ts = self.next_timestamp();
+        let history = self.history_manager.record_revert(&revert, hist_ts);
+
+        let mut all = restores;
+        all.extend(history);
+        all
+    }
+
+    /// All recorded reverts (rows in the `_history` table), for the history UI.
+    pub fn history_reverts(&self) -> Vec<RevertRecord> {
+        self.history_manager.list_reverts()
     }
 
     /// Rebuild workspace state from a snapshot's cells (replayed through
@@ -424,6 +480,8 @@ impl Workspace {
             self.schema_manager.apply_updates(vec![update]);
         } else if table_id == crate::schema::VIEWS_TABLE_ID {
             self.view_manager.apply_updates(vec![update]);
+        } else if table_id == crate::history::HISTORY_TABLE_ID {
+            self.history_manager.apply_updates(vec![update]);
         } else {
             // Unknown table — might be a user-data table we haven't seen a
             // _tables entry for yet (out-of-order replay). Create it lazily.
