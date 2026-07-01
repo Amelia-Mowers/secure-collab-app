@@ -1488,6 +1488,178 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// The change history for the History drawer: every real cell edit (order-
+    /// based compaction bumps are filtered out) plus every recorded revert, as a
+    /// JSON array sorted newest-first. Pass a `table_id` to scope it to one table
+    /// or `None` for the whole workspace. Edits are
+    /// `{kind:"edit", tableId, rowId, columnId, value, prevValue, sender,
+    /// serverTs}`; reverts are `{kind:"revert", id, actor, target, scope, label,
+    /// serverTs}`.
+    #[wasm_bindgen(js_name = getChangeLog)]
+    pub async fn get_change_log(&self, table_id: Option<String>) -> Result<String, JsValue> {
+        let fetched = self.fetch_cell_events().await?;
+
+        // Each revert is a row in the `_history` table; capture its newest
+        // server_ts so the drawer entry sorts among the edits correctly.
+        let mut revert_ts: HashMap<String, u64> = HashMap::new();
+        for (_, u) in &fetched {
+            if u.table_id == crate::history::HISTORY_TABLE_ID {
+                let ts = u.server_timestamp.unwrap_or(0);
+                let slot = revert_ts.entry(u.row_id.clone()).or_insert(0);
+                *slot = (*slot).max(ts);
+            }
+        }
+
+        // Edits: sort oldest-first, walk per cell to attach prevValue and drop
+        // no-op compaction bumps (value unchanged from the prior write).
+        let mut edits: Vec<&(String, CellUpdate)> = fetched
+            .iter()
+            .filter(|(_, u)| u.table_id != crate::history::HISTORY_TABLE_ID)
+            .filter(|(_, u)| table_id.as_deref().is_none_or(|t| u.table_id == t))
+            .collect();
+        edits.sort_by_key(|(_, u)| (u.server_timestamp.unwrap_or(0), u.timestamp));
+
+        let mut last: HashMap<(String, String, String), serde_json::Value> = HashMap::new();
+        let mut entries: Vec<serde_json::Value> = Vec::new();
+        for (sender, u) in edits {
+            let key = (u.table_id.clone(), u.row_id.clone(), u.column_id.clone());
+            let prev = last.get(&key).cloned();
+            let is_bump = prev.as_ref() == Some(&u.value);
+            if !is_bump {
+                entries.push(serde_json::json!({
+                    "kind": "edit",
+                    "tableId": u.table_id,
+                    "rowId": u.row_id,
+                    "columnId": u.column_id,
+                    "value": u.value,
+                    "prevValue": prev,
+                    "sender": sender,
+                    "serverTs": u.server_timestamp.unwrap_or(0),
+                }));
+            }
+            last.insert(key, u.value.clone());
+        }
+
+        // Reverts (the "rollback messages").
+        for rec in self.inner.borrow().history_reverts() {
+            let in_scope = table_id
+                .as_deref()
+                .is_none_or(|t| rec.scope == t || rec.scope == "*");
+            if !in_scope {
+                continue;
+            }
+            entries.push(serde_json::json!({
+                "kind": "revert",
+                "id": rec.id,
+                "actor": rec.actor,
+                "target": rec.target,
+                "scope": rec.scope,
+                "label": rec.label,
+                "serverTs": revert_ts.get(&rec.id).copied().unwrap_or(0),
+            }));
+        }
+
+        // Newest first.
+        entries.sort_by(|a, b| {
+            let ts =
+                |v: &serde_json::Value| v.get("serverTs").and_then(|t| t.as_u64()).unwrap_or(0);
+            ts(b).cmp(&ts(a))
+        });
+
+        serde_json::to_string(&entries).map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Roll `table_id` back to its state at `target_server_ts` (a Matrix
+    /// `origin_server_ts`, ms). Fetches the timeline, computes the batched
+    /// restoring updates + a `_history` revert row, sends them, and returns the
+    /// number of updates sent (0 = the table already matched that point — nothing
+    /// was recorded or sent).
+    #[wasm_bindgen(js_name = rollbackTo)]
+    pub async fn rollback_to(
+        &self,
+        table_id: String,
+        target_server_ts: f64,
+        label: Option<String>,
+    ) -> Result<u32, JsValue> {
+        let events: Vec<CellUpdate> = self
+            .fetch_cell_events()
+            .await?
+            .into_iter()
+            .map(|(_, u)| u)
+            .collect();
+        let target = target_server_ts.max(0.0) as u64;
+        let actor = self
+            .client
+            .user_id()
+            .map(|u| u.to_string())
+            .unwrap_or_default();
+        let revert = crate::history::RevertRecord {
+            id: format!("rev-{}-{}", target, js_sys::Date::now() as u64),
+            actor,
+            target,
+            scope: table_id.clone(),
+            label,
+        };
+
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.build_rollback(&events, target, Some(&table_id), revert)
+        };
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        self.send_updates(&updates).await?;
+        Ok(updates.len() as u32)
+    }
+
+    /// Paginate the whole room timeline and collect every cell update (data and
+    /// system tables), each tagged with `(sender, update-with-server_ts)`. Shared
+    /// by the change log and rollback; walks full history, so it runs on demand
+    /// (drawer open / revert), never on the write hot path.
+    async fn fetch_cell_events(&self) -> Result<Vec<(String, CellUpdate)>, JsValue> {
+        let room = self
+            .client
+            .get_room(&self.room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+        let mut out: Vec<(String, CellUpdate)> = Vec::new();
+        let mut from_token: Option<String> = None;
+        loop {
+            let mut options = MessagesOptions::backward();
+            if let Some(ref token) = from_token {
+                options = options.from(token.as_str());
+            }
+            options.limit = matrix_sdk::ruma::UInt::from(1000u32);
+            let response = room
+                .messages(options)
+                .await
+                .map_err(|e| JsValue::from_str(&format!("Failed to fetch room history: {e}")))?;
+            if response.chunk.is_empty() {
+                break;
+            }
+            for event in &response.chunk {
+                let Ok(json_str) = serde_json::to_string(event.raw().json()) else {
+                    continue;
+                };
+                let received = MatrixClient::extract_cell_updates(&json_str);
+                if received.is_empty() {
+                    continue;
+                }
+                let sender = serde_json::from_str::<serde_json::Value>(&json_str)
+                    .ok()
+                    .and_then(|v| v.get("sender").and_then(|s| s.as_str()).map(String::from))
+                    .unwrap_or_default();
+                for r in received {
+                    out.push((sender.clone(), r.into_update()));
+                }
+            }
+            match response.end {
+                Some(token) => from_token = Some(token),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+
     /// Delete a row from a table.
     ///
     /// Writes a row-level tombstone cell (`_deleted = true`) locally and syncs
