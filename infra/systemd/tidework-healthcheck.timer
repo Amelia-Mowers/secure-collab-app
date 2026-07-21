@@ -1,9 +1,9 @@
 [Unit]
-Description=Run the TideWork healthcheck every 10 minutes
+Description=Run the TideWork healthcheck every 2 minutes (self-heals MAS)
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=10min
+OnUnitActiveSec=2min
 Persistent=true
 
 [Install]
