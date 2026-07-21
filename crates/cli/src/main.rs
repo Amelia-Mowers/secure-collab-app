@@ -82,6 +82,11 @@ enum Command {
         #[command(subcommand)]
         command: ColumnCmd,
     },
+    /// Saved-view operations (views are created in the app).
+    View {
+        #[command(subcommand)]
+        command: ViewCmd,
+    },
 }
 
 /// A workspace argument is either a room id (starts with `!`) or a workspace
@@ -129,6 +134,22 @@ enum TableCmd {
         /// e.g. --sort priority --sort -opened
         #[arg(long, allow_hyphen_values = true)]
         sort: Vec<String>,
+        /// Apply a saved view (id or name, e.g. --view "Open Issues"): its
+        /// filters run first (--where composes on top; --sort overrides its
+        /// sort). See `tidework view list`.
+        #[arg(long)]
+        view: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ViewCmd {
+    /// List the saved views in a workspace (optionally one table's).
+    List {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name); omit for all tables.
+        table: Option<String>,
     },
 }
 
@@ -279,7 +300,8 @@ async fn run() -> Result<()> {
                 table,
                 filter,
                 sort,
-            } => crud::table_show(workspace, table, filter, sort).await,
+                view,
+            } => crud::table_show(workspace, table, filter, sort, view).await,
         },
         Command::Row { command } => match command {
             RowCmd::Add {
@@ -308,6 +330,9 @@ async fn run() -> Result<()> {
                 default,
                 name,
             } => crud::column_set(workspace, table, column, options, default, name).await,
+        },
+        Command::View { command } => match command {
+            ViewCmd::List { workspace, table } => crud::view_list(workspace, table).await,
         },
     }
 }

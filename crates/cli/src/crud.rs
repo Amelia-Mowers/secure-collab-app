@@ -380,6 +380,7 @@ pub async fn table_show(
     table: String,
     filters: Vec<String>,
     sorts: Vec<String>,
+    view: Option<String>,
 ) -> Result<()> {
     let mut client = restore_client().await?;
     client.sync_once().await.context("initial sync")?;
@@ -390,6 +391,8 @@ pub async fn table_show(
     let schema = ws
         .get_table_schema(&table_id)
         .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
+
+    let view_config = view.map(|v| resolve_view(&ws, &table_id, &v)).transpose()?;
 
     // Columns in display order.
     let mut cols: Vec<&ColumnDefinition> = schema.columns.values().collect();
@@ -410,9 +413,18 @@ pub async fn table_show(
         .get_table_rows(&table_id)
         .map_err(|e| anyhow!("reading rows: {e}"))?;
     let total = rows.len();
+
+    // The saved view's filters apply first (same engine as the app), then any
+    // ad-hoc --where on top (AND). An explicit --sort overrides the view's sort.
+    if let Some(vc) = &view_config {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        rows.retain(|row| app_core::filter_eval::row_matches(row, &vc.filters, &schema, &today));
+    }
     rows.retain(|row| predicates.iter().all(|p| p.matches(row)));
     if !sort_keys.is_empty() {
         rows.sort_by(|a, b| compare_by_keys(a, b, &sort_keys));
+    } else if let Some(vc) = &view_config {
+        app_core::filter_eval::sort_rows(&mut rows, &vc.sort, &schema);
     }
     let shown = rows.len();
 
@@ -433,11 +445,91 @@ pub async fn table_show(
     }
 
     print_aligned(&grid);
+    let via = view_config
+        .map(|vc| format!(", view \"{}\"", vc.name))
+        .unwrap_or_default();
     if shown == total {
-        println!("\n{shown} row(s)");
+        println!("\n{shown} row(s){via}");
     } else {
-        println!("\n{shown} of {total} row(s)");
+        println!("\n{shown} of {total} row(s){via}");
     }
+    Ok(())
+}
+
+/// Resolve a view argument — a view id or its display name — to its config,
+/// scoped to one table's views.
+fn resolve_view(ws: &Workspace, table_id: &str, arg: &str) -> Result<app_core::ViewConfig> {
+    let configs: Vec<app_core::ViewConfig> = ws
+        .list_views_for_table(table_id)
+        .iter()
+        .filter_map(|id| ws.get_view(id))
+        .collect();
+    if let Some(vc) = configs.iter().find(|v| v.id == arg) {
+        return Ok(vc.clone());
+    }
+    let mut by_name: Vec<&app_core::ViewConfig> =
+        configs.iter().filter(|v| v.name == arg).collect();
+    match by_name.len() {
+        1 => Ok(by_name.remove(0).clone()),
+        0 => {
+            let available = configs
+                .iter()
+                .map(|v| format!("{:?}", v.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(if available.is_empty() {
+                anyhow!("this table has no saved views")
+            } else {
+                anyhow!("no view named {arg:?} for this table (available: {available})")
+            })
+        }
+        _ => Err(anyhow!("multiple views named {arg:?}; pass the view id")),
+    }
+}
+
+pub async fn view_list(workspace: String, table: Option<String>) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_ids = match table {
+        Some(t) => vec![resolve_table(&ws, &t)?],
+        None => ws.list_tables(),
+    };
+
+    let mut grid = vec![vec![
+        "VIEW".to_string(),
+        "TABLE".to_string(),
+        "TYPE".to_string(),
+        "FILTERS".to_string(),
+        "SORT".to_string(),
+        "ID".to_string(),
+    ]];
+    for tid in &table_ids {
+        let table_name = ws
+            .get_table_schema(tid)
+            .map(|s| s.name)
+            .unwrap_or_else(|| tid.clone());
+        for vid in ws.list_views_for_table(tid) {
+            let Some(vc) = ws.get_view(&vid) else {
+                continue;
+            };
+            grid.push(vec![
+                vc.name,
+                table_name.clone(),
+                format!("{:?}", vc.view_type).to_lowercase(),
+                vc.filters.len().to_string(),
+                vc.sort.len().to_string(),
+                vid,
+            ]);
+        }
+    }
+    if grid.len() == 1 {
+        println!("No saved views. Views created in the app show up here.");
+        return Ok(());
+    }
+    print_aligned(&grid);
     Ok(())
 }
 
