@@ -22,7 +22,28 @@ chk() { local d="$1"; shift; "$@" >/dev/null 2>&1 || fails+=("$d"); }
 
 # Local app health
 chk "Synapse /health"  curl -fsS -m 10 http://127.0.0.1:8008/health
-chk "MAS /health"      curl -fsS -m 10 http://127.0.0.1:8091/health
+
+# MAS, with self-heal. MAS has a zombie failure mode (2026-07-12 incident): a
+# DB blip kills its HTTP task, the graceful shutdown hangs and is aborted, and
+# the container stays "Up" with no listener — so restart:unless-stopped never
+# fires and nginx 502s until someone restarts it. The image is distroless (no
+# curl/shell), so a compose healthcheck can't probe it; heal from the host.
+healed=""
+mas_ok=true
+curl -fsS -m 10 http://127.0.0.1:8091/health >/dev/null 2>&1 || mas_ok=false
+if ! $mas_ok; then
+  docker restart tidework-mas-1 >/dev/null 2>&1
+  for _ in 1 2 3 4 5 6; do
+    sleep 5
+    curl -fsS -m 5 http://127.0.0.1:8091/health >/dev/null 2>&1 && { mas_ok=true; break; }
+  done
+  if $mas_ok; then
+    healed="MAS /health was down; docker restart tidework-mas-1 recovered it"
+  else
+    fails+=("MAS /health (down, restart did not recover it)")
+  fi
+fi
+
 # Public path: exercises nginx + a valid TLS cert + reachability end-to-end
 chk "matrix.tidework.io" curl -fsS -m 12 https://matrix.tidework.io/_matrix/client/versions
 chk "auth.tidework.io"   curl -fsS -m 12 https://auth.tidework.io/.well-known/openid-configuration
@@ -67,5 +88,9 @@ if [ "$status" = fail ] && [ "$prev" != fail ]; then
 elif [ "$status" = ok ] && [ "$prev" = fail ]; then
   send "[TideWork] prod recovered ($host)" "All healthchecks passing again."
 fi
+
+# Self-heal notice: always email — it's rare, and a silent restart would hide a
+# recurring problem (repeated notices = time to find the root cause).
+[ -n "$healed" ] && send "[TideWork] prod self-heal ($host)" "$healed"
 
 [ "$status" = ok ]
