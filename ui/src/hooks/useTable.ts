@@ -76,6 +76,14 @@ export interface WorkspaceHandle {
   listMembers?(): Promise<string>
   /** Serialize current state for incremental cold start (ConnectedWorkspace only). */
   snapshot?(): string
+  /** Change history (edits + reverts) as a JSON array, newest-first, optionally
+   *  scoped to one table. ConnectedWorkspace only — walks the room timeline. */
+  getChangeLog?(tableId?: string): Promise<string>
+  /** Roll `tableId` back to its state at `targetServerTs` (a Matrix
+   *  origin_server_ts, ms): records a `_history` revert row + sends the batched
+   *  restore. Returns the number of updates sent (0 = already at that state).
+   *  ConnectedWorkspace only. */
+  rollbackTo?(tableId: string, targetServerTs: number, label?: string): Promise<number>
 }
 
 interface TableRow {

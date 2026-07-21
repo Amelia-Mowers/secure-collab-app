@@ -28,6 +28,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
+import { HistoryDrawer } from '@/views/history/HistoryDrawer'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial } from '@/components/AddColumnModal'
 import { CellDisplay, CellEditor, type CellColumn } from '@/cells/cellRegistry'
 import { FilterBar } from './FilterBar'
@@ -253,6 +254,14 @@ function SortableTableRow({
   )
 }
 
+const HistoryIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <path d="M2 6.5a4.6 4.6 0 1 0 1.5-3.4" />
+    <polyline points="1.4,1.6 1.4,4 3.8,4" />
+    <polyline points="6.5,4 6.5,6.6 8.5,7.8" />
+  </svg>
+)
+
 export function TableView({ workspace, syncCount }: TableViewProps) {
   const { workspaceId, tableId, viewId } = useParams<{
     workspaceId: string
@@ -288,6 +297,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const [shadowId, setShadowId] = useState(() => `row_${Date.now()}`)
   const [deletingRows, setDeletingRows] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
   const [showFilter, setShowFilter] = useState(false)
@@ -790,11 +800,24 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" active={showFilter} onClick={() => setShowFilter(s => !s)} />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
+            <ToolbarButton icon={<HistoryIcon />} label="History" active={showHistory} onClick={() => setShowHistory(true)} title="Change history" />
             <ToolbarButton icon={<PlusIcon />} label="Add column" title="Add column" onClick={() => setIsAddingColumn(true)} />
             <ToolbarPrimaryButton onClick={newEntry}>New entry</ToolbarPrimaryButton>
           </>
         }
       />
+
+      {showHistory && (
+        <HistoryDrawer
+          workspace={workspace}
+          tableId={tableId}
+          onClose={() => setShowHistory(false)}
+          onReverted={() => {
+            refresh()
+            if (workspaceId) notifyWorkspaceChanged(workspaceId)
+          }}
+        />
+      )}
 
       {showFilter && (
         <div className="table-filter-bar table-filter-bar--stacked">
