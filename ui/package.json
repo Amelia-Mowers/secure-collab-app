@@ -35,6 +35,7 @@
     "eslint": "^8.56.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^23.2.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.11",

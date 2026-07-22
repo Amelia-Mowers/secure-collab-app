@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getWasmModule } from '../wasm/loader'
 import { loadSnapshot, saveSnapshot } from '../lib/snapshotStore'
+import { loadOutbox, saveOutbox, clearOutbox } from '../lib/outboxStore'
 import { getSnapshotKey } from '../lib/atRestSession'
 
 // ── Cross-tab broadcast ──────────────────────────────────────────────────────
@@ -84,6 +85,12 @@ export interface WorkspaceHandle {
    *  restore. Returns the number of updates sent (0 = already at that state).
    *  ConnectedWorkspace only. */
   rollbackTo?(tableId: string, targetServerTs: number, label?: string): Promise<number>
+  /** The unsent send queue as a JSON CellUpdate array — mirrored to the
+   *  persistent outbox (ADR 0003). ConnectedWorkspace only. */
+  pendingUpdates?(): string
+  /** Replay a persisted outbox after cold start: re-applies under LWW and
+   *  re-enqueues for send; returns how many were replayed. */
+  restorePendingUpdates?(json: string): number
 }
 
 interface TableRow {
@@ -353,6 +360,27 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
             notifyWorkspaceChanged(workspaceId)
           })
 
+          // Replay any persisted outbox BEFORE the user can edit (ADR 0003
+          // phase 1): unsent writes from a previous tab re-apply under LWW —
+          // a since-superseded write loses fairly (it carries its original
+          // HLC timestamp) — and re-enter the send queue. The stored record
+          // is cleared; the mirror effect below re-saves anything still
+          // unsent on its next tick.
+          try {
+            if (typeof cws.restorePendingUpdates === 'function') {
+              const saved = await loadOutbox(workspaceId, getSnapshotKey() ?? undefined)
+              if (saved) {
+                const replayed = cws.restorePendingUpdates(saved)
+                if (replayed > 0) {
+                  console.log(`[outbox] replayed ${replayed} unsent write(s) from a previous session`)
+                }
+              }
+              void clearOutbox(workspaceId)
+            }
+          } catch (e) {
+            console.warn('[outbox] replay failed:', e)
+          }
+
           workspaceRef.current = cws
           setWorkspace(cws)
           setLoading(false)
@@ -487,6 +515,40 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       clearTimeout(debounce)
       clearInterval(interval)
       document.removeEventListener('visibilitychange', onHide)
+    }
+  }, [workspace, workspaceId])
+
+  // ── Mirror the pending send queue to the persistent outbox (ADR 0003) ──
+  // A short interval (unsent writes matter within seconds, unlike snapshot
+  // freshness) plus pagehide/hidden hooks — the moments a tab is about to
+  // vanish are exactly when the mirror matters most. Writes are skipped when
+  // the queue hasn't changed, so the idle steady state costs nothing.
+  useEffect(() => {
+    if (!workspace || typeof workspace.pendingUpdates !== 'function') return
+    let cancelled = false
+    let lastMirrored: string | null = null
+    const mirror = () => {
+      if (cancelled || !workspace.pendingUpdates) return
+      try {
+        const json = workspace.pendingUpdates()
+        if (json === lastMirrored) return
+        lastMirrored = json
+        void saveOutbox(workspaceId, json, getSnapshotKey() ?? undefined)
+      } catch {
+        /* best-effort: the in-memory queue still retries while the tab lives */
+      }
+    }
+    const interval = setInterval(mirror, 3_000)
+    const onHide = () => {
+      if (document.hidden) mirror()
+    }
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('pagehide', mirror)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('pagehide', mirror)
     }
   }, [workspace, syncCount, workspaceId])
 
