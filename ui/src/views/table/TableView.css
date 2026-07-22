@@ -208,6 +208,14 @@
 }
 
 .cell-display--muted { color: var(--text-tertiary); }
+/* Document previews clip to the cell instead of wrapping/overflowing. */
+.cell-display--doc {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cell-display--mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
 .cell-display--bool { font-weight: 600; color: var(--green, #4ade80); }
 

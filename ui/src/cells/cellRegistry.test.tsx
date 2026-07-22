@@ -148,6 +148,20 @@ describe('cellRegistry', () => {
       expect(screen.getByText('b')).toBeInTheDocument()
     })
 
+    it('flattens a document preview to one clipped line (issue 0682f1a1)', () => {
+      const md = '# Heading\n\nFirst paragraph line.\nSecond line.\n' + 'x'.repeat(300)
+      const { container } = render(
+        <CellDisplay column={col({ column_type: 'document' })} value={md} />,
+      )
+      const text = container.textContent ?? ''
+      // Newlines collapse to spaces (no vertical growth) and length is bounded;
+      // the CSS class carries the horizontal clip.
+      expect(text).not.toContain('\n')
+      expect(text.length).toBeLessThanOrEqual(120)
+      expect(text).toContain('# Heading First paragraph line. Second line.')
+      expect(container.querySelector('.cell-display--doc')).toBeInTheDocument()
+    })
+
     it('renders a reference label resolved via the lookup', () => {
       const lookup = () => [{ id: 'p1', label: 'Apollo' }]
       render(
