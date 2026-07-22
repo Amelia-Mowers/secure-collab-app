@@ -227,7 +227,10 @@
 }
 
 /* ── New workspace card ──────────────────────────────────── */
-.workspace-card--new {
+/* --demo shares the dashed look but keeps its own class — the e2e's
+   .workspace-card--new locator must stay unique (strict mode). */
+.workspace-card--new,
+.workspace-card--demo {
   border-style: dashed;
   align-items: center;
   justify-content: center;
@@ -237,7 +240,8 @@
   gap: 6px;
 }
 
-.workspace-card--new:hover {
+.workspace-card--new:hover,
+.workspace-card--demo:hover {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-muted);

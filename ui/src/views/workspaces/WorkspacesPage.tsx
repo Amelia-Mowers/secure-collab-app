@@ -273,7 +273,7 @@ export function WorkspacesPage() {
 
           {/* Demo workspace: a real, pre-populated workspace to explore. */}
           <div
-            className={`workspace-card workspace-card--new${demoLoading ? ' workspace-card--busy' : ''}`}
+            className={`workspace-card workspace-card--demo${demoLoading ? ' workspace-card--busy' : ''}`}
             onClick={handleCreateDemo}
             role="button"
             tabIndex={0}
