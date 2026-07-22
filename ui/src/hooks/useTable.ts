@@ -105,7 +105,18 @@ interface UseTableResult {
   updateCell: (rowId: string, columnId: string, value: any) => Promise<void>
   deleteRow: (rowId: string) => Promise<void>
   refresh: () => Promise<void>
+  /** Cells (`rowId:columnId`) whose recent local edit was overwritten by a
+   *  concurrent remote write (legitimate LWW loss). The UI shows a brief
+   *  highlight; the history drawer is the recovery path. Entries expire after
+   *  a few seconds. (ADR 0003 item 4) */
+  conflictCells: Set<string>
 }
+
+/** How long a local edit is "recent" — a remote overwrite inside this window
+ *  counts as a conflict worth indicating. */
+const CONFLICT_WINDOW_MS = 15_000
+/** How long the highlight lingers before the cell clears. */
+const CONFLICT_FLASH_MS = 2_500
 
 /**
  * Hook for using a table from the workspace.
@@ -128,11 +139,50 @@ export function useTable(
   const [rows, setRows] = useState<TableRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const [conflictCells, setConflictCells] = useState<Set<string>>(new Set())
   const prevSyncCountRef = useRef(syncCount)
 
   // Track in-flight mutations so sync-triggered re-reads don't clobber
   // optimistic state while a write is still pending.
   const pendingMutationsRef = useRef(0)
+
+  // Recent local edits (`rowId:columnId` → {value, at}); a sync-driven re-read
+  // that shows a DIFFERENT value for one of these means a concurrent remote
+  // write won LWW over the user's edit — flag it briefly. (ADR 0003 item 4)
+  const recentEditsRef = useRef<Map<string, { value: any; at: number }>>(new Map())
+
+  const flagConflicts = useCallback((parsedRows: TableRow[]) => {
+    const now = Date.now()
+    const recent = recentEditsRef.current
+    if (recent.size === 0) return
+    const hit: string[] = []
+    for (const [key, edit] of recent) {
+      if (now - edit.at > CONFLICT_WINDOW_MS) {
+        recent.delete(key)
+        continue
+      }
+      const sep = key.indexOf(':')
+      const rowId = key.slice(0, sep)
+      const colId = key.slice(sep + 1)
+      const row = parsedRows.find(r => r._row_id === rowId)
+      // Row gone (remote delete) also counts — the edit was overwritten.
+      const current = row?.[colId]
+      if (JSON.stringify(current) !== JSON.stringify(edit.value)) {
+        hit.push(key)
+        recent.delete(key) // flag once, not on every subsequent re-read
+      }
+    }
+    if (hit.length > 0) {
+      setConflictCells(prev => new Set([...prev, ...hit]))
+      setTimeout(() => {
+        setConflictCells(prev => {
+          const next = new Set(prev)
+          for (const key of hit) next.delete(key)
+          return next
+        })
+      }, CONFLICT_FLASH_MS)
+    }
+  }, [])
 
   const fetchRows = useCallback(async (isInitial = true) => {
     if (!workspace) {
@@ -145,6 +195,7 @@ export function useTable(
       if (isInitial) setLoading(true)
       const rowsJson = workspace.getTableRows(tableId)
       const parsedRows = JSON.parse(rowsJson) as TableRow[]
+      if (!isInitial) flagConflicts(parsedRows)
       setRows(parsedRows)
       setError(null)
     } catch (err) {
@@ -152,7 +203,7 @@ export function useTable(
     } finally {
       if (isInitial) setLoading(false)
     }
-  }, [workspace, tableId])
+  }, [workspace, tableId, flagConflicts])
 
   // Fetch rows on mount and whenever workspace/tableId change
   useEffect(() => {
@@ -184,6 +235,10 @@ export function useTable(
       pendingMutationsRef.current++
       try {
         const valueJson = JSON.stringify(value)
+
+        // Remember the edit so a concurrent remote overwrite can be flagged
+        // when the next sync-driven re-read shows a different value.
+        recentEditsRef.current.set(`${rowId}:${columnId}`, { value, at: Date.now() })
 
         // Optimistically update React state before the async write completes
         setRows(prev => prev.map(row =>
@@ -251,6 +306,7 @@ export function useTable(
     updateCell,
     deleteRow,
     refresh: fetchRows,
+    conflictCells,
   }
 }
 

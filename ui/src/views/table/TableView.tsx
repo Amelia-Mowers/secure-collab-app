@@ -281,7 +281,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, {
       state: { from: location.pathname },
     })
-  const { rows, loading, error, updateCell, deleteRow, refresh } = useTable(workspace, tableId!, workspaceId, syncCount)
+  const { rows, loading, error, updateCell, deleteRow, refresh, conflictCells } = useTable(workspace, tableId!, workspaceId, syncCount)
   const [schema, setSchema] = useState<any>(null)
   const [isAddingColumn, setIsAddingColumn] = useState(false)
   /** The column being edited in the Edit-column modal, or null. */
@@ -646,9 +646,13 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             />
           )
         }
+        // A concurrent remote write just overwrote this user's recent edit
+        // (legitimate LWW loss) — flash briefly; history is the recovery path.
+        const conflicted = conflictCells.has(`${rowId}:${col.id}`)
         return (
           <div
-            className="cell-click"
+            className={conflicted ? 'cell-click cell-conflict' : 'cell-click'}
+            title={conflicted ? 'Your change was replaced by a newer edit' : undefined}
             onClick={e => { e.stopPropagation(); setEditing(cellKey) }}
           >
             <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} />
@@ -656,7 +660,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         )
       },
     }))
-  }, [columnsMeta, editing, updateCell, referenceLookup, moveEditing])
+  }, [columnsMeta, editing, updateCell, referenceLookup, moveEditing, conflictCells])
 
   const table = useReactTable({
     data: filteredRows as TableRow[],
