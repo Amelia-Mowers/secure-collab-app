@@ -82,17 +82,27 @@ describe('HistoryDrawer', () => {
   it('restores after confirmation and notifies the parent', async () => {
     const ws = makeWorkspace()
     const { onReverted } = renderDrawer(ws)
-    fireEvent.click((await screen.findAllByText('Restore'))[1])
-    await waitFor(() => expect(ws.rollbackTo).toHaveBeenCalledWith('tbl1', EDIT.serverTs))
+    fireEvent.click((await screen.findAllByText('Undo from here'))[1])
+    await waitFor(() => expect(ws.rollbackTo).toHaveBeenCalledWith('tbl1', EDIT.serverTs - 1))
     expect(await screen.findByText('Reverted.')).toBeInTheDocument()
     expect(onReverted).toHaveBeenCalled()
+  })
+
+  it('undoing a revert entry targets just before the revert (revert-the-revert)', async () => {
+    const ws = makeWorkspace()
+    renderDrawer(ws)
+    // Entries render newest-first: [0] is the revert entry.
+    fireEvent.click((await screen.findAllByText('Undo from here'))[0])
+    await waitFor(() =>
+      expect(ws.rollbackTo).toHaveBeenCalledWith('tbl1', REVERT.serverTs - 1),
+    )
   })
 
   it('does not restore when the confirmation is declined', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(false)
     const ws = makeWorkspace()
     const { onReverted } = renderDrawer(ws)
-    fireEvent.click((await screen.findAllByText('Restore'))[0])
+    fireEvent.click((await screen.findAllByText('Undo from here'))[0])
     expect(ws.rollbackTo).not.toHaveBeenCalled()
     expect(onReverted).not.toHaveBeenCalled()
   })
@@ -100,7 +110,7 @@ describe('HistoryDrawer', () => {
   it('says so when the table is already at the target state (0 updates)', async () => {
     const ws = makeWorkspace({ rollbackTo: vi.fn().mockResolvedValue(0) })
     renderDrawer(ws)
-    fireEvent.click((await screen.findAllByText('Restore'))[0])
+    fireEvent.click((await screen.findAllByText('Undo from here'))[0])
     expect(
       await screen.findByText('Already at that state — nothing to change.'),
     ).toBeInTheDocument()
