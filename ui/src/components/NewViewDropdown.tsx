@@ -48,7 +48,7 @@ const PlusIcon = () => (
 // ── Types ──────────────────────────────────────────────────────
 export type ViewType = 'table' | 'kanban' | 'card' | 'calendar'
 
-interface ColumnMeta {
+export interface ColumnMeta {
   id: string
   name: string
   column_type: string
@@ -97,7 +97,7 @@ const VIEW_TYPE_OPTIONS: ViewTypeOption[] = [
 ]
 
 // ── KanbanConfigFields ─────────────────────────────────────────
-interface KanbanConfig {
+export interface KanbanConfig {
   groupByColumn: string
   titleColumn: string
 }
@@ -108,7 +108,7 @@ interface KanbanConfigFieldsProps {
   onChange: (c: KanbanConfig) => void
 }
 
-function KanbanConfigFields({ columns, config, onChange }: KanbanConfigFieldsProps) {
+export function KanbanConfigFields({ columns, config, onChange }: KanbanConfigFieldsProps) {
   // Only select/multiselect columns can serve as the "group by" axis
   const selectColumns = columns.filter(
     col => col.column_type === 'select' || col.column_type === 'multiselect',
@@ -173,7 +173,7 @@ export interface NewViewModalProps {
   onClose: () => void
 }
 
-function loadTableColumns(workspace: any, tableId: string): ColumnMeta[] {
+export function loadTableColumns(workspace: any, tableId: string): ColumnMeta[] {
   try {
     const schema = JSON.parse(workspace.getTableSchema(tableId))
     if (!schema?.columns) return []

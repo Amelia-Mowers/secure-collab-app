@@ -22,8 +22,16 @@ import { CSS } from '@dnd-kit/utilities'
 import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { computeReorderWrites } from '@/fractionalIndex'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
+import { ViewSettingsModal } from '@/components/ViewSettingsModal'
 import { resolveTargetColumn } from './kanbanUtils'
 import './KanbanView.css'
+
+const GearIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <circle cx="7" cy="7" r="2.2" />
+    <path d="M7 1.2v1.9M7 10.9v1.9M1.2 7h1.9M10.9 7h1.9M2.9 2.9l1.35 1.35M9.75 9.75l1.35 1.35M11.1 2.9 9.75 4.25M4.25 9.75 2.9 11.1" />
+  </svg>
+)
 
 interface KanbanViewProps {
   workspace: any
@@ -157,6 +165,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [regroupCol, setRegroupCol] = useState('')
+  const [showSettings, setShowSettings] = useState(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -356,10 +365,36 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
+            <ToolbarButton
+              icon={<GearIcon />}
+              label="Settings"
+              active={showSettings}
+              onClick={() => setShowSettings(true)}
+              title="View settings"
+            />
             <ToolbarPrimaryButton onClick={() => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`)}>New entry</ToolbarPrimaryButton>
           </>
         }
       />
+
+      {showSettings && viewId && tableId && (
+        <ViewSettingsModal
+          workspace={workspace}
+          tableId={tableId}
+          viewId={viewId}
+          viewConfig={viewConfig}
+          onClose={() => setShowSettings(false)}
+          onSaved={() => {
+            setShowSettings(false)
+            try {
+              setViewConfig(JSON.parse(workspace.getView(viewId)))
+            } catch {
+              /* keep the current config; the next sync refreshes it */
+            }
+            if (workspaceId) notifyWorkspaceChanged(workspaceId)
+          }}
+        />
+      )}
 
       {groupByMissing && (
         <div className="kanban-reconfig" role="alert">
