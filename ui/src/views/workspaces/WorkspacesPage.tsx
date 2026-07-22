@@ -51,7 +51,7 @@ export function WorkspacesPage() {
           await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
         }
       }
-      await seedDemoWorkspace(cws)
+      await seedDemoWorkspace(cws, matrixSession.userId?.() ?? undefined)
       navigate(`/workspace/${encodeURIComponent(ws.id)}`)
     } catch (err: any) {
       setActionError(err?.message ?? 'Failed to create the demo workspace')

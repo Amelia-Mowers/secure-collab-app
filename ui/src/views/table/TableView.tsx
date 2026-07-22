@@ -26,7 +26,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
-import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
+import { useTable, useMembers, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
 import { HistoryDrawer } from '@/views/history/HistoryDrawer'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial } from '@/components/AddColumnModal'
@@ -282,6 +282,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       state: { from: location.pathname },
     })
   const { rows, loading, error, updateCell, deleteRow, refresh, conflictCells } = useTable(workspace, tableId!, workspaceId, syncCount)
+  const members = useMembers(workspace)
   const [schema, setSchema] = useState<any>(null)
   const [isAddingColumn, setIsAddingColumn] = useState(false)
   /** The column being edited in the Edit-column modal, or null. */
@@ -640,6 +641,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               autoFocus
               popover
               lookup={referenceLookup}
+              members={members}
               commit={v => updateCell(rowId, col.id, v).catch(showCellError)}
               onNavigate={dir => moveEditing(rowId, col.id, dir)}
               onDone={() => setEditing(null)}
@@ -655,12 +657,12 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             title={conflicted ? 'Your change was replaced by a newer edit' : undefined}
             onClick={e => { e.stopPropagation(); setEditing(cellKey) }}
           >
-            <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} />
+            <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} members={members} />
           </div>
         )
       },
     }))
-  }, [columnsMeta, editing, updateCell, referenceLookup, moveEditing, conflictCells])
+  }, [columnsMeta, editing, updateCell, referenceLookup, members, moveEditing, conflictCells])
 
   const table = useReactTable({
     data: filteredRows as TableRow[],
@@ -1023,7 +1025,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                     return (
                       <td key={col.id}>
                         <div className="cell-click cell-shadow" onClick={() => setEditing(cellKey)}>
-                          <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} />
+                          <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} members={members} />
                         </div>
                       </td>
                     )

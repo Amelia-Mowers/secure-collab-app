@@ -34,7 +34,7 @@ export const TABLE_TEMPLATES: TableTemplate[] = [
     columns: [
       { id: 'title', name: 'Title', column_type: 'text' },
       { id: 'status', name: 'Status', column_type: 'select', options: ['Todo', 'In Progress', 'Done'], default_value: 'Todo' },
-      { id: 'assignee', name: 'Assignee', column_type: 'text' },
+      { id: 'assignee', name: 'Assignee', column_type: 'member' },
       { id: 'due_date', name: 'Due date', column_type: 'date' },
       { id: 'priority', name: 'Priority', column_type: 'select', options: ['Low', 'Medium', 'High'] },
     ],

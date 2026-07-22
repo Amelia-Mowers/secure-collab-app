@@ -27,10 +27,15 @@ export interface CellColumn {
  *  Supplied by the consumer (grid / entry view) since only it has the workspace. */
 export type ReferenceLookup = (tableId: string) => Array<{ id: string; label: string }>
 
+/** The workspace room's members (id = MXID, label = display name), for
+ *  `member` / `multimember` columns. Supplied by the consumer. */
+export type MemberList = Array<{ id: string; label: string }>
+
 export interface CellDisplayProps {
   column: CellColumn
   value: any
   lookup?: ReferenceLookup
+  members?: MemberList
 }
 
 export interface CellEditorProps {
@@ -48,6 +53,8 @@ export interface CellEditorProps {
   onNavigate?: (direction: 'up' | 'down' | 'left' | 'right') => void
   /** Resolve referenced records (used by `reference` columns). */
   lookup?: ReferenceLookup
+  /** Room members (used by `member` / `multimember` columns). */
+  members?: MemberList
   /** Render large editors (e.g. `document`) in a floating popover instead of
    *  inline, so they don't distend a grid cell. The entry/detail view leaves
    *  this off and edits inline. */
@@ -62,8 +69,36 @@ function defaultText(value: any): string {
   return JSON.stringify(value)
 }
 
-export function CellDisplay({ column, value, lookup }: CellDisplayProps) {
+/** Display name for an MXID: the member's label, else the localpart. */
+export function memberLabel(members: MemberList | undefined, mxid: string): string {
+  const found = members?.find(m => m.id === mxid)
+  if (found?.label) return found.label
+  const m = /^@([^:]+):/.exec(mxid)
+  return m ? m[1] : mxid
+}
+
+export function CellDisplay({ column, value, lookup, members }: CellDisplayProps) {
   switch (column.column_type) {
+    case 'member': {
+      if (value == null || value === '') return <span className="cell-display" />
+      const label = memberLabel(members, String(value))
+      return (
+        <span className="cell-display">
+          <span className="cell-member-dot" aria-hidden="true">{label[0]?.toUpperCase() ?? '?'}</span>
+          <span className="cell-pill">{label}</span>
+        </span>
+      )
+    }
+    case 'multimember': {
+      const items = Array.isArray(value) ? value : value != null && value !== '' ? [value] : []
+      return (
+        <span className="cell-display cell-display--tags">
+          {items.map((id: any) => (
+            <span key={String(id)} className="cell-tag">{memberLabel(members, String(id))}</span>
+          ))}
+        </span>
+      )
+    }
     case 'boolean':
       return <span className="cell-display cell-display--bool">{value ? '✓' : ''}</span>
     case 'multiselect': {
@@ -279,6 +314,55 @@ function MultiSelectEditor({ column, value, commit, autoFocus, onDone }: CellEdi
   )
 }
 
+function MemberEditor({ column, value, commit, autoFocus, onDone, members }: CellEditorProps) {
+  return (
+    <select
+      className="cell-input cell-input--select"
+      value={value ?? ''}
+      autoFocus={autoFocus}
+      onChange={e => { commit(e.target.value === '' ? null : e.target.value); onDone?.() }}
+      onBlur={onDone}
+    >
+      <option value="">Assign {column.name}...</option>
+      {(members ?? []).map(m => (
+        <option key={m.id} value={m.id}>{m.label || m.id}</option>
+      ))}
+    </select>
+  )
+}
+
+function MultiMemberEditor({ value, commit, autoFocus, onDone, members }: CellEditorProps) {
+  const selected: string[] = Array.isArray(value) ? value.map(String) : []
+  const remaining = (members ?? []).filter(m => !selected.includes(m.id))
+  return (
+    <div className="cell-multiselect">
+      {selected.map(id => (
+        <span key={id} className="cell-tag cell-tag--editable">
+          <span className="cell-tag__label">{memberLabel(members, id)}</span>
+          <button
+            type="button"
+            className="cell-tag__remove"
+            aria-label={`Remove ${memberLabel(members, id)}`}
+            onClick={() => commit(selected.filter(s => s !== id))}
+          >×</button>
+        </span>
+      ))}
+      <select
+        className="cell-input cell-input--select"
+        value=""
+        autoFocus={autoFocus}
+        onChange={e => { if (e.target.value) commit([...selected, e.target.value]) }}
+        onBlur={onDone}
+      >
+        <option value="">Add member...</option>
+        {remaining.map(m => (
+          <option key={m.id} value={m.id}>{m.label || m.id}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 function ReferenceEditor({ column, value, commit, autoFocus, onDone, lookup }: CellEditorProps) {
   const records = lookup && column.reference_table ? lookup(column.reference_table) : null
   // Hook must run unconditionally; only the fallback path uses the draft.
@@ -391,6 +475,8 @@ const EDITORS: Record<string, (p: CellEditorProps) => JSX.Element> = {
   date: DateEditor,
   select: SelectEditor,
   multiselect: MultiSelectEditor,
+  member: MemberEditor,
+  multimember: MultiMemberEditor,
   reference: ReferenceEditor,
   document: DocumentEditor,
   json: JsonEditor,

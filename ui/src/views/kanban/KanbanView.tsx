@@ -19,10 +19,11 @@ import {
 } from '@dnd-kit/sortable'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useTable, notifyWorkspaceChanged } from '@/hooks/useTable'
+import { useTable, useMembers, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { computeReorderWrites } from '@/fractionalIndex'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import { ViewSettingsModal } from '@/components/ViewSettingsModal'
+import { memberLabel } from '@/cells/cellRegistry'
 import { resolveTargetColumn } from './kanbanUtils'
 import './KanbanView.css'
 
@@ -75,7 +76,7 @@ function statusColor(colTitle: string) {
   return 'var(--text-tertiary)'
 }
 
-function SortableCard({ card, hiddenKeys, onOpen }: { card: KanbanCard; hiddenKeys: Set<string>; onOpen: (card: KanbanCard) => void }) {
+function SortableCard({ card, hiddenKeys, person, onOpen }: { card: KanbanCard; hiddenKeys: Set<string>; person: string | null; onOpen: (card: KanbanCard) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id })
 
   const style = {
@@ -123,10 +124,10 @@ function SortableCard({ card, hiddenKeys, onOpen }: { card: KanbanCard; hiddenKe
           ))}
         </div>
       )}
-      {card.assignee && (
+      {person && (
         <div className="kcard__footer">
-          <Avatar name={String(card.assignee)} />
-          <span className="kcard__assignee">{String(card.assignee)}</span>
+          <Avatar name={person} />
+          <span className="kcard__assignee">{person}</span>
         </div>
       )}
     </div>
@@ -202,6 +203,25 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
     const cols = schema?.columns ? (Object.values(schema.columns) as any[]) : []
     return cols.filter(c => !deletedCols.has(c.id))
   }, [schema, deletedCols])
+
+  // The card footer's person comes from the FIRST member-type column (issue
+  // bc48a6ed) — the old magic `assignee` column id is gone. Falls back to
+  // nothing when the table has no member column.
+  const members = useMembers(workspace)
+  const memberCol = useMemo(
+    () =>
+      availableColumns.find(
+        c => c.column_type === 'member' || c.column_type === 'multimember',
+      ) ?? null,
+    [availableColumns],
+  )
+  const personFor = (card: KanbanCard): string | null => {
+    if (!memberCol) return null
+    const v = card[memberCol.id]
+    const first = Array.isArray(v) ? v[0] : v
+    if (first == null || first === '') return null
+    return memberLabel(members, String(first))
+  }
 
   // Only select/multiselect columns can serve as the "group by" axis — same
   // rule as NewViewDropdown's kanban config (issue 6e2011e3): grouping by free
@@ -461,6 +481,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
                           key={card.id}
                           card={card}
                           hiddenKeys={deletedCols}
+                          person={personFor(card)}
                           onOpen={(c) => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${c._row_id ?? c.id}`, { state: { from: location.pathname } })}
                         />
                       ))}

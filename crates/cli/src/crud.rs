@@ -217,6 +217,14 @@ fn coerce_and_validate(column: &ColumnDefinition, raw: &str) -> Result<serde_jso
             check_option(column, raw)?;
             Ok(serde_json::json!(raw))
         }
+        ColumnType::MultiMember => {
+            let values: Vec<String> = raw
+                .split(',')
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect();
+            Ok(serde_json::json!(values))
+        }
         ColumnType::MultiSelect => {
             let values: Vec<String> = raw
                 .split(',')

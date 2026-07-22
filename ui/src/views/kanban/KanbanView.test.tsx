@@ -345,4 +345,27 @@ describe('KanbanView', () => {
       expect(dropAreas.length).toBe(3)
     })
   })
+
+  describe('card footer person (issue bc48a6ed)', () => {
+    it('a text assignee column no longer renders the avatar footer (magic id dropped)', async () => {
+      const ws = makeKanbanWorkspace() // tasks.assignee is a TEXT column
+      const { container } = renderKanban(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(container.querySelector('.kcard__footer')).not.toBeInTheDocument()
+    })
+
+    it('the first member-type column drives the footer, localpart fallback', async () => {
+      const ws = makeKanbanWorkspace()
+      ws.addColumn(
+        'tasks',
+        JSON.stringify({ id: 'owner', name: 'Owner', column_type: 'member' }),
+      )
+      // Seeded task rows: assign one an MXID.
+      ws.updateCell('tasks', 'task1', 'owner', JSON.stringify('@amelia:tidework.io'))
+      const { container } = renderKanban(ws)
+      await waitFor(() => expect(container.querySelector('.kcard__footer')).toBeInTheDocument())
+      // No listMembers on the mock → display falls back to the MXID localpart.
+      expect(screen.getByText('amelia')).toBeInTheDocument()
+    })
+  })
 })
