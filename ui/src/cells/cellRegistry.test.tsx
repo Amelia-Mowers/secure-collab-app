@@ -148,6 +148,36 @@ describe('cellRegistry', () => {
       expect(screen.getByText('b')).toBeInTheDocument()
     })
 
+    it('renders a member cell as avatar dot + display name (issue bc48a6ed)', () => {
+      const members = [{ id: '@amelia:tidework.io', label: 'Amelia' }]
+      const { container } = render(
+        <CellDisplay
+          column={col({ column_type: 'member' })}
+          value="@amelia:tidework.io"
+          members={members}
+        />,
+      )
+      expect(screen.getByText('Amelia')).toBeInTheDocument()
+      expect(container.querySelector('.cell-member-dot')).toHaveTextContent('A')
+    })
+
+    it('falls back to the MXID localpart when the member is unknown', () => {
+      render(<CellDisplay column={col({ column_type: 'member' })} value="@ghost:server.tld" />)
+      expect(screen.getByText('ghost')).toBeInTheDocument()
+    })
+
+    it('renders multimember values as name tags', () => {
+      const members = [
+        { id: '@a:x', label: 'Ada' },
+        { id: '@b:x', label: 'Brin' },
+      ]
+      render(
+        <CellDisplay column={col({ column_type: 'multimember' })} value={['@a:x', '@b:x']} members={members} />,
+      )
+      expect(screen.getByText('Ada')).toBeInTheDocument()
+      expect(screen.getByText('Brin')).toBeInTheDocument()
+    })
+
     it('flattens a document preview to one clipped line (issue 0682f1a1)', () => {
       const md = '# Heading\n\nFirst paragraph line.\nSecond line.\n' + 'x'.repeat(300)
       const { container } = render(
@@ -172,6 +202,40 @@ describe('cellRegistry', () => {
         />,
       )
       expect(screen.getByText('Apollo')).toBeInTheDocument()
+    })
+  })
+
+  describe('CellEditor — member', () => {
+    const members = [
+      { id: '@a:x', label: 'Ada' },
+      { id: '@b:x', label: 'Brin' },
+    ]
+
+    it('member editor commits the chosen MXID', () => {
+      const commit = vi.fn()
+      render(
+        <CellEditor column={col({ column_type: 'member' })} value="" commit={commit} members={members} />,
+      )
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '@b:x' } })
+      expect(commit).toHaveBeenCalledWith('@b:x')
+    })
+
+    it('multimember editor adds and removes members', () => {
+      const commit = vi.fn()
+      render(
+        <CellEditor
+          column={col({ column_type: 'multimember' })}
+          value={['@a:x']}
+          commit={commit}
+          members={members}
+        />,
+      )
+      // Only not-yet-selected members are offered.
+      expect(screen.queryByRole('option', { name: 'Ada' })).not.toBeInTheDocument()
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '@b:x' } })
+      expect(commit).toHaveBeenCalledWith(['@a:x', '@b:x'])
+      fireEvent.click(screen.getByLabelText('Remove Ada'))
+      expect(commit).toHaveBeenCalledWith([])
     })
   })
 })

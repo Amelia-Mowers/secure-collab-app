@@ -14,14 +14,18 @@ export const DEMO_WORKSPACE_NAME = 'Demo Workspace'
 
 type Row = Record<string, unknown>
 
+/** `assignee` is a member column (issue bc48a6ed): SELF is replaced by the
+ *  creating user's MXID at seed time — the only member of a fresh demo room. */
+const SELF = '@@self'
+
 const TASKS: Row[] = [
-  { title: 'Sketch landing page hero', status: 'Done', assignee: 'Riley', due_date: '2026-07-10', priority: 'High' },
-  { title: 'Wire up sign-up flow', status: 'Done', assignee: 'Sam', due_date: '2026-07-14', priority: 'High' },
-  { title: 'Draft pricing copy', status: 'In Progress', assignee: 'Riley', due_date: '2026-07-24', priority: 'Medium' },
-  { title: 'Instrument onboarding funnel', status: 'In Progress', assignee: 'Alex', due_date: '2026-07-28', priority: 'Medium' },
-  { title: 'Fix mobile nav overlap', status: 'In Progress', assignee: 'Sam', due_date: '2026-07-22', priority: 'High' },
-  { title: 'Choose launch date', status: 'Todo', assignee: 'Alex', due_date: '2026-08-04', priority: 'High' },
-  { title: 'Write changelog post', status: 'Todo', assignee: 'Riley', due_date: '2026-08-06', priority: 'Low' },
+  { title: 'Sketch landing page hero', status: 'Done', assignee: SELF, due_date: '2026-07-10', priority: 'High' },
+  { title: 'Wire up sign-up flow', status: 'Done', assignee: '', due_date: '2026-07-14', priority: 'High' },
+  { title: 'Draft pricing copy', status: 'In Progress', assignee: SELF, due_date: '2026-07-24', priority: 'Medium' },
+  { title: 'Instrument onboarding funnel', status: 'In Progress', assignee: '', due_date: '2026-07-28', priority: 'Medium' },
+  { title: 'Fix mobile nav overlap', status: 'In Progress', assignee: SELF, due_date: '2026-07-22', priority: 'High' },
+  { title: 'Choose launch date', status: 'Todo', assignee: SELF, due_date: '2026-08-04', priority: 'High' },
+  { title: 'Write changelog post', status: 'Todo', assignee: '', due_date: '2026-08-06', priority: 'Low' },
   { title: 'QA pass on dark mode', status: 'Todo', assignee: '', due_date: '', priority: 'Low' },
 ]
 
@@ -41,11 +45,15 @@ const rowId = (table: string, i: number) => `demo_${table}_${i + 1}`
  * (the WASM bridge object). Cell writes go through the debounced batch queue,
  * so this resolves quickly and the sends complete in the background.
  */
-export async function seedDemoWorkspace(cws: {
-  createTable(json: string): Promise<string>
-  createView(json: string): Promise<string>
-  updateCell(tableId: string, rowId: string, colId: string, valueJson: string): Promise<void>
-}): Promise<void> {
+export async function seedDemoWorkspace(
+  cws: {
+    createTable(json: string): Promise<string>
+    createView(json: string): Promise<string>
+    updateCell(tableId: string, rowId: string, colId: string, valueJson: string): Promise<void>
+  },
+  /** The creating user's MXID — the demo's member-column assignee. */
+  selfUserId?: string,
+): Promise<void> {
   const project = TABLE_TEMPLATES.find(t => t.id === 'project')!
   const contacts = TABLE_TEMPLATES.find(t => t.id === 'contacts')!
 
@@ -65,6 +73,9 @@ export async function seedDemoWorkspace(cws: {
         title_column: 'title',
         display_columns: [],
         column_options: project.columns.find(c => c.id === 'status')?.options ?? [],
+        // Explicit view setting (never inferred): the demo shows the member
+        // column on cards.
+        assignee_column: 'assignee',
       },
     }),
   )
@@ -73,7 +84,9 @@ export async function seedDemoWorkspace(cws: {
     for (const [i, row] of rows.entries()) {
       for (const [col, value] of Object.entries(row)) {
         if (value === '' || value == null) continue
-        await cws.updateCell(tableId, rowId(tableId, i), col, JSON.stringify(value))
+        const resolved = value === SELF ? selfUserId : value
+        if (resolved === '' || resolved == null) continue
+        await cws.updateCell(tableId, rowId(tableId, i), col, JSON.stringify(resolved))
       }
     }
   }

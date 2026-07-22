@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { FieldRenderer } from './FieldRenderer'
+import { useMembers } from '@/hooks/useTable'
 import './EntryView.css'
 
 interface EntryViewProps {
@@ -66,6 +67,7 @@ function CommentBubble({ comment }: { comment: Comment }) {
 
 export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const { workspaceId, tableId, rowId } = useParams<{ workspaceId: string; tableId: string; rowId: string }>()
+  const members = useMembers(workspace)
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -274,6 +276,7 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
                   value={rowData[column.id]}
                   onChange={value => handleFieldChange(column.id, value)}
                   lookup={referenceLookup}
+                  members={members}
                 />
               </div>
             ))}

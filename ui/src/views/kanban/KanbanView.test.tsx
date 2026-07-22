@@ -345,4 +345,55 @@ describe('KanbanView', () => {
       expect(dropAreas.length).toBe(3)
     })
   })
+
+  describe('card footer person (issue bc48a6ed)', () => {
+    it('a text assignee column no longer renders the avatar footer (magic id dropped)', async () => {
+      const ws = makeKanbanWorkspace() // tasks.assignee is a TEXT column
+      const { container } = renderKanban(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(container.querySelector('.kcard__footer')).not.toBeInTheDocument()
+    })
+
+    it('an unconfigured member column shows NO footer (explicit setting required)', async () => {
+      const ws = makeKanbanWorkspace()
+      ws.addColumn(
+        'tasks',
+        JSON.stringify({ id: 'owner', name: 'Owner', column_type: 'member' }),
+      )
+      ws.updateCell('tasks', 'task1', 'owner', JSON.stringify('@amelia:tidework.io'))
+      const { container } = renderKanban(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      // A member column existing is not enough — the view must OPT IN.
+      expect(container.querySelector('.kcard__footer')).not.toBeInTheDocument()
+    })
+
+    it('the CONFIGURED assignee column drives the footer, localpart fallback', async () => {
+      const ws = makeKanbanWorkspace()
+      ws.addColumn(
+        'tasks',
+        JSON.stringify({ id: 'owner', name: 'Owner', column_type: 'member' }),
+      )
+      ws.updateCell('tasks', 'task1', 'owner', JSON.stringify('@amelia:tidework.io'))
+      // Recreate the board view WITH the explicit assignee setting.
+      ws.createView(JSON.stringify({
+        id: 'board-assignee',
+        name: 'Board',
+        table_id: 'tasks',
+        view_type: 'kanban',
+        sort: [],
+        filters: [],
+        kanban_config: {
+          group_by_column: 'status',
+          title_column: 'title',
+          display_columns: [],
+          column_options: ['Todo', 'In Progress', 'Done'],
+          assignee_column: 'owner',
+        },
+      }))
+      const { container } = renderKanban(ws, 'tasks', 'board-assignee')
+      await waitFor(() => expect(container.querySelector('.kcard__footer')).toBeInTheDocument())
+      // No listMembers on the mock → display falls back to the MXID localpart.
+      expect(screen.getByText('amelia')).toBeInTheDocument()
+    })
+  })
 })

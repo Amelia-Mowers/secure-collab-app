@@ -36,6 +36,7 @@ export function ViewSettingsModal({
   const [kanban, setKanban] = useState<KanbanConfig>({
     groupByColumn: viewConfig.kanban_config?.group_by_column ?? '',
     titleColumn: viewConfig.kanban_config?.title_column ?? '',
+    assigneeColumn: viewConfig.kanban_config?.assignee_column ?? '',
   })
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -66,6 +67,7 @@ export function ViewSettingsModal({
           title_column: kanban.titleColumn,
           display_columns: viewConfig.kanban_config?.display_columns ?? [],
           column_options: groupByCol?.options ?? [],
+          ...(kanban.assigneeColumn ? { assignee_column: kanban.assigneeColumn } : {}),
         }
       }
       await workspace.createView(JSON.stringify(next))

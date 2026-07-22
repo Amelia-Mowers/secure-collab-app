@@ -98,6 +98,38 @@ interface TableRow {
   [key: string]: any
 }
 
+/** Room members as {id, label} for member-type cells. Loads once per
+ *  workspace handle (member churn is rare; a re-mount refreshes). */
+export function useMembers(workspace: WorkspaceHandle | null): Array<{ id: string; label: string }> {
+  const [members, setMembers] = useState<Array<{ id: string; label: string }>>([])
+  useEffect(() => {
+    let cancelled = false
+    const ws = workspace as any
+    if (!ws || typeof ws.listMembers !== 'function') {
+      setMembers([])
+      return
+    }
+    const load = async () => {
+      try {
+        const parsed = JSON.parse(await ws.listMembers()) as Array<{
+          userId: string
+          displayName?: string
+        }>
+        if (!cancelled) {
+          setMembers(parsed.map(m => ({ id: m.userId, label: m.displayName || '' })))
+        }
+      } catch {
+        if (!cancelled) setMembers([])
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [workspace])
+  return members
+}
+
 interface UseTableResult {
   rows: TableRow[]
   loading: boolean

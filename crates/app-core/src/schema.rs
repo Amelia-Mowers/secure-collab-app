@@ -23,6 +23,11 @@ pub enum ColumnType {
     Reference,
     Document,
     Json,
+    /// A Matrix user in the workspace room (stores the stable MXID; renders
+    /// the display name). See issue bc48a6ed.
+    Member,
+    /// Array of member MXIDs (like MultiSelect for people).
+    MultiMember,
 }
 
 /// Column definition in a schema

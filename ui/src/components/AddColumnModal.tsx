@@ -9,6 +9,8 @@ export type ColumnType =
   | 'select'
   | 'multiselect'
   | 'document'
+  | 'member'
+  | 'multimember'
 
 interface ColumnTypeMeta {
   type: ColumnType
@@ -24,6 +26,8 @@ const COLUMN_TYPES: ColumnTypeMeta[] = [
   { type: 'date',        label: 'Date',         description: 'Calendar date (YYYY-MM-DD)'         },
   { type: 'boolean',     label: 'Checkbox',     description: 'True / false toggle'               },
   { type: 'document',    label: 'Document',     description: 'Rich Markdown content field'       },
+  { type: 'member',      label: 'Member',       description: 'A person from this workspace'      },
+  { type: 'multimember', label: 'Members',      description: 'Several people from this workspace' },
 ]
 
 export interface NewColumnDef {

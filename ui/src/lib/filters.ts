@@ -102,6 +102,7 @@ export function operatorsForType(columnType: string): OperatorOption[] {
         { op: 'is_not_empty', label: 'is set' },
       ]
     case 'select':
+    case 'member':
       return [
         { op: 'equals', label: 'is' },
         { op: 'not_equals', label: 'is not' },
@@ -109,6 +110,7 @@ export function operatorsForType(columnType: string): OperatorOption[] {
         ...EMPTY_OPS,
       ]
     case 'multiselect':
+    case 'multimember':
       return [
         { op: 'has_any_of', label: 'has any of' },
         { op: 'has_all_of', label: 'has all of' },

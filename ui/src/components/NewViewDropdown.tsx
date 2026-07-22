@@ -100,6 +100,8 @@ const VIEW_TYPE_OPTIONS: ViewTypeOption[] = [
 export interface KanbanConfig {
   groupByColumn: string
   titleColumn: string
+  /** Optional member-type column for the card footer person. '' = none. */
+  assigneeColumn?: string
 }
 
 interface KanbanConfigFieldsProps {
@@ -117,6 +119,12 @@ export function KanbanConfigFields({ columns, config, onChange }: KanbanConfigFi
   // Preview the options that will be used as kanban columns
   const selectedCol = selectColumns.find(c => c.id === config.groupByColumn)
   const previewOptions = selectedCol?.options ?? []
+
+  // Optional card-footer person: member-type columns only (explicit view
+  // setting, never inferred — see the lean-on-view-settings rule).
+  const memberColumns = columns.filter(
+    col => col.column_type === 'member' || col.column_type === 'multimember',
+  )
 
   return (
     <>
@@ -160,6 +168,23 @@ export function KanbanConfigFields({ columns, config, onChange }: KanbanConfigFi
           ))}
         </select>
       </div>
+      {memberColumns.length > 0 && (
+        <div className="nvm__form-group">
+          <label className="nvm__label">
+            Assignee column <span className="nvm__hint">(optional — shows on cards)</span>
+          </label>
+          <select
+            className="nvm__select"
+            value={config.assigneeColumn ?? ''}
+            onChange={e => onChange({ ...config, assigneeColumn: e.target.value })}
+          >
+            <option value="">None</option>
+            {memberColumns.map(col => (
+              <option key={col.id} value={col.id}>{col.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </>
   )
 }
@@ -265,6 +290,9 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
             title_column: kanbanConfig.titleColumn,
             display_columns: [],
             column_options: columnOptions,
+            ...(kanbanConfig.assigneeColumn
+              ? { assignee_column: kanbanConfig.assigneeColumn }
+              : {}),
           },
         }))
       } else if (viewType === 'card') {
