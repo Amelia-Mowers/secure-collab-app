@@ -781,6 +781,202 @@ fn apply_cells(
     Ok(updates)
 }
 
+pub async fn row_delete(workspace: String, table: String, row_id: String) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let updates = ws
+        .delete_row(&table_id, &row_id)
+        .map_err(|e| anyhow!("deleting row: {e}"))?;
+    client
+        .send_cell_batch(&updates)
+        .await
+        .context("sending row delete")?;
+    println!("Deleted row {row_id} from table {table_id}");
+    Ok(())
+}
+
+/// Translate the `--before/--after/--first/--last` flags (clap guarantees
+/// exactly one) into a `MovePosition`, resolving a row id / column arg via `f`.
+fn parse_position(
+    before: Option<String>,
+    after: Option<String>,
+    first: bool,
+    last: bool,
+    f: impl Fn(&str) -> Result<String>,
+) -> Result<app_core::fractional_index::MovePosition> {
+    use app_core::fractional_index::MovePosition;
+    Ok(match (before, after, first, last) {
+        (Some(b), _, _, _) => MovePosition::Before(f(&b)?),
+        (_, Some(a), _, _) => MovePosition::After(f(&a)?),
+        (_, _, true, _) => MovePosition::First,
+        (_, _, _, true) => MovePosition::Last,
+        _ => {
+            return Err(anyhow!(
+                "pass one of --before <id>, --after <id>, --first, --last"
+            ))
+        }
+    })
+}
+
+pub async fn row_move(
+    workspace: String,
+    table: String,
+    row_id: String,
+    before: Option<String>,
+    after: Option<String>,
+    first: bool,
+    last: bool,
+) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let position = parse_position(before, after, first, last, |id| Ok(id.to_string()))?;
+
+    // Current display order: keyed rows sort by their `_order` key (ties by row
+    // id, same as the UI); never-ordered rows follow in materialized order.
+    let keys: std::collections::HashMap<String, String> = ws
+        .get_row_order_keys(&table_id)
+        .map_err(|e| anyhow!("reading row order: {e}"))?
+        .into_iter()
+        .collect();
+    let mut rows: Vec<(String, Option<String>)> = ws
+        .get_table_rows(&table_id)
+        .map_err(|e| anyhow!("reading rows: {e}"))?
+        .iter()
+        .filter_map(|r| r.get("_row_id").and_then(|v| v.as_str()).map(String::from))
+        .map(|id| {
+            let key = keys.get(&id).cloned();
+            (id, key)
+        })
+        .collect();
+    rows.sort_by(|a, b| match (&a.1, &b.1) {
+        (Some(x), Some(y)) => x.cmp(y).then_with(|| a.0.cmp(&b.0)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
+    let writes = app_core::fractional_index::compute_move_writes(&rows, &row_id, &position)
+        .map_err(|e| anyhow!(e))?;
+    let mut updates = Vec::new();
+    for (id, key) in &writes {
+        updates.extend(
+            ws.update_cell_with_bump(&table_id, id, "_order", serde_json::json!(key))
+                .map_err(|e| anyhow!("writing order key: {e}"))?,
+        );
+    }
+    client
+        .send_cell_batch(&updates)
+        .await
+        .context("sending row move")?;
+    if writes.len() == 1 {
+        println!("Moved row {row_id} in table {table_id}");
+    } else {
+        println!(
+            "Moved row {row_id} in table {table_id} (backfilled order keys for {} rows)",
+            writes.len()
+        );
+    }
+    Ok(())
+}
+
+pub async fn column_delete(workspace: String, table: String, column: String) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let schema = ws
+        .get_table_schema(&table_id)
+        .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
+    let col_id = resolve_column(&schema, &column)?;
+    let display_name = schema.columns[&col_id].name.clone();
+
+    let updates = ws
+        .delete_column(&table_id, &col_id)
+        .map_err(|e| anyhow!("deleting column: {e}"))?;
+    client
+        .send_cell_batch(&updates)
+        .await
+        .context("sending column delete")?;
+    println!("Deleted column \"{display_name}\" ({col_id}) from table {table_id}");
+    Ok(())
+}
+
+pub async fn column_move(
+    workspace: String,
+    table: String,
+    column: String,
+    before: Option<String>,
+    after: Option<String>,
+    first: bool,
+    last: bool,
+) -> Result<()> {
+    use app_core::fractional_index::MovePosition;
+
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let schema = ws
+        .get_table_schema(&table_id)
+        .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
+    let col_id = resolve_column(&schema, &column)?;
+    let position = parse_position(before, after, first, last, |c| resolve_column(&schema, c))?;
+
+    // Columns hold plain integer orders (not fractional keys): splice the moved
+    // column into place and rewrite the full order via reorder_columns.
+    let mut ordered: Vec<String> = {
+        let mut cols: Vec<_> = schema.columns.values().collect();
+        cols.sort_by_key(|c| c.order.unwrap_or(i64::MAX));
+        cols.iter().map(|c| c.id.clone()).collect()
+    };
+    let from = ordered
+        .iter()
+        .position(|id| *id == col_id)
+        .ok_or_else(|| anyhow!("column {col_id} not in table order"))?;
+    ordered.remove(from);
+    let to = match &position {
+        MovePosition::First => 0,
+        MovePosition::Last => ordered.len(),
+        MovePosition::Before(t) | MovePosition::After(t) => {
+            if *t == col_id {
+                return Err(anyhow!("cannot move a column relative to itself"));
+            }
+            let i = ordered
+                .iter()
+                .position(|id| id == t)
+                .ok_or_else(|| anyhow!("anchor column {t} not found"))?;
+            if matches!(position, MovePosition::Before(_)) {
+                i
+            } else {
+                i + 1
+            }
+        }
+    };
+    ordered.insert(to, col_id.clone());
+
+    let updates = ws
+        .reorder_columns(&table_id, &ordered)
+        .map_err(|e| anyhow!("reordering columns: {e}"))?;
+    client
+        .send_cell_batch(&updates)
+        .await
+        .context("sending column move")?;
+    println!("Moved column {col_id} in table {table_id}");
+    Ok(())
+}
+
 pub async fn column_add(workspace: String, table: String, spec: String) -> Result<()> {
     let mut client = restore_client().await?;
     client.sync_once().await.context("initial sync")?;
