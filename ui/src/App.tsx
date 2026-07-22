@@ -15,6 +15,7 @@ import { SignInPage } from './views/auth/SignInPage'
 import { OauthCallbackPage } from './views/auth/OauthCallbackPage'
 import { TrialGate } from './components/TrialStatus'
 import { OfflineOverlay } from './components/OfflineOverlay'
+import { UpdateBanner } from './components/UpdateBanner'
 import { DisconnectedOverlay } from './components/DisconnectedOverlay'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
 import './App.css'
@@ -142,6 +143,7 @@ export default function App() {
           browser reports no connection, since offline edits queue in memory and
           are lost on reload before reconnect. */}
       <OfflineOverlay />
+      <UpdateBanner />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
         {/* OAuth popup redirect target — posts the callback URL to the opener
