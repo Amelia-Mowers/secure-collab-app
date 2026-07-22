@@ -189,6 +189,7 @@ async fn test_workspace_multiple_tables_and_views() {
         title_column: "title".to_string(),
         display_columns: vec![],
         column_options: vec!["Todo".into(), "In Progress".into(), "Done".into()],
+        assignee_column: None,
     };
     let view_config = ViewConfig::new("board-1", "Sprint Board", "tasks", ViewType::Kanban)
         .with_kanban_config(kanban_config);
