@@ -139,10 +139,12 @@ fn parse_column_type(s: &str) -> Result<ColumnType> {
         "multiselect" => ColumnType::MultiSelect,
         "document" | "doc" => ColumnType::Document,
         "json" => ColumnType::Json,
+        "member" => ColumnType::Member,
+        "members" | "multimember" => ColumnType::MultiMember,
         other => {
             return Err(anyhow!(
                 "unknown column type {other:?} \
-                 (text|number|boolean|date|select|multiselect|document|json)"
+                 (text|number|boolean|date|select|multiselect|document|json|member|members)"
             ))
         }
     })
