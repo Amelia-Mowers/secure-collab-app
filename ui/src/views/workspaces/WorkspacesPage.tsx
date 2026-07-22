@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth, InvitedRoom } from '@/hooks/useAuth'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { TrialBadge } from '@/components/TrialStatus'
+import { getWasmModule } from '@/wasm/loader'
+import { seedDemoWorkspace, DEMO_WORKSPACE_NAME } from '@/lib/demoWorkspace'
 import './WorkspacesPage.css'
 
 function formatDate(ts: number): string {
@@ -24,6 +26,38 @@ export function WorkspacesPage() {
   const [joinRoomId, setJoinRoomId] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [demoLoading, setDemoLoading] = useState(false)
+
+  // Create a REAL, populated workspace (issue c0ace30a) — encrypted and synced
+  // like any other, unlike the old local-only demo. The seeding connection is
+  // short-lived; the workspace route opens its own on navigate, and the
+  // debounced cell sends complete in the background.
+  const handleCreateDemo = async () => {
+    if (demoLoading || actionLoading || !matrixSession) return
+    setDemoLoading(true)
+    setActionError(null)
+    try {
+      const ws = await createWorkspace(DEMO_WORKSPACE_NAME)
+      const wasm = await getWasmModule()
+      // The freshly created room can 404 until the SDK cache catches up —
+      // same retry shape as useTable's initWorkspace.
+      let cws: any
+      for (let attempt = 0; ; attempt++) {
+        try {
+          cws = await wasm.ConnectedWorkspace.create(matrixSession, ws.id)
+          break
+        } catch (err) {
+          if (attempt >= 5) throw err
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+        }
+      }
+      await seedDemoWorkspace(cws)
+      navigate(`/workspace/${encodeURIComponent(ws.id)}`)
+    } catch (err: any) {
+      setActionError(err?.message ?? 'Failed to create the demo workspace')
+      setDemoLoading(false)
+    }
+  }
 
   // ── Pending invitations ──────────────────────────────────────
   const [invitations, setInvitations] = useState<InvitedRoom[]>([])
@@ -236,6 +270,23 @@ export function WorkspacesPage() {
               New workspace
             </div>
           )}
+
+          {/* Demo workspace: a real, pre-populated workspace to explore. */}
+          <div
+            className={`workspace-card workspace-card--new${demoLoading ? ' workspace-card--busy' : ''}`}
+            onClick={handleCreateDemo}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => e.key === 'Enter' && handleCreateDemo()}
+            aria-disabled={demoLoading}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
+              <line x1="2.5" y1="7.5" x2="17.5" y2="7.5" />
+              <line x1="7.5" y1="7.5" x2="7.5" y2="16.5" />
+            </svg>
+            {demoLoading ? 'Setting up demo…' : 'Demo workspace'}
+          </div>
 
         </div>
 

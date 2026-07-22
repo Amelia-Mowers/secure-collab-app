@@ -244,6 +244,11 @@
   box-shadow: none;
 }
 
+.workspace-card--busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
 /* ── New workspace inline form ───────────────────────────── */
 .workspace-new-form {
   display: flex;
