@@ -367,3 +367,35 @@ test('table delete and reorder persist after reload', async ({ page }) => {
   await expect(afterDelete.nth(0)).toContainText('Bananas')
   await expect(afterDelete.filter({ hasText: 'Apples' })).toHaveCount(0)
 })
+
+// A long markdown document cell must not widen its column until the table
+// scrolls off-page (issue 0682f1a1 follow-up): the table uses auto layout, so
+// the preview needs a hard cap — jsdom can't measure layout, only a real
+// browser proves the grid still fits its container.
+test('a long document cell does not push the table off-page', async ({ page }) => {
+  test.setTimeout(300_000)
+  await registerDevice(page, homeserverUrl(), uniqueUser('doc'))
+  await captureMasterKey(page)
+  await expect(page).toHaveURL(/workspaces/, { timeout: 60_000 })
+  await createWorkspace(page, 'Doc Width E2E')
+  await createTable(page, 'Notes')
+  await addColumn(page, 'Body', 'Document')
+
+  await page.getByRole('button', { name: 'New entry' }).click()
+  await page.getByPlaceholder('Enter name').fill('Long doc')
+  // A long single-line markdown body — the worst case for column width.
+  await page.locator('.markdown-textarea').fill('# Heading ' + 'very long unbroken preview text '.repeat(40))
+  await page.getByRole('button', { name: 'Return' }).click()
+
+  const row = gridRow(page, 'Long doc')
+  await expect(row).toBeVisible({ timeout: 30_000 })
+
+  // The preview renders clipped…
+  await expect(row.locator('.cell-display--doc')).toBeVisible()
+  // …and the grid does NOT overflow its scroll container horizontally.
+  const fits = await page.evaluate(() => {
+    const scroller = document.querySelector('.table-view__content')!
+    return scroller.scrollWidth <= scroller.clientWidth + 1
+  })
+  expect(fits).toBe(true)
+})
