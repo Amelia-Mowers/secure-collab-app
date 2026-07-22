@@ -13,6 +13,36 @@ import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from 
 import { setSnapshotKey } from '../lib/atRestSession'
 import { fetchPortalUrl } from '../lib/billing'
 
+/** How long a post-recovery `initialSync` may hold up the UI before it is
+ *  demoted to the background (issue 58dfe52b: on a large account that sync
+ *  covers every joined room and kept the verify/unlock gate up for its full
+ *  duration). Keys that arrive later decrypt on the next sync. */
+const POST_RECOVERY_SYNC_TIMEOUT_MS = 3_000
+
+/** Run one `initialSync`, awaiting it only up to `timeoutMs`; past that it
+ *  finishes in the background. Returns the underlying sync promise wrapped in
+ *  an object (so `await` doesn't collapse it; it never rejects — failures are
+ *  logged) for chaining "once it truly lands" work. */
+async function syncBounded(
+  ms: { initialSync(): Promise<unknown> },
+  timeoutMs: number,
+  label: string,
+): Promise<{ done: Promise<void> }> {
+  const t0 = performance.now()
+  const done = ms.initialSync().then(
+    () => console.log(`[auth] ${label} completed in ${Math.round(performance.now() - t0)}ms`),
+    (err: unknown) => console.warn(`[auth] ${label} failed:`, err),
+  )
+  const timedOut = await Promise.race([
+    done.then(() => false),
+    new Promise<true>(resolve => setTimeout(() => resolve(true), timeoutMs)),
+  ])
+  if (timedOut) {
+    console.warn(`[auth] ${label} still running after ${timeoutMs}ms — continuing without it`)
+  }
+  return { done }
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface WorkspaceEntry {
@@ -605,13 +635,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const submitRecoveryKey = useCallback(async (key: string) => {
     const ms = matrixSessionRef.current
     if (!ms) throw new Error('Not signed in')
+    const t0 = performance.now()
     await ms.recoverWithKey(key)
-    // Re-sync so the SDK downloads room keys from backup and history decrypts.
-    try {
-      await ms.initialSync()
-    } catch {
-      // Non-fatal — keys download in the background; the next sync picks up.
-    }
+    console.log(`[auth] recoverWithKey took ${Math.round(performance.now() - t0)}ms`)
+    // Re-sync so room keys from backup land and history decrypts — but bounded:
+    // on a large account this sync covers EVERY joined room and used to hold the
+    // verify gate hostage (issue 58dfe52b). Past the bound it finishes in the
+    // background and the next sync picks up whatever's left.
+    await syncBounded(ms, POST_RECOVERY_SYNC_TIMEOUT_MS, 'post-recovery sync')
     // A legacy account (no passkey enrolled) that just unlocked with its master
     // key on a passkey-capable device: offer to protect it with a passkey so
     // future devices need no typed key. Declining proceeds into the app. The
@@ -653,24 +684,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     matrixSessionRef.current = ms
     setMatrixSession(ms)
     // Unlock secret storage with the same secret so encrypted history decrypts.
+    const t0 = performance.now()
     await ms.recoverWithKey(secret)
-    try {
-      await ms.initialSync()
-    } catch {
-      /* room keys download in the background; the next sync picks them up */
-    }
+    console.log(`[auth] recoverWithKey took ${Math.round(performance.now() - t0)}ms`)
+    // Bounded for the same reason as submitRecoveryKey (issue 58dfe52b): the
+    // full-account sync must not keep the unlock gate up.
+    const { done: syncDone } = await syncBounded(ms, POST_RECOVERY_SYNC_TIMEOUT_MS, 'post-unlock sync')
     pendingUnlockRef.current = null
     setRecoveryPrompt(null)
     setLoading(false)
-    try {
-      const entries = parseWorkspaceRooms(await ms.listRooms())
-      if (entries.length > 0) {
-        setWorkspaces(entries)
-        saveWorkspaces(account.userId, entries)
+    const refreshWorkspaces = async () => {
+      try {
+        const entries = parseWorkspaceRooms(await ms.listRooms())
+        if (entries.length > 0) {
+          setWorkspaces(entries)
+          saveWorkspaces(account.userId, entries)
+        }
+      } catch (e) {
+        console.warn('[auth] listRooms after unlock failed:', e)
       }
-    } catch (e) {
-      console.warn('[auth] listRooms after unlock failed:', e)
     }
+    // Immediate pass may be partial if the sync raced out; refresh again once
+    // the background sync truly lands.
+    await refreshWorkspaces()
+    void syncDone.then(refreshWorkspaces)
   }, [restoreSession])
 
   /** 'unlock' gate, passkey path: derive the PRF secret, then unlock + restore. */
@@ -1076,11 +1113,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       )
       await ms.initialSync()
       await ms.recoverWithKey(secret) // re-download room keys into the encrypted store
-      try {
-        await ms.initialSync()
-      } catch {
-        /* keys finish downloading in the background */
-      }
+      // Bounded (issue 58dfe52b): this runs inside the gate's spinner via
+      // submitRecoveryKey → rekey; stragglers download in the background.
+      await syncBounded(ms, POST_RECOVERY_SYNC_TIMEOUT_MS, 'post-rekey sync')
       await completeSignIn(ms, creds.homeserver, creds.user) // writes a v2 entry
       pendingRekeyRef.current = null
       if (oldStoreName) {
