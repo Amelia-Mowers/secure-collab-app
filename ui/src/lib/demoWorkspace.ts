@@ -73,6 +73,9 @@ export async function seedDemoWorkspace(
         title_column: 'title',
         display_columns: [],
         column_options: project.columns.find(c => c.id === 'status')?.options ?? [],
+        // Explicit view setting (never inferred): the demo shows the member
+        // column on cards.
+        assignee_column: 'assignee',
       },
     }),
   )

@@ -28,6 +28,8 @@ describe('seedDemoWorkspace', () => {
     expect(view.table_id).toBe('tasks')
     expect(view.kanban_config.group_by_column).toBe('status')
     expect(view.kanban_config.column_options).toEqual(['Todo', 'In Progress', 'Done'])
+    // The card footer is an explicit view setting, not inferred (bc48a6ed).
+    expect(view.kanban_config.assignee_column).toBe('assignee')
   })
 
   it('seeds rows into both tables, skipping empty values', async () => {
