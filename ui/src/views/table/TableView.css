@@ -325,15 +325,6 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
-/* Empty-table CTA row */
-.row-empty-cta {
-  cursor: default;
-}
-
-.row-empty-cta:hover {
-  background-color: transparent;
-}
-
 /* Faded "shadow" quick-add row: prefilled with defaults, brightens on hover,
    becomes a real entry when a cell is edited. */
 .row-shadow {
@@ -350,24 +341,6 @@
   color: var(--text-tertiary);
   font-size: 14px;
   line-height: 1;
-}
-
-.empty-cta-btn {
-  display: block;
-  width: 100%;
-  padding: 14px 20px;
-  text-align: left;
-  font-size: 13px;
-  color: var(--text-tertiary);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  transition: color 0.15s, background-color 0.15s;
-}
-
-.empty-cta-btn:hover {
-  color: var(--accent);
-  background: var(--accent-muted, rgba(99, 102, 241, 0.06));
 }
 
 /* Actions cell */

@@ -34,10 +34,12 @@ describe('TableView', () => {
       await waitFor(() => expect(screen.getByText(/Connection lost/i)).toBeInTheDocument())
     })
 
-    it('shows "Add your first entry" CTA for an empty table', async () => {
+    it('shows the inline shadow quick-add row for an empty table (issue c79ce975)', async () => {
       const ws = makeTasksWorkspace() // tasks table created but no rows
-      renderTable(ws)
-      await waitFor(() => expect(screen.getByText(/Add your first entry/i)).toBeInTheDocument())
+      const { container } = renderTable(ws)
+      await waitFor(() => expect(container.querySelector('.row-shadow')).toBeInTheDocument())
+      // The old separate CTA is gone — the first entry is added inline.
+      expect(screen.queryByText(/Add your first entry/i)).not.toBeInTheDocument()
     })
   })
 
@@ -92,12 +94,17 @@ describe('TableView', () => {
   })
 
   describe('row operations', () => {
-    it('"Add your first entry" button navigates to the new entry form', async () => {
-      const ws = makeTasksWorkspace()
-      renderTable(ws)
-      await waitFor(() => screen.getByText(/Add your first entry/i))
-      fireEvent.click(screen.getByText(/Add your first entry/i))
-      await waitFor(() => expect(screen.getByTestId('entry-new')).toBeInTheDocument())
+    it('adds the first entry inline by editing the shadow row on an empty table', async () => {
+      const ws = makeTasksWorkspace() // no rows yet
+      const { container } = renderTable(ws)
+      await waitFor(() => expect(container.querySelector('.row-shadow')).toBeInTheDocument())
+      // Click the first shadow cell, type a value, commit on blur → real row.
+      const shadowCell = container.querySelector('.row-shadow .cell-click') as HTMLElement
+      fireEvent.click(shadowCell)
+      const input = await waitFor(() => screen.getByRole('textbox'))
+      fireEvent.change(input, { target: { value: 'First task' } })
+      fireEvent.blur(input)
+      await waitFor(() => expect(ws._rowCount('tasks')).toBe(1))
     })
 
     it('deleting a row removes it from the table', async () => {
