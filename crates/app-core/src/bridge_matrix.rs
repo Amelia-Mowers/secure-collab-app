@@ -275,6 +275,33 @@ impl MatrixSession {
         self.user_id.as_ref().map(|u| u.to_string())
     }
 
+    /// The account's current global display name ("" if unset). Available
+    /// wherever a Matrix client exists (signed-in app / verify gate) — NOT at
+    /// the at-rest unlock gate. (issue 1c8b3855)
+    #[wasm_bindgen(js_name = getDisplayName)]
+    pub async fn get_display_name(&self) -> Result<String, JsValue> {
+        self.client
+            .account()
+            .get_display_name()
+            .await
+            .map(|n| n.unwrap_or_default())
+            .map_err(|e| JsValue::from_str(&format!("Failed to fetch display name: {e}")))
+    }
+
+    /// Set the account's global Matrix display name. (issue 1c8b3855)
+    #[wasm_bindgen(js_name = setDisplayName)]
+    pub async fn set_display_name(&self, name: String) -> Result<(), JsValue> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(JsValue::from_str("Display name cannot be empty"));
+        }
+        self.client
+            .account()
+            .set_display_name(Some(trimmed))
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to set display name: {e}")))
+    }
+
     // ── Secure Backup / Recovery (ADR 0001 Phase B) ─────────────────────────
     //
     // A sign-in that can't reach history is a useless state, so the sign-in

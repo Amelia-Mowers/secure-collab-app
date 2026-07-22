@@ -23,6 +23,7 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
     accounts,
     activeAccountId,
     username,
+    matrixSession,
     switchAccount,
     removeAccount,
     signOut,
@@ -95,6 +96,29 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
   const handleAddAccount = () => {
     setOpen(false)
     navigate('/signin?addAccount=1')
+  }
+
+  // Edit the account's global Matrix display name (issue 1c8b3855). Only
+  // offered where a Matrix client exists — the at-rest unlock gate has none,
+  // but this menu only renders signed-in, so checking matrixSession suffices.
+  const [nameError, setNameError] = useState<string | null>(null)
+  const handleEditDisplayName = async () => {
+    if (!matrixSession) return
+    setNameError(null)
+    let current = ''
+    try {
+      current = await matrixSession.getDisplayName()
+    } catch {
+      /* prefill is best-effort */
+    }
+    const next = window.prompt('Display name', current || username || '')
+    if (next === null) return // cancelled
+    try {
+      await matrixSession.setDisplayName(next)
+      setOpen(false)
+    } catch (err: any) {
+      setNameError(typeof err === 'string' ? err : err?.message ?? 'Could not update display name')
+    }
   }
 
   if (accounts.length === 0) return null
@@ -173,6 +197,15 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
             </div>
           ))}
           <div className="account-switcher__divider" />
+          {matrixSession && (
+            <button className="account-switcher__add" onClick={handleEditDisplayName}>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
+                <path d="M8.5 1.5l2 2L4 10l-2.6.6L2 8z" />
+              </svg>
+              Edit display name
+            </button>
+          )}
+          {nameError && <div className="account-switcher__billing-error" role="alert">{nameError}</div>}
           <button
             className="account-switcher__add"
             onClick={() => {
