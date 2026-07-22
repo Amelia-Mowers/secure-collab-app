@@ -10,9 +10,16 @@ function makeWorkspace(initial: Record<string, unknown>) {
     getTableRows: () => JSON.stringify([state.row]),
     updateCell: vi.fn(async (_t: string, _r: string, col: string, valueJson: string) => {
       // The optimistic local apply the real bridge performs.
-      ;(state.row as any)[col] = JSON.parse(valueJson)
+      const row = state.row as Record<string, unknown>
+      row[col] = JSON.parse(valueJson)
     }),
   }
+}
+
+/** Simulate a remote writer winning LWW: the store's value changes under us. */
+function setTitle(ws: ReturnType<typeof makeWorkspace>, value: string) {
+  const row = ws.state.row as Record<string, unknown>
+  row.title = value
 }
 
 afterEach(() => {
@@ -35,7 +42,7 @@ describe('useTable conflict flagging (ADR 0003 item 4)', () => {
 
     await act(() => hook.result.current.updateCell('r1', 'title', 'mine'))
     // Remote writer wins LWW: the store now shows a different value.
-    ;(ws.state.row as any).title = 'theirs'
+    setTitle(ws, 'theirs')
     hook.rerender({ sc: 1 }) // sync-driven re-read
 
     await waitFor(() =>
@@ -77,7 +84,7 @@ describe('useTable conflict flagging (ADR 0003 item 4)', () => {
     await act(async () => {
       vi.advanceTimersByTime(20_000) // past the 15s window
     })
-    ;(ws.state.row as any).title = 'theirs'
+    setTitle(ws, 'theirs')
     hook.rerender({ sc: 1 })
     await act(async () => {
       await vi.runOnlyPendingTimersAsync()
