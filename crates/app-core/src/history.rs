@@ -124,6 +124,25 @@ pub fn rollback_updates(
     updates
 }
 
+/// The CONVERGED value for each of `ids` — the LWW winner over `events`
+/// (which should be the fetched room timeline), or `Value::Null` for a cell
+/// the room has never seen. Used when a permanently-rejected local write must
+/// be rolled back to what every other client shows (ADR 0003 phase 3): the
+/// failed write never left this device, so overwriting locally with the
+/// converged value needs no send.
+pub fn converged_values(ids: &[CellId], events: &[CellUpdate]) -> Vec<(CellId, Value)> {
+    let winners = state_as_of(events, u64::MAX);
+    ids.iter()
+        .map(|id| {
+            let value = winners
+                .get(id)
+                .map(|c| c.value.clone())
+                .unwrap_or(Value::Null);
+            (id.clone(), value)
+        })
+        .collect()
+}
+
 /// Manages the `_history` system table (one row per revert). Mirrors
 /// [`crate::schema::SchemaManager`]: it holds a [`Table`], turns operations into
 /// [`CellUpdate`]s (applied locally + returned for sending), and exports its
@@ -374,6 +393,20 @@ mod tests {
         );
         // The data cell itself was unchanged across the deletion → not re-emitted.
         assert!(!by.contains_key(&("r1".into(), "title".into())));
+    }
+
+    #[test]
+    fn converged_values_returns_lww_winner_or_null() {
+        let events = vec![
+            ev("r1", "c", json!("old"), 1, 100),
+            ev("r1", "c", json!("winner"), 2, 200),
+        ];
+        let ids = vec![CellId::new("t", "r1", "c"), CellId::new("t", "ghost", "c")];
+        let out = converged_values(&ids, &events);
+        assert_eq!(out[0].1, json!("winner"));
+        // A cell the room never saw converges to Null (the local-only value
+        // simply disappears, matching every other client).
+        assert_eq!(out[1].1, Value::Null);
     }
 
     #[test]

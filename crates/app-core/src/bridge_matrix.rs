@@ -1194,6 +1194,11 @@ pub struct ConnectedWorkspace {
     /// JS ms timestamp of the last sync response received — proof the
     /// homeserver is reachable even when nothing is being sent.
     last_sync_ok_ms: Rc<Cell<f64>>,
+    /// Cells whose writes were PERMANENTLY rejected and reverted (ADR 0003
+    /// phase 3) — cumulative count, surfaced via connectionHealth().
+    rejected_writes: Rc<Cell<u32>>,
+    /// Human-readable reason for the most recent permanent rejection.
+    last_reject_reason: Rc<RefCell<Option<String>>>,
 }
 
 #[wasm_bindgen]
@@ -1338,6 +1343,8 @@ impl ConnectedWorkspace {
             send_failures: Rc::new(Cell::new(0)),
             last_send_ok_ms: Rc::new(Cell::new(js_sys::Date::now())),
             last_sync_ok_ms: Rc::new(Cell::new(js_sys::Date::now())),
+            rejected_writes: Rc::new(Cell::new(0)),
+            last_reject_reason: Rc::new(RefCell::new(None)),
         })
     }
 
@@ -1549,6 +1556,18 @@ impl ConnectedWorkspace {
         )
     }
 
+    /// Cumulative permanently-rejected (dropped + reverted) writes and the
+    /// most recent reason, for the send-failure banner (ADR 0003 phase 3).
+    #[wasm_bindgen(js_name = rejectedWrites)]
+    pub fn rejected_writes_info(&self) -> String {
+        let reason = self.last_reject_reason.borrow().clone().unwrap_or_default();
+        format!(
+            r#"{{"count":{},"lastReason":{}}}"#,
+            self.rejected_writes.get(),
+            serde_json::to_string(&reason).unwrap_or_else(|_| "\"\"".to_string()),
+        )
+    }
+
     // ── Persistent outbox (ADR 0003 phase 1) ────────────────────────────────
 
     /// The current pending (unsent) cell updates as a JSON array — the
@@ -1714,9 +1733,19 @@ impl ConnectedWorkspace {
     /// by the change log and rollback; walks full history, so it runs on demand
     /// (drawer open / revert), never on the write hot path.
     async fn fetch_cell_events(&self) -> Result<Vec<(String, CellUpdate)>, JsValue> {
-        let room = self
-            .client
-            .get_room(&self.room_id)
+        fetch_room_cell_updates(&self.client, &self.room_id).await
+    }
+}
+
+/// Free-function timeline walk (shared by the change log, rollback, and the
+/// permanent-rejection revert in `flush_pending`, which has no `&self`).
+async fn fetch_room_cell_updates(
+    client: &Client,
+    room_id: &OwnedRoomId,
+) -> Result<Vec<(String, CellUpdate)>, JsValue> {
+    {
+        let room = client
+            .get_room(room_id)
             .ok_or_else(|| JsValue::from_str("Room not found"))?;
         let mut out: Vec<(String, CellUpdate)> = Vec::new();
         let mut from_token: Option<String> = None;
@@ -1756,7 +1785,10 @@ impl ConnectedWorkspace {
         }
         Ok(out)
     }
+}
 
+#[wasm_bindgen]
+impl ConnectedWorkspace {
     /// Delete a row from a table.
     ///
     /// Writes a row-level tombstone cell (`_deleted = true`) locally and syncs
@@ -2036,6 +2068,9 @@ impl ConnectedWorkspace {
         let flushing = Rc::clone(&self.flushing);
         let send_failures = Rc::clone(&self.send_failures);
         let last_send_ok_ms = Rc::clone(&self.last_send_ok_ms);
+        let inner = Rc::clone(&self.inner);
+        let rejected_writes = Rc::clone(&self.rejected_writes);
+        let last_reject_reason = Rc::clone(&self.last_reject_reason);
 
         spawn_local(async move {
             flush_pending(
@@ -2045,6 +2080,9 @@ impl ConnectedWorkspace {
                 flushing,
                 send_failures,
                 last_send_ok_ms,
+                inner,
+                rejected_writes,
+                last_reject_reason,
             )
             .await;
         });
@@ -2140,6 +2178,9 @@ async fn flush_pending(
     flushing: Rc<Cell<bool>>,
     send_failures: Rc<Cell<u32>>,
     last_send_ok_ms: Rc<Cell<f64>>,
+    inner: Rc<RefCell<Workspace>>,
+    rejected_writes: Rc<Cell<u32>>,
+    last_reject_reason: Rc<RefCell<Option<String>>>,
 ) {
     const DEBOUNCE_MS: u64 = 300;
     const MAX_BACKOFF_MS: u64 = 8_000;
@@ -2159,12 +2200,12 @@ async fn flush_pending(
         }
 
         match send_batch(&client, &room_id, batch).await {
-            Ok(()) => {
+            SendOutcome::Sent => {
                 backoff_ms = DEBOUNCE_MS;
                 send_failures.set(0);
                 last_send_ok_ms.set(js_sys::Date::now());
             }
-            Err(failed) => {
+            SendOutcome::Retryable(failed) => {
                 let mut p = pending.borrow_mut();
                 for update in failed {
                     merge_pending(&mut p, update);
@@ -2172,38 +2213,97 @@ async fn flush_pending(
                 send_failures.set(send_failures.get().saturating_add(1));
                 backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
             }
+            SendOutcome::Rejected { updates, reason } => {
+                // Permanent (ADR 0003 phase 3): retrying can never succeed, so
+                // drop the batch and roll the affected cells back to converged
+                // state — the writes never left this device, so a LOCAL apply
+                // (never enqueued) makes this client match every other one.
+                // If the timeline fetch fails we still drop and surface: a
+                // dirty cell is recoverable via the next sync/reload; an
+                // infinite retry loop is not.
+                let ids: Vec<tables_over_matrix::CellId> = updates
+                    .iter()
+                    .map(|u| tables_over_matrix::CellId::new(&u.table_id, &u.row_id, &u.column_id))
+                    .collect();
+                if let Ok(fetched) = fetch_room_cell_updates(&client, &room_id).await {
+                    let events: Vec<CellUpdate> = fetched.into_iter().map(|(_, u)| u).collect();
+                    let converged = crate::history::converged_values(&ids, &events);
+                    let mut ws = inner.borrow_mut();
+                    for (id, value) in converged {
+                        let ts = ws.next_timestamp_pub();
+                        let _ = ws.apply_update(CellUpdate::new(
+                            id.table_id.clone(),
+                            id.row_id.clone(),
+                            id.column_id.clone(),
+                            value,
+                            ts,
+                        ));
+                    }
+                }
+                rejected_writes.set(rejected_writes.get().saturating_add(updates.len() as u32));
+                *last_reject_reason.borrow_mut() = Some(reason);
+                backoff_ms = DEBOUNCE_MS;
+            }
         }
     }
 }
 
-/// Send a coalesced batch of updates, returning the ones that failed (so the
-/// caller can re-queue and retry). Fails closed on a non-encrypted room.
-async fn send_batch(
-    client: &Client,
-    room_id: &OwnedRoomId,
-    batch: Vec<CellUpdate>,
-) -> Result<(), Vec<CellUpdate>> {
+/// The fate of one flush attempt (ADR 0003 phase 3).
+enum SendOutcome {
+    Sent,
+    /// Transient (rate limit, network, 5xx, room cache not ready): re-queue
+    /// and retry with backoff.
+    Retryable(Vec<CellUpdate>),
+    /// Permanent: retrying can never succeed. The caller drops the batch,
+    /// reverts the cells to converged state, and surfaces `reason`.
+    Rejected {
+        updates: Vec<CellUpdate>,
+        reason: String,
+    },
+}
+
+/// Whether a send error can never succeed on retry. Unknown errors default to
+/// retryable — wrongly retrying is bounded noise, wrongly dropping is loss.
+fn is_permanent_send_error(err: &matrix_sdk::Error) -> bool {
+    use matrix_sdk::ruma::api::client::error::ErrorKind;
+    if let matrix_sdk::Error::Http(http) = err {
+        if let Some(kind) = http.client_api_error_kind() {
+            return matches!(
+                kind,
+                ErrorKind::Forbidden { .. } | ErrorKind::UnknownToken { .. } | ErrorKind::TooLarge
+            );
+        }
+    }
+    false
+}
+
+/// Send a coalesced batch of updates. Fails closed on a non-encrypted room —
+/// as a REJECTION the caller must surface, not a silent drop.
+async fn send_batch(client: &Client, room_id: &OwnedRoomId, batch: Vec<CellUpdate>) -> SendOutcome {
     let Some(room) = client.get_room(room_id) else {
         // Room not available yet; retry the whole batch on the next pass.
-        return Err(batch);
+        return SendOutcome::Retryable(batch);
     };
 
     // Fail closed: never emit workspace data into a non-encrypted room. This is
-    // a permanent condition (not a transient send error), so drop rather than
-    // retry forever. See ARCHITECTURE_REVIEW.md §4.2.
+    // a permanent condition (see ARCHITECTURE_REVIEW.md §4.2) — previously a
+    // SILENT drop; now a surfaced rejection.
     if !room.encryption_state().is_encrypted() {
-        return Ok(());
+        return SendOutcome::Rejected {
+            updates: batch,
+            reason: "this workspace room is not end-to-end encrypted".to_string(),
+        };
     }
 
     if batch.is_empty() {
-        return Ok(());
+        return SendOutcome::Sent;
     }
 
     // Send the coalesced flush as ONE batch event (the queue already deduped to
     // the latest value per cell, and each cell is independent LWW, so order
     // doesn't matter). A flurry of edits — or a first-reorder `_order` backfill
     // across many rows — is then a single event rather than one per cell, which
-    // keeps it under `rc_message`. All-or-nothing: on failure re-queue the lot.
+    // keeps it under `rc_message`. All-or-nothing per attempt.
     let result = if batch.len() == 1 {
         let content: tables_over_matrix::CellUpdateEventContent = batch[0].clone().into();
         room.send(content).await.map(|_| ())
@@ -2213,7 +2313,11 @@ async fn send_batch(
     };
 
     match result {
-        Ok(()) => Ok(()),
-        Err(_) => Err(batch),
+        Ok(()) => SendOutcome::Sent,
+        Err(e) if is_permanent_send_error(&e) => SendOutcome::Rejected {
+            updates: batch,
+            reason: format!("the server rejected the change: {e}"),
+        },
+        Err(_) => SendOutcome::Retryable(batch),
     }
 }
