@@ -204,17 +204,17 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
     return cols.filter(c => !deletedCols.has(c.id))
   }, [schema, deletedCols])
 
-  // The card footer's person comes from the FIRST member-type column (issue
-  // bc48a6ed) — the old magic `assignee` column id is gone. Falls back to
-  // nothing when the table has no member column.
+  // The card footer's person comes from the view's CONFIGURED assignee
+  // column — an explicit, optional setting (lean-on-view-settings rule: a
+  // table can have several member columns; which one is "the assignee" is the
+  // user's choice, never inferred). Unset, or pointing at a since-deleted
+  // column → no footer.
   const members = useMembers(workspace)
-  const memberCol = useMemo(
-    () =>
-      availableColumns.find(
-        c => c.column_type === 'member' || c.column_type === 'multimember',
-      ) ?? null,
-    [availableColumns],
-  )
+  const memberCol = useMemo(() => {
+    const configured = viewConfig?.kanban_config?.assignee_column
+    if (!configured) return null
+    return availableColumns.find(c => c.id === configured) ?? null
+  }, [availableColumns, viewConfig])
   const personFor = (card: KanbanCard): string | null => {
     if (!memberCol) return null
     const v = card[memberCol.id]
@@ -257,6 +257,9 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
         title_column: viewConfig.kanban_config?.title_column,
         display_columns: viewConfig.kanban_config?.display_columns ?? [],
         column_options: chosen?.options ?? [],
+        ...(viewConfig.kanban_config?.assignee_column
+          ? { assignee_column: viewConfig.kanban_config.assignee_column }
+          : {}),
       },
     }
     try {

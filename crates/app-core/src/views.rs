@@ -85,6 +85,11 @@ pub struct KanbanConfig {
     /// These columns are always shown even when empty.
     #[serde(default)]
     pub column_options: Vec<String>,
+    /// Which member-type column drives the card footer person (issue bc48a6ed
+    /// feedback: an explicit, OPTIONAL view setting — never inferred from the
+    /// schema). Unset → no footer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee_column: Option<String>,
 }
 
 /// Calendar-specific configuration
