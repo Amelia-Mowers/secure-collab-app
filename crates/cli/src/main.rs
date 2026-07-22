@@ -178,6 +178,37 @@ enum RowCmd {
         #[arg(required = true)]
         cells: Vec<String>,
     },
+    /// Delete a row (decay model: it disappears from the table; history keeps it).
+    Delete {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// Row id (from `table show`).
+        row: String,
+    },
+    /// Move a row within the table's manual order. Pass exactly one of
+    /// --before/--after/--first/--last.
+    Move {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// Row id to move.
+        row: String,
+        /// Place it before this row id.
+        #[arg(long, group = "pos")]
+        before: Option<String>,
+        /// Place it after this row id.
+        #[arg(long, group = "pos")]
+        after: Option<String>,
+        /// Move to the top.
+        #[arg(long, group = "pos")]
+        first: bool,
+        /// Move to the bottom.
+        #[arg(long, group = "pos")]
+        last: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -209,6 +240,37 @@ enum ColumnCmd {
         /// New display name.
         #[arg(long)]
         name: Option<String>,
+    },
+    /// Delete a column (its values stop showing; history keeps them).
+    Delete {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// Column (id or name).
+        column: String,
+    },
+    /// Move a column left/right in the display order. Pass exactly one of
+    /// --before/--after/--first/--last.
+    Move {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Table (id or name).
+        table: String,
+        /// Column (id or name) to move.
+        column: String,
+        /// Place it before this column.
+        #[arg(long, group = "colpos")]
+        before: Option<String>,
+        /// Place it after this column.
+        #[arg(long, group = "colpos")]
+        after: Option<String>,
+        /// Move to the far left.
+        #[arg(long, group = "colpos")]
+        first: bool,
+        /// Move to the far right.
+        #[arg(long, group = "colpos")]
+        last: bool,
     },
 }
 
@@ -315,6 +377,20 @@ async fn run() -> Result<()> {
                 row,
                 cells,
             } => crud::row_set(workspace, table, row, cells).await,
+            RowCmd::Delete {
+                workspace,
+                table,
+                row,
+            } => crud::row_delete(workspace, table, row).await,
+            RowCmd::Move {
+                workspace,
+                table,
+                row,
+                before,
+                after,
+                first,
+                last,
+            } => crud::row_move(workspace, table, row, before, after, first, last).await,
         },
         Command::Column { command } => match command {
             ColumnCmd::Add {
@@ -330,6 +406,20 @@ async fn run() -> Result<()> {
                 default,
                 name,
             } => crud::column_set(workspace, table, column, options, default, name).await,
+            ColumnCmd::Delete {
+                workspace,
+                table,
+                column,
+            } => crud::column_delete(workspace, table, column).await,
+            ColumnCmd::Move {
+                workspace,
+                table,
+                column,
+                before,
+                after,
+                first,
+                last,
+            } => crud::column_move(workspace, table, column, before, after, first, last).await,
         },
         Command::View { command } => match command {
             ViewCmd::List { workspace, table } => crud::view_list(workspace, table).await,
