@@ -200,6 +200,17 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/* Brief flash when a concurrent remote write overwrote a recent local edit
+   (legitimate LWW loss — ADR 0003 item 4). Deliberately light: no modal, the
+   history drawer is the recovery path. */
+.cell-conflict {
+  animation: cell-conflict-flash 2.5s ease-out;
+}
+@keyframes cell-conflict-flash {
+  0%, 55% { background: color-mix(in srgb, var(--amber, #f59e0b) 22%, transparent); }
+  100% { background: transparent; }
+}
+
 .cell-display {
   display: inline-flex;
   align-items: center;
