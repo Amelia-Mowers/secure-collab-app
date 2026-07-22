@@ -218,13 +218,58 @@ describe('KanbanView', () => {
 
     it('prompts to re-group when the board groups by a deleted column', async () => {
       const ws = makeKanbanWorkspace() // groups by "status"
+      // A second select column so the picker has a valid target (issue
+      // 6e2011e3: only select columns are groupable).
+      ws.addColumn(
+        'tasks',
+        JSON.stringify({
+          id: 'stage',
+          name: 'Stage',
+          column_type: 'select',
+          options: ['Early', 'Late'],
+        }),
+      )
       ws.deleteColumn('tasks', 'status')
       renderKanban(ws)
       await waitFor(() =>
         expect(screen.getByText(/no longer exists/i)).toBeInTheDocument(),
       )
-      // The picker offers a still-present column to group by instead.
+      // The picker offers the remaining select column to group by instead.
       expect(screen.getByText('Use this column')).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'Stage' })).toBeInTheDocument()
+    })
+
+    it('offers only select columns in the re-group picker (issue 6e2011e3)', async () => {
+      const ws = makeKanbanWorkspace()
+      ws.addColumn(
+        'tasks',
+        JSON.stringify({
+          id: 'stage',
+          name: 'Stage',
+          column_type: 'select',
+          options: ['Early', 'Late'],
+        }),
+      )
+      ws.deleteColumn('tasks', 'status')
+      renderKanban(ws)
+      await waitFor(() =>
+        expect(screen.getByText(/no longer exists/i)).toBeInTheDocument(),
+      )
+      // Text/number/date/etc. columns must not be groupable.
+      expect(screen.queryByRole('option', { name: 'Title' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Priority' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: 'Due Date' })).not.toBeInTheDocument()
+    })
+
+    it('says to add a Select column when no groupable column remains', async () => {
+      const ws = makeKanbanWorkspace() // "status" is the only select column
+      ws.deleteColumn('tasks', 'status')
+      renderKanban(ws)
+      await waitFor(() =>
+        expect(screen.getByText(/no longer exists/i)).toBeInTheDocument(),
+      )
+      expect(screen.getByText(/add a select column first/i)).toBeInTheDocument()
+      expect(screen.queryByText('Use this column')).not.toBeInTheDocument()
     })
 
     it('does not prompt when the group-by column still exists', async () => {
