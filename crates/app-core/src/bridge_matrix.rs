@@ -1515,6 +1515,42 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    // ── Persistent outbox (ADR 0003 phase 1) ────────────────────────────────
+
+    /// The current pending (unsent) cell updates as a JSON array — the
+    /// in-memory send queue, for the UI to mirror to the encrypted outbox
+    /// store. Empty array = nothing unsent.
+    #[wasm_bindgen(js_name = pendingUpdates)]
+    pub fn pending_updates(&self) -> Result<String, JsValue> {
+        let pending = self.pending.borrow();
+        let updates: Vec<&CellUpdate> = pending.values().collect();
+        serde_json::to_string(&updates).map_err(|_| JsValue::from_str("Serialization failed"))
+    }
+
+    /// Replay a persisted outbox (the JSON from [`pendingUpdates`]) after a
+    /// cold start: each update re-applies to the local workspace under LWW —
+    /// a write another client has since superseded loses fairly, because it
+    /// carries its original HLC timestamp — and re-enters the send queue.
+    /// Call once, after `create()`, before user edits.
+    #[wasm_bindgen(js_name = restorePendingUpdates)]
+    pub fn restore_pending_updates(&self, json: &str) -> Result<u32, JsValue> {
+        let updates: Vec<CellUpdate> =
+            serde_json::from_str(json).map_err(|_| JsValue::from_str("Invalid outbox JSON"))?;
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let count = updates.len() as u32;
+        {
+            let mut ws = self.inner.borrow_mut();
+            for update in &updates {
+                // Best-effort: an update for a since-deleted table just no-ops.
+                let _ = ws.apply_update(update.clone());
+            }
+        }
+        self.enqueue_updates(updates);
+        Ok(count)
+    }
+
     /// The change history for the History drawer: every real cell edit (order-
     /// based compaction bumps are filtered out) plus every recorded revert, as a
     /// JSON array sorted newest-first. Pass a `table_id` to scope it to one table
