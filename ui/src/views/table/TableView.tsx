@@ -919,16 +919,6 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             </thead>
             </DndContext>
             <tbody>
-              {tableRows.length === 0 && (
-                <tr className="row-empty-cta">
-                  <td colSpan={totalColSpan}>
-                    <button className="empty-cta-btn" onClick={newEntry}>
-                      + Add your first entry
-                    </button>
-                  </td>
-                </tr>
-              )}
-
               {paddingTop > 0 && (
                 <tr aria-hidden="true"><td colSpan={totalColSpan} style={{ height: paddingTop, padding: 0 }} /></tr>
               )}
@@ -994,8 +984,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               )}
 
               {/* Shadow row: a faded, prefilled-with-defaults ghost row for quick
-                  inline adds. Editing any cell promotes it to a real entry. */}
-              {tableRows.length > 0 && columnsMeta.length > 0 && (
+                  inline adds. Editing any cell promotes it to a real entry. Also
+                  the empty-table state (issue c79ce975): the first entry is added
+                  inline here, no separate CTA. */}
+              {columnsMeta.length > 0 && (
                 <tr className="row-shadow" style={{ height: ROW_HEIGHT }} title="Add a new entry">
                   <td className="cell-open" aria-hidden="true">
                     <span className="cell-shadow-plus">+</span>
