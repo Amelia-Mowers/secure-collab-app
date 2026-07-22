@@ -6,6 +6,12 @@ use crate::views::{ViewConfig, ViewManager};
 use crate::Result;
 use std::collections::HashMap;
 use tables_over_matrix::{Cell, CellId, CellUpdate, CompactionManager, Table, ROW_DELETED_COLUMN};
+
+/// Empty for default-substitution purposes: `null` or `""` (a missing cell is
+/// handled by the callers' `is_none_or`).
+fn value_is_empty(v: &serde_json::Value) -> bool {
+    v.is_null() || v.as_str().is_some_and(|s| s.is_empty())
+}
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::info;
 
@@ -229,10 +235,48 @@ impl Workspace {
         if !self.tables.contains_key(table_id) {
             return Err(crate::Error::TableNotFound);
         }
+        let mut updates = Vec::new();
+        // Mass-init on default CHANGE (issue b4b9c90f): empty select cells read
+        // as the current default, so rows relying on the OLD default must keep
+        // it — write it into every actually-empty cell before the new default
+        // takes over. Setting a FIRST default writes nothing: empties simply
+        // start reading as it.
+        if let Some(new_default) = patch.get("default_value") {
+            let old_default = self
+                .schema_manager
+                .get_table_schema(table_id)
+                .and_then(|s| s.columns.get(column_id).cloned())
+                .filter(|c| matches!(c.column_type, crate::ColumnType::Select))
+                .and_then(|c| c.default_value)
+                .filter(|v| !value_is_empty(v));
+            if let Some(old) = old_default {
+                if old != *new_default {
+                    let empty_rows: Vec<String> = self
+                        .raw_table_rows(table_id)?
+                        .iter()
+                        .filter(|row| row.get(column_id).is_none_or(value_is_empty))
+                        .filter_map(|row| {
+                            row.get("_row_id")
+                                .and_then(|v| v.as_str())
+                                .map(String::from)
+                        })
+                        .collect();
+                    for row_id in empty_rows {
+                        let ts = self.next_timestamp();
+                        let update = CellUpdate::new(table_id, &row_id, column_id, old.clone(), ts);
+                        if let Some(table) = self.tables.get_mut(table_id) {
+                            table.apply_update(update.clone());
+                        }
+                        updates.push(update);
+                    }
+                }
+            }
+        }
         let timestamp = self.next_timestamp();
-        let updates = self
-            .schema_manager
-            .update_column(table_id, column_id, patch, timestamp);
+        updates.extend(
+            self.schema_manager
+                .update_column(table_id, column_id, patch, timestamp),
+        );
         Ok(updates)
     }
 
@@ -612,6 +656,42 @@ impl Workspace {
         &self,
         table_id: &str,
     ) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>> {
+        let mut rows = self.raw_table_rows(table_id)?;
+        // Read-time defaults (issue b4b9c90f): an empty cell in a select column
+        // that has a default reads AS the default. Existing entries pick a new
+        // default up without a mass write; `update_column` materializes the old
+        // default before a CHANGE so those rows don't retroactively flip.
+        if let Some(schema) = self.schema_manager.get_table_schema(table_id) {
+            let defaults: Vec<(String, serde_json::Value)> = schema
+                .columns
+                .values()
+                .filter(|c| matches!(c.column_type, crate::ColumnType::Select))
+                .filter_map(|c| {
+                    c.default_value
+                        .clone()
+                        .filter(|v| !value_is_empty(v))
+                        .map(|v| (c.id.clone(), v))
+                })
+                .collect();
+            if !defaults.is_empty() {
+                for row in &mut rows {
+                    for (col_id, default) in &defaults {
+                        if row.get(col_id).is_none_or(value_is_empty) {
+                            row.insert(col_id.clone(), default.clone());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Materialized rows WITHOUT read-time defaults applied — the storage
+    /// truth, used internally where "is this cell actually empty" matters.
+    fn raw_table_rows(
+        &self,
+        table_id: &str,
+    ) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>> {
         let cutoffs = self.effective_cutoffs(table_id);
         let floor = self.schema_manager.table_deleted_at(table_id).unwrap_or(0);
         let table = self
@@ -807,6 +887,111 @@ mod tests {
 
         let tables = workspace.list_tables();
         assert!(tables.contains(&"tasks".to_string()));
+    }
+
+    // ─── Select defaults (issue b4b9c90f) ───────────────────────────────────
+
+    /// Workspace with a select `status` column (options open/closed, no default
+    /// yet) and three rows: one set to "closed", one empty-string, one missing.
+    fn select_default_fixture() -> Workspace {
+        let mut ws = Workspace::new("w");
+        ws.create_table(
+            TableDefinition::new("t", "T")
+                .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text))
+                .with_column(
+                    ColumnDefinition::new("status", "Status", ColumnType::Select)
+                        .with_options(vec!["open".into(), "closed".into()]),
+                ),
+        )
+        .unwrap();
+        ws.update_cell("t", "r1", "title", serde_json::json!("a"))
+            .unwrap();
+        ws.update_cell("t", "r1", "status", serde_json::json!("closed"))
+            .unwrap();
+        ws.update_cell("t", "r2", "title", serde_json::json!("b"))
+            .unwrap();
+        ws.update_cell("t", "r2", "status", serde_json::json!(""))
+            .unwrap();
+        ws.update_cell("t", "r3", "title", serde_json::json!("c"))
+            .unwrap();
+        ws
+    }
+
+    fn status_of(ws: &Workspace, row: &str) -> Option<String> {
+        ws.get_table_rows("t")
+            .unwrap()
+            .iter()
+            .find(|r| r.get("_row_id").and_then(|v| v.as_str()) == Some(row))
+            .and_then(|r| r.get("status"))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+    }
+
+    #[test]
+    fn test_select_default_applies_to_existing_empty_cells_at_read_time() {
+        let mut ws = select_default_fixture();
+        // Setting the FIRST default writes no data cells…
+        let updates = ws
+            .update_column("t", "status", &serde_json::json!({"default_value": "open"}))
+            .unwrap();
+        assert!(
+            updates
+                .iter()
+                .all(|u| u.table_id == crate::schema::SCHEMA_TABLE_ID),
+            "first default must be schema-only, no mass write"
+        );
+        // …but empty (missing or "") cells now read as it; set cells don't.
+        assert_eq!(status_of(&ws, "r1").as_deref(), Some("closed"));
+        assert_eq!(status_of(&ws, "r2").as_deref(), Some("open"));
+        assert_eq!(status_of(&ws, "r3").as_deref(), Some("open"));
+    }
+
+    #[test]
+    fn test_select_default_change_materializes_old_default() {
+        let mut ws = select_default_fixture();
+        ws.update_column("t", "status", &serde_json::json!({"default_value": "open"}))
+            .unwrap();
+        // Changing open→closed: the rows that read "open" must keep it.
+        let updates = ws
+            .update_column(
+                "t",
+                "status",
+                &serde_json::json!({"default_value": "closed"}),
+            )
+            .unwrap();
+        let data_writes: Vec<_> = updates.iter().filter(|u| u.table_id == "t").collect();
+        assert_eq!(
+            data_writes.len(),
+            2,
+            "both empty cells materialize the old default"
+        );
+        assert!(data_writes
+            .iter()
+            .all(|u| u.value == serde_json::json!("open")));
+        assert_eq!(status_of(&ws, "r2").as_deref(), Some("open"));
+        assert_eq!(status_of(&ws, "r3").as_deref(), Some("open"));
+        // A NEW empty row reads the new default.
+        ws.update_cell("t", "r4", "title", serde_json::json!("d"))
+            .unwrap();
+        assert_eq!(status_of(&ws, "r4").as_deref(), Some("closed"));
+    }
+
+    #[test]
+    fn test_text_column_default_not_substituted_at_read_time() {
+        let mut ws = select_default_fixture();
+        ws.update_column(
+            "t",
+            "title",
+            &serde_json::json!({"default_value": "untitled"}),
+        )
+        .unwrap();
+        // Read-time substitution is select-only (the issue's scope).
+        let rows = ws.get_table_rows("t").unwrap();
+        let r3 = rows
+            .iter()
+            .find(|r| r.get("_row_id").and_then(|v| v.as_str()) == Some("r3"))
+            .unwrap();
+        assert_eq!(r3.get("title"), Some(&serde_json::json!("c")));
     }
 
     #[test]
