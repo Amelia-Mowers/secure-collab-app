@@ -78,8 +78,12 @@ export function CellDisplay({ column, value, lookup }: CellDisplayProps) {
     }
     case 'select':
       return value ? <span className="cell-display cell-pill">{String(value)}</span> : <span className="cell-display" />
-    case 'document':
-      return <span className="cell-display cell-display--muted">{defaultText(value).slice(0, 80)}</span>
+    case 'document': {
+      // One line only: newlines in the markdown would otherwise grow the cell
+      // vertically, and the CSS clamp (cell-display--doc) clips the rest.
+      const preview = defaultText(value).replace(/\s+/g, ' ').trim().slice(0, 120)
+      return <span className="cell-display cell-display--muted cell-display--doc">{preview}</span>
+    }
     case 'json':
       return <span className="cell-display cell-display--mono">{defaultText(value)}</span>
     case 'reference': {
