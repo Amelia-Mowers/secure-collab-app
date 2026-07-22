@@ -15,6 +15,7 @@ import { SignInPage } from './views/auth/SignInPage'
 import { OauthCallbackPage } from './views/auth/OauthCallbackPage'
 import { TrialGate } from './components/TrialStatus'
 import { OfflineOverlay } from './components/OfflineOverlay'
+import { DisconnectedOverlay } from './components/DisconnectedOverlay'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
 import './App.css'
 
@@ -86,6 +87,7 @@ function WorkspaceShell() {
 
   return (
     <div className="app">
+      <DisconnectedOverlay workspace={workspace} />
       <Sidebar workspace={workspace} workspaceId={decodedWorkspaceId} syncCount={syncCount} />
       <div className="app-main">
         <ReadOnlyBanner workspace={workspace} syncCount={syncCount} />

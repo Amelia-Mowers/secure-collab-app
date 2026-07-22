@@ -1185,6 +1185,15 @@ pub struct ConnectedWorkspace {
     pending: Rc<RefCell<HashMap<CellKey, CellUpdate>>>,
     /// Guard: whether a debounced flush task is currently scheduled/running.
     flushing: Rc<Cell<bool>>,
+    /// Connection health (ADR 0003 phase 2): consecutive failed flush batches.
+    /// Reset to 0 on any successful send.
+    send_failures: Rc<Cell<u32>>,
+    /// JS ms timestamp of the last successful batch send (session start until
+    /// the first send).
+    last_send_ok_ms: Rc<Cell<f64>>,
+    /// JS ms timestamp of the last sync response received — proof the
+    /// homeserver is reachable even when nothing is being sent.
+    last_sync_ok_ms: Rc<Cell<f64>>,
 }
 
 #[wasm_bindgen]
@@ -1326,6 +1335,9 @@ impl ConnectedWorkspace {
             marker_ts: Rc::new(Cell::new(marker_ts)),
             pending: Rc::new(RefCell::new(HashMap::new())),
             flushing: Rc::new(Cell::new(false)),
+            send_failures: Rc::new(Cell::new(0)),
+            last_send_ok_ms: Rc::new(Cell::new(js_sys::Date::now())),
+            last_sync_ok_ms: Rc::new(Cell::new(js_sys::Date::now())),
         })
     }
 
@@ -1357,6 +1369,7 @@ impl ConnectedWorkspace {
         let workspace = Rc::clone(&self.inner);
         let undecryptable = Rc::clone(&self.undecryptable);
         let marker_ts = Rc::clone(&self.marker_ts);
+        let last_sync_ok_ms = Rc::clone(&self.last_sync_ok_ms);
 
         spawn_local(async move {
             let settings = SyncSettings::default();
@@ -1366,10 +1379,14 @@ impl ConnectedWorkspace {
                     let workspace = Rc::clone(&workspace);
                     let undecryptable = Rc::clone(&undecryptable);
                     let marker_ts = Rc::clone(&marker_ts);
+                    let last_sync_ok_ms = Rc::clone(&last_sync_ok_ms);
                     let room_id = room_id.clone();
                     let on_change = on_change.clone();
 
                     async move {
+                        // Every sync response is proof the homeserver answered
+                        // (ADR 0003 phase 2 — connection health).
+                        last_sync_ok_ms.set(js_sys::Date::now());
                         // Look for our room in the sync response
                         if let Some(joined) = response.rooms.joined.get(&room_id) {
                             let mut changed = false;
@@ -1513,6 +1530,23 @@ impl ConnectedWorkspace {
         self.enqueue_updates(updates);
 
         Ok(())
+    }
+
+    /// Connection health snapshot (ADR 0003 phase 2), as JSON:
+    /// `{pendingCount, consecutiveSendFailures, msSinceLastSendOk,
+    /// msSinceLastSyncOk}`. The POLICY (when to call the connection "down" and
+    /// lock writes) lives in the UI — this is just the raw signal. Sync
+    /// responses count as proof of reachability even when nothing is sending.
+    #[wasm_bindgen(js_name = connectionHealth)]
+    pub fn connection_health(&self) -> String {
+        let now = js_sys::Date::now();
+        format!(
+            r#"{{"pendingCount":{},"consecutiveSendFailures":{},"msSinceLastSendOk":{},"msSinceLastSyncOk":{}}}"#,
+            self.pending.borrow().len(),
+            self.send_failures.get(),
+            (now - self.last_send_ok_ms.get()).max(0.0) as u64,
+            (now - self.last_sync_ok_ms.get()).max(0.0) as u64,
+        )
     }
 
     // ── Persistent outbox (ADR 0003 phase 1) ────────────────────────────────
@@ -2000,9 +2034,19 @@ impl ConnectedWorkspace {
         let room_id = self.room_id.clone();
         let pending = Rc::clone(&self.pending);
         let flushing = Rc::clone(&self.flushing);
+        let send_failures = Rc::clone(&self.send_failures);
+        let last_send_ok_ms = Rc::clone(&self.last_send_ok_ms);
 
         spawn_local(async move {
-            flush_pending(client, room_id, pending, flushing).await;
+            flush_pending(
+                client,
+                room_id,
+                pending,
+                flushing,
+                send_failures,
+                last_send_ok_ms,
+            )
+            .await;
         });
     }
 
@@ -2094,6 +2138,8 @@ async fn flush_pending(
     room_id: OwnedRoomId,
     pending: Rc<RefCell<HashMap<CellKey, CellUpdate>>>,
     flushing: Rc<Cell<bool>>,
+    send_failures: Rc<Cell<u32>>,
+    last_send_ok_ms: Rc<Cell<f64>>,
 ) {
     const DEBOUNCE_MS: u64 = 300;
     const MAX_BACKOFF_MS: u64 = 8_000;
@@ -2113,12 +2159,17 @@ async fn flush_pending(
         }
 
         match send_batch(&client, &room_id, batch).await {
-            Ok(()) => backoff_ms = DEBOUNCE_MS,
+            Ok(()) => {
+                backoff_ms = DEBOUNCE_MS;
+                send_failures.set(0);
+                last_send_ok_ms.set(js_sys::Date::now());
+            }
             Err(failed) => {
                 let mut p = pending.borrow_mut();
                 for update in failed {
                     merge_pending(&mut p, update);
                 }
+                send_failures.set(send_failures.get().saturating_add(1));
                 backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
             }
         }
