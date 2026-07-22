@@ -377,6 +377,46 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_target_reverts_a_whole_batched_event() {
+        // Multi-cell operations batch into ONE Matrix event, so their updates
+        // share a server_timestamp. The drawer's exclusive restore targets
+        // `serverTs - 1` of a clicked entry — which must revert the ENTIRE
+        // batch (it was one user action), not just the clicked cell.
+        // (issue 76987002)
+        let events = vec![
+            ev("r1", "a", json!("base"), 1, 100),
+            // One batched event at server=200 touching three cells:
+            ev("r1", "a", json!("x"), 2, 200),
+            ev("r1", "b", json!("y"), 3, 200),
+            ev("r2", "c", json!("z"), 4, 200),
+        ];
+        let current = state_as_of(&events, 999);
+        // Exclusive target: the instant before the batch.
+        let as_of = state_as_of(&events, 199);
+        let updates = rollback_updates(&current, &as_of, |id: &CellId| id.table_id == "t", 1000);
+
+        let by: HashMap<(String, String), Value> = updates
+            .iter()
+            .map(|u| ((u.row_id.clone(), u.column_id.clone()), u.value.clone()))
+            .collect();
+        // All three cells from the batch revert together.
+        assert_eq!(by.len(), 3);
+        assert_eq!(by.get(&("r1".into(), "a".into())), Some(&json!("base")));
+        assert_eq!(by.get(&("r1".into(), "b".into())), Some(&json!(null)));
+        assert_eq!(by.get(&("r2".into(), "c".into())), Some(&json!(null)));
+
+        // Inclusive target (the batch's own ts) keeps the batch: nothing to do.
+        let as_of_incl = state_as_of(&events, 200);
+        assert!(rollback_updates(
+            &current,
+            &as_of_incl,
+            |id: &CellId| id.table_id == "t",
+            2000
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn revert_a_revert_returns_to_the_forward_state() {
         // Timeline: v=A@(1,100), v=B@(2,200). Roll back to 150 (→A), applying the
         // restore as a new event at (3,300). Reverting THAT revert = rolling back

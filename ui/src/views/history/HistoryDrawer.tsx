@@ -95,7 +95,7 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
       if (!workspace.rollbackTo) return
       if (
         !window.confirm(
-          'Roll this table back to how it looked at this point? This is recorded in history and can itself be reverted.',
+          'Undo this change and everything after it? This is recorded in history and can itself be reverted.',
         )
       ) {
         return
@@ -103,7 +103,12 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
       setBusyTs(serverTs)
       setNotice(null)
       try {
-        const sent = await workspace.rollbackTo(tableId, serverTs)
+        // EXCLUSIVE semantics (issue 76987002): the drawer is a change list, so
+        // "Restore" on an entry undoes that entry too — target the instant just
+        // before it. Entries from one batched Matrix event share a serverTs and
+        // revert together (they were one user action). On a revert entry this
+        // is revert-the-revert.
+        const sent = await workspace.rollbackTo(tableId, serverTs - 1)
         setNotice(sent > 0 ? 'Reverted.' : 'Already at that state — nothing to change.')
         onReverted?.()
         await load()
@@ -171,9 +176,9 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
                   className="history-entry__restore"
                   onClick={() => restore(e.serverTs)}
                   disabled={busyTs !== null}
-                  title="Roll the table back to how it looked at this point"
+                  title="Undo this change and everything after it"
                 >
-                  {busyTs === e.serverTs ? '…' : 'Restore'}
+                  {busyTs === e.serverTs ? '…' : 'Undo from here'}
                 </button>
               </li>
             ))}
