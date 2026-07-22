@@ -447,6 +447,25 @@ mod matrix_impl {
             Ok(())
         }
 
+        /// The account's current global display name (None if unset).
+        pub async fn get_display_name(&self) -> Result<Option<String>> {
+            self.client
+                .account()
+                .get_display_name()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to fetch display name: {e}"))
+        }
+
+        /// Set the account's global Matrix display name (issue 1c8b3855).
+        pub async fn set_display_name(&self, name: &str) -> Result<()> {
+            self.client
+                .account()
+                .set_display_name(Some(name))
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to set display name: {e}"))?;
+            Ok(())
+        }
+
         /// Set the workspace room ID.
         pub fn set_room(&mut self, room_id: OwnedRoomId) {
             self.room_id = Some(room_id);
