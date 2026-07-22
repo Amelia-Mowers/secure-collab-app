@@ -208,10 +208,15 @@
 }
 
 .cell-display--muted { color: var(--text-tertiary); }
-/* Document previews clip to the cell instead of wrapping/overflowing. */
+/* Document previews clip to the cell instead of wrapping/overflowing.
+   The table uses auto layout (content-driven column widths), so a percentage
+   max-width can't constrain anything — a nowrap preview would just widen its
+   own column until the table scrolled off-page. A hard pixel cap genuinely
+   bounds the column; true fit-to-viewport sizing comes with the column
+   resize/visibility work (issue 848dcbf7, table-layout: fixed). */
 .cell-display--doc {
   display: block;
-  max-width: 100%;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
