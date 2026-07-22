@@ -39,6 +39,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[cfg(feature = "wasm")]
 pub mod bridge;
+pub mod filter_eval;
 pub mod history;
 pub mod schema;
 pub mod snapshot;
