@@ -104,6 +104,22 @@ describe('passkeyPrf', () => {
       await expect(registerPasskeyPrf('@me:tidework.io', 'Me')).rejects.toThrow(/PRF/i)
     })
 
+    it('names the provider problem when PRF is unsupported (issue b5a7e62c)', async () => {
+      create.mockResolvedValue(fakeCred({ enabled: false }))
+      // The message must steer the user: name a known-incompatible provider
+      // class and the recovery-key way out.
+      await expect(registerPasskeyPrf('@me:tidework.io', 'Me')).rejects.toThrow(/Bitwarden/)
+    })
+
+    it('surfaces the provider message when the fallback assertion has no PRF result', async () => {
+      // create() succeeds but returns no PRF result and no enabled flag; the
+      // fallback get() then yields no PRF either — a credential now exists that
+      // can never derive a secret.
+      create.mockResolvedValue(fakeCred({}))
+      get.mockResolvedValue(fakeCred({ results: {} }))
+      await expect(registerPasskeyPrf('@me:tidework.io', 'Me')).rejects.toThrow(/Bitwarden/)
+    })
+
     it('throws when registration is cancelled', async () => {
       create.mockResolvedValue(null)
       await expect(registerPasskeyPrf('@me:tidework.io', 'Me')).rejects.toThrow(/cancelled/i)

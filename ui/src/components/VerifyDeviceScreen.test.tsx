@@ -98,6 +98,11 @@ describe('VerifyDeviceScreen', () => {
       expect(screen.getByRole('button', { name: /recovery key instead/i })).toBeInTheDocument()
     })
 
+    it('shows the provider-compatibility hint before the user picks a passkey', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByText(/Bitwarden/)).toBeInTheDocument()
+    })
+
     it('sets up a passkey', async () => {
       render(<VerifyDeviceScreen />)
       fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
@@ -228,6 +233,11 @@ describe('VerifyDeviceScreen', () => {
   describe('offer passkey migration (legacy account, after master-key unlock)', () => {
     beforeEach(() => {
       h.recoveryPrompt = { kind: 'offer-passkey' }
+    })
+
+    it('shows the provider-compatibility hint on the migration offer too', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByText(/Bitwarden/)).toBeInTheDocument()
     })
 
     it('offers to set up a passkey, or skip into the app', () => {
