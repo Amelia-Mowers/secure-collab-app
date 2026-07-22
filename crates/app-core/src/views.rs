@@ -363,6 +363,7 @@ mod tests {
                 "In Progress".to_string(),
                 "Done".to_string(),
             ],
+            assignee_column: None,
         }
     }
 
@@ -382,6 +383,7 @@ mod tests {
                 title_column: "title".to_string(),
                 display_columns: vec!["assignee".to_string()],
                 column_options: vec!["Todo".to_string(), "Done".to_string()],
+                assignee_column: None,
             });
 
         assert_eq!(config.view_type, ViewType::Kanban);

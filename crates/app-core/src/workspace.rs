@@ -1532,6 +1532,7 @@ mod tests {
                 "In Progress".to_string(),
                 "Done".to_string(),
             ],
+            assignee_column: None,
         }
     }
 
