@@ -4,6 +4,11 @@ import wasm from 'vite-plugin-wasm'
 import path from 'path'
 
 export default defineConfig({
+  // Mirror vite.config.ts's injected build id (tests assert version-mismatch
+  // behavior against this fixed value).
+  define: {
+    __BUILD_ID__: JSON.stringify('test-build'),
+  },
   plugins: [react(), wasm()],
   resolve: {
     alias: {

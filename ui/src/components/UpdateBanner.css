@@ -1,0 +1,50 @@
+/* New-version banner: fixed top strip above everything, accent-toned — an
+   invitation, not an alarm (the broken variant is the same strip; the copy
+   carries the urgency). */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.update-banner__text {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.update-banner__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.update-banner__reload,
+.update-banner__later {
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.update-banner__reload {
+  background: #fff;
+  color: var(--accent, #6366f1);
+}
+
+.update-banner__later {
+  background: transparent;
+  color: #fff;
+}
+.update-banner__later:hover { background: rgba(255, 255, 255, 0.12); }
