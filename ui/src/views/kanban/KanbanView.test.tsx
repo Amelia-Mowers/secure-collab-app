@@ -261,6 +261,18 @@ describe('KanbanView', () => {
       expect(screen.queryByRole('option', { name: 'Due Date' })).not.toBeInTheDocument()
     })
 
+    it('hides the board until the invalid group-by is fixed (issue cc70fdc5)', async () => {
+      const ws = makeKanbanWorkspace() // 4 seeded tasks, groups by "status"
+      ws.deleteColumn('tasks', 'status')
+      const { container } = renderKanban(ws)
+      await waitFor(() =>
+        expect(screen.getByText(/no longer exists/i)).toBeInTheDocument(),
+      )
+      // No board, no cards — only the re-edit prompt.
+      expect(container.querySelector('.kanban-board-wrap')).not.toBeInTheDocument()
+      expect(screen.queryByText('Design homepage')).not.toBeInTheDocument()
+    })
+
     it('says to add a Select column when no groupable column remains', async () => {
       const ws = makeKanbanWorkspace() // "status" is the only select column
       ws.deleteColumn('tasks', 'status')

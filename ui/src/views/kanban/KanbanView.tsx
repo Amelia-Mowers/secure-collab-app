@@ -396,7 +396,10 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
         />
       )}
 
-      {groupByMissing && (
+      {/* Invalid settings block the board (issue cc70fdc5): grouping by a
+          deleted column would render a meaningless single-lane board, so the
+          re-edit prompt replaces it until a valid group-by is chosen. */}
+      {groupByMissing ? (
         <div className="kanban-reconfig" role="alert">
           <div className="kanban-reconfig__msg">
             This board groups by <strong>{String(groupByColumn)}</strong>, which no longer exists.
@@ -424,8 +427,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
             </div>
           )}
         </div>
-      )}
-
+      ) : (
       <div className="kanban-board-wrap">
         <DndContext
           sensors={sensors}
@@ -490,6 +492,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
           </DragOverlay>
         </DndContext>
       </div>
+      )}
 
       {toast && (
         <div className="kanban-toast" role="alert">
