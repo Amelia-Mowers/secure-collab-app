@@ -194,6 +194,17 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
     return cols.filter(c => !deletedCols.has(c.id))
   }, [schema, deletedCols])
 
+  // Only select/multiselect columns can serve as the "group by" axis — same
+  // rule as NewViewDropdown's kanban config (issue 6e2011e3): grouping by free
+  // text/number would make every distinct value a lane.
+  const regroupColumns = useMemo(
+    () =>
+      availableColumns.filter(
+        c => c.column_type === 'select' || c.column_type === 'multiselect',
+      ),
+    [availableColumns],
+  )
+
   const groupByColumn: string | undefined = viewConfig?.kanban_config?.group_by_column
   // Only flag a missing group-by once the schema has actually loaded.
   const groupByMissing =
@@ -203,7 +214,8 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
 
   const handleRegroup = async () => {
     if (!regroupCol || !viewConfig || !viewId || !tableId) return
-    const chosen = availableColumns.find(c => c.id === regroupCol)
+    const chosen = regroupColumns.find(c => c.id === regroupCol)
+    if (!chosen) return
     const newConfig = {
       id: viewId,
       name: viewConfig.name,
@@ -353,23 +365,29 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
         <div className="kanban-reconfig" role="alert">
           <div className="kanban-reconfig__msg">
             This board groups by <strong>{String(groupByColumn)}</strong>, which no longer exists.
-            Pick a column to group by:
+            Pick a select column to group by:
           </div>
-          <div className="kanban-reconfig__actions">
-            <select
-              className="kanban-reconfig__select"
-              value={regroupCol}
-              onChange={e => setRegroupCol(e.target.value)}
-            >
-              <option value="">Choose a column…</option>
-              {availableColumns.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-            <button className="primary" disabled={!regroupCol} onClick={handleRegroup}>
-              Use this column
-            </button>
-          </div>
+          {regroupColumns.length === 0 ? (
+            <div className="kanban-reconfig__msg">
+              No select columns in this table — add a Select column first.
+            </div>
+          ) : (
+            <div className="kanban-reconfig__actions">
+              <select
+                className="kanban-reconfig__select"
+                value={regroupCol}
+                onChange={e => setRegroupCol(e.target.value)}
+              >
+                <option value="">Choose a column…</option>
+                {regroupColumns.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <button className="primary" disabled={!regroupCol} onClick={handleRegroup}>
+                Use this column
+              </button>
+            </div>
+          )}
         </div>
       )}
 
