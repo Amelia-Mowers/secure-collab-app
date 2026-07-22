@@ -24,6 +24,29 @@ const PRF_SALT: Uint8Array = new TextEncoder().encode('io.tidework.ssss.prf.v1')
 
 const RP_NAME = 'TideWork'
 
+/**
+ * Shown when a passkey was created but its provider can't evaluate the PRF
+ * extension — the one capability our custody model needs. WebAuthn offers no
+ * way to ask a provider about PRF support *before* creating a credential, so
+ * this is necessarily detected after the fact; name the usual culprit and the
+ * way out. (issue b5a7e62c)
+ */
+export const PRF_UNSUPPORTED_MESSAGE =
+  "This passkey provider doesn't support the security feature TideWork needs " +
+  '(WebAuthn PRF). Platform passkeys — Windows Hello, Touch ID / iCloud ' +
+  'Keychain, Google Password Manager — and hardware security keys work; some ' +
+  "password managers (e.g. Bitwarden) don't yet. You can delete the passkey " +
+  'it just created, and keep using your recovery key or retry with a ' +
+  'compatible provider.'
+
+/** One-line compatibility note the setup screens show BEFORE the user picks a
+ *  passkey, so a PRF-less provider isn't a mid-flow surprise. */
+export const PRF_PROVIDER_HINT =
+  'Passkeys work with Windows Hello, Touch ID / iCloud Keychain, Google ' +
+  'Password Manager, and hardware security keys. Some password managers ' +
+  "(like Bitwarden) don't yet support the required PRF feature — if setup " +
+  'fails, your recovery key still works.'
+
 // ── minimal PRF typings (TS DOM lib coverage of the PRF extension varies) ──
 
 interface PrfInputs {
@@ -102,10 +125,19 @@ export async function registerPasskeyPrf(userId: string, displayName: string): P
     return toBase64Url(ext.prf.results.first) // evaluated at create — single prompt
   }
   if (ext.prf?.enabled === false) {
-    throw new Error('This authenticator does not support PRF — a recovery key is required')
+    throw new Error(PRF_UNSUPPORTED_MESSAGE)
   }
-  // Fall back to an assertion against the credential we just created.
-  return derivePrfSecret([cred.rawId])
+  // Fall back to an assertion against the credential we just created. If the
+  // provider turns out not to evaluate PRF there either, surface the provider
+  // message — at this point a credential exists but can never derive a secret.
+  try {
+    return await derivePrfSecret([cred.rawId])
+  } catch (err) {
+    if (err instanceof Error && /PRF/.test(err.message)) {
+      throw new Error(PRF_UNSUPPORTED_MESSAGE)
+    }
+    throw err
+  }
 }
 
 /**

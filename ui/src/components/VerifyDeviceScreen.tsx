@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import type { VerificationState } from '../hooks/useAuth'
+import { PRF_PROVIDER_HINT } from '../auth/passkeyPrf'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './VerifyDeviceScreen.css'
 
@@ -140,6 +141,7 @@ function OfferPasskeyMigration({
         device unlocks with a tap — nothing to type. You&apos;ll get a fresh backup key to keep, and
         your old master key stops working.
       </p>
+      <p className="verify__hint">{PRF_PROVIDER_HINT}</p>
       {error && (
         <p className="verify__error" role="alert">
           {error}
@@ -191,6 +193,7 @@ function ChooseRecoveryMethod({
         passkey (Touch ID / Windows Hello) is easiest — nothing to write down — and you&apos;ll still
         get a recovery key to keep as a backup.
       </p>
+      <p className="verify__hint">{PRF_PROVIDER_HINT}</p>
       {error && (
         <p className="verify__error" role="alert">
           {error}

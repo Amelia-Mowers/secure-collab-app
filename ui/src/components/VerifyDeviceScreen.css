@@ -39,6 +39,14 @@
   color: var(--text-secondary);
 }
 
+/* Provider-compatibility note under the passkey pitch — quieter than the body. */
+.verify__hint {
+  margin: -8px 0 16px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
 .verify__key {
   display: flex;
   align-items: stretch;
