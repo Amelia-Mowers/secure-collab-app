@@ -1831,6 +1831,32 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Rename a table in place — one LWW write to its `_tables` name cell, so
+    /// columns, rows, and views all survive untouched.
+    #[wasm_bindgen(js_name = renameTable)]
+    pub async fn rename_table(&self, table_id: String, name: String) -> Result<(), JsValue> {
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.rename_table(&table_id, &name)
+                .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        };
+        self.send_updates(&updates).await?;
+        Ok(())
+    }
+
+    /// Delete a saved view (decay-model tombstone), like deleteTable. The
+    /// table and its data are untouched — a view is only a projection.
+    #[wasm_bindgen(js_name = deleteView)]
+    pub async fn delete_view(&self, view_id: String) -> Result<(), JsValue> {
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.delete_view(&view_id)
+                .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        };
+        self.send_updates(&updates).await?;
+        Ok(())
+    }
+
     /// Set a table's manual-ordering key (fractional index) and sync it. The UI
     /// computes the key (same `fractionalIndex.ts` as row reorder) and calls
     /// this per moved table.

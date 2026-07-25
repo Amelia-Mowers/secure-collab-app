@@ -223,6 +223,12 @@ export function viewPath(view: ViewInfo, workspaceId: string): string {
   return `/workspace/${workspaceId}/table/${view.table_id}/view/${view.id}`
 }
 
+const PencilIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <path d="M8.6 1.9 11.1 4.4 4.5 11H2v-2.5z" />
+  </svg>
+)
+
 const TrashIcon = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
     <line x1="2" y1="3" x2="10" y2="3" />
@@ -238,14 +244,18 @@ function SortableTableItem({
   table,
   active,
   canDelete,
+  canRename,
   onOpen,
   onDelete,
+  onRename,
 }: {
   table: TableInfo
   active: boolean
   canDelete: boolean
+  canRename: boolean
   onOpen: () => void
   onDelete: () => void
+  onRename: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: table.id,
@@ -272,6 +282,21 @@ function SortableTableItem({
     >
       <HashIcon />
       <span className="sidebar__item-label">{table.name}</span>
+      {canRename && (
+        <button
+          className="sidebar__item-delete ghost"
+          title={`Rename table ${table.name}`}
+          aria-label="Rename table"
+          onClick={e => {
+            e.stopPropagation()
+            onRename()
+          }}
+          onPointerDown={e => e.stopPropagation()}
+          onKeyDown={e => e.stopPropagation()}
+        >
+          <PencilIcon />
+        </button>
+      )}
       {canDelete && (
         <button
           className="sidebar__item-delete ghost"
@@ -452,6 +477,72 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
     if (workspaceId) notifyWorkspaceChanged(workspaceId)
   }
 
+  const canRenameTables = !!workspace && typeof workspace.renameTable === 'function'
+  const canDeleteViews = !!workspace && typeof workspace.deleteView === 'function'
+
+  /** Rename in place — the table keeps its id, columns, rows, and views. */
+  const handleRenameTable = (table: TableInfo) => {
+    if (!workspace || typeof workspace.renameTable !== 'function') return
+    const name = window.prompt('Rename table', table.name)?.trim()
+    if (!name || name === table.name) return
+    setTables(prev => prev.map(t => (t.id === table.id ? { ...t, name } : t)))
+    Promise.resolve(workspace.renameTable(table.id, name))
+      .then(() => {
+        if (workspaceId) notifyWorkspaceChanged(workspaceId)
+        refreshData()
+      })
+      .catch((err: unknown) => {
+        console.error('Failed to rename table:', err)
+        alert('Failed to rename table: ' + (err instanceof Error ? err.message : String(err)))
+        refreshData()
+      })
+  }
+
+  /** Rename a view by rewriting its config under the same id (LWW). */
+  const handleRenameView = (view: ViewInfo) => {
+    if (!workspace) return
+    const name = window.prompt('Rename view', view.name)?.trim()
+    if (!name || name === view.name) return
+    setViews(prev => prev.map(v => (v.id === view.id ? { ...v, name } : v)))
+    try {
+      const cfg = JSON.parse(workspace.getView(view.id))
+      Promise.resolve(workspace.createView(JSON.stringify({ ...cfg, name })))
+        .then(() => {
+          if (workspaceId) notifyWorkspaceChanged(workspaceId)
+          refreshData()
+        })
+        .catch((err: unknown) => {
+          console.error('Failed to rename view:', err)
+          refreshData()
+        })
+    } catch (err) {
+      console.error('Failed to read view config:', err)
+      refreshData()
+    }
+  }
+
+  /** Delete a view. Only the projection goes — the table and its rows stay. */
+  const handleDeleteView = (view: ViewInfo) => {
+    if (!workspace || typeof workspace.deleteView !== 'function') return
+    if (!window.confirm(`Delete view "${view.name}"? The table and its data are not affected.`)) {
+      return
+    }
+    setViews(prev => prev.filter(v => v.id !== view.id))
+    if (location.pathname.includes(`/view/${view.id}`)) {
+      navigate(`/workspace/${workspaceId}/table/${view.table_id}`)
+    }
+    Promise.resolve(workspace.deleteView(view.id))
+      .then(() => {
+        if (workspaceId) notifyWorkspaceChanged(workspaceId)
+        refreshData()
+      })
+      .catch((err: unknown) => {
+        console.error('Failed to delete view:', err)
+        alert('Failed to delete view: ' + (err instanceof Error ? err.message : String(err)))
+        refreshData()
+      })
+  }
+
   const handleDeleteTable = (table: TableInfo) => {
     if (!workspace || typeof workspace.deleteTable !== 'function') return
     if (!window.confirm(`Delete table "${table.name}"? All of its rows will be removed.`)) return
@@ -545,8 +636,10 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                     table={table}
                     active={isActive(`/workspace/${workspaceId}/table/${table.id}`)}
                     canDelete={canMutateTables}
+                    canRename={canRenameTables}
                     onOpen={() => navigate(`/workspace/${workspaceId}/table/${table.id}`)}
                     onDelete={() => handleDeleteTable(table)}
+                    onRename={() => handleRenameTable(table)}
                   />
                 ))}
               </SortableContext>
@@ -573,10 +666,20 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
               const path = viewPath(view, workspaceId)
               const active = isActive(path)
               return (
-                <button
+                // A div, not a button: the rename/delete controls are buttons
+                // and nesting buttons is invalid HTML.
+                <div
                   key={view.id}
+                  role="button"
+                  tabIndex={0}
                   className={`sidebar__item ${active ? 'sidebar__item--active' : ''}`}
                   onClick={() => navigate(path)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      navigate(path)
+                    }
+                  }}
                   data-testid={`view-item-${view.id}`}
                 >
                   {viewIcon(view.view_type)}
@@ -589,7 +692,25 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                       <SettingsIcon />
                     </span>
                   )}
-                </button>
+                  <button
+                    className="sidebar__item-delete ghost"
+                    title={`Rename view ${view.name}`}
+                    aria-label="Rename view"
+                    onClick={e => { e.stopPropagation(); handleRenameView(view) }}
+                  >
+                    <PencilIcon />
+                  </button>
+                  {canDeleteViews && (
+                    <button
+                      className="sidebar__item-delete ghost"
+                      title={`Delete view ${view.name}`}
+                      aria-label="Delete view"
+                      onClick={e => { e.stopPropagation(); handleDeleteView(view) }}
+                    >
+                      <TrashIcon />
+                    </button>
+                  )}
+                </div>
               )
             })}
 

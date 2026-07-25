@@ -82,6 +82,17 @@ export class MockWorkspace {
     return JSON.stringify(ids)
   }
 
+  /** Rename in place: the table keeps its id, columns, rows, and views. */
+  renameTable(tableId: string, name: string): void {
+    const schema = this.schemas.get(tableId)
+    if (schema) this.schemas.set(tableId, { ...schema, name })
+  }
+
+  /** Delete a view. The table it projects is untouched. */
+  deleteView(viewId: string): void {
+    this.views.delete(viewId)
+  }
+
   /** Tombstone a table (decay model): hidden from listTables / getTableSchema. */
   deleteTable(tableId: string): void {
     this.deletedTables.add(tableId)
