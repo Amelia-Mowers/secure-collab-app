@@ -1565,6 +1565,86 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Leave the workspace, and forget it so it disappears from this account.
+    ///
+    /// `remove_everyone` is the "delete" variant: kick every other member
+    /// first, so the room is abandoned and unreachable. Note that Matrix has no
+    /// delete-a-room operation — a room persists as long as any member remains
+    /// — so this is as close as a client can get. On a homeserver configured
+    /// with `forgotten_room_retention_period`, a room every local user has
+    /// forgotten is purged from the database automatically; that config is what
+    /// makes "forget" mean "eventually reclaimed" rather than "hidden".
+    ///
+    /// Refuses to strand a workspace: if you are its last admin and other
+    /// members remain, appoint a successor first (`setUserRole`). Leaving as
+    /// the LAST member is always allowed — there is nobody to strand, and the
+    /// forget lets the server reclaim it.
+    #[wasm_bindgen(js_name = leaveWorkspace)]
+    pub async fn leave_workspace(&self, remove_everyone: bool) -> Result<(), JsValue> {
+        let me = self
+            .client
+            .user_id()
+            .ok_or_else(|| JsValue::from_str("Not signed in"))?
+            .to_owned();
+        let room = self
+            .client
+            .get_room(&self.room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+
+        let members = room
+            .members(RoomMemberships::ACTIVE)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to list members: {e}")))?;
+        let others: Vec<_> = members.iter().filter(|m| m.user_id() != me).collect();
+
+        if remove_everyone {
+            // The homeserver enforces this too; failing here just says why.
+            let my_level = power_level_value(
+                room.get_user_power_level(&me)
+                    .await
+                    .map_err(|e| JsValue::from_str(&format!("Failed to read power level: {e}")))?,
+            );
+            if role_name(my_level) != "admin" {
+                return Err(JsValue::from_str(
+                    "Only an admin can remove everyone from a workspace",
+                ));
+            }
+            for m in &others {
+                room.kick_user(m.user_id(), Some("Workspace deleted"))
+                    .await
+                    .map_err(|e| {
+                        JsValue::from_str(&format!("Failed to remove {}: {e}", m.user_id()))
+                    })?;
+            }
+        } else if !others.is_empty() {
+            let my_level = power_level_value(
+                room.get_user_power_level(&me)
+                    .await
+                    .map_err(|e| JsValue::from_str(&format!("Failed to read power level: {e}")))?,
+            );
+            if role_name(my_level) == "admin" {
+                let another_admin = others
+                    .iter()
+                    .any(|m| role_name(power_level_value(m.power_level())) == "admin");
+                if !another_admin {
+                    return Err(JsValue::from_str(
+                        "You are the only admin. Make someone else an admin before leaving,                          or remove everyone and delete the workspace.",
+                    ));
+                }
+            }
+        }
+
+        room.leave()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to leave workspace: {e}")))?;
+        // Forget is what lets the server reclaim the room once everyone has
+        // gone; it only works on an already-left room, hence the order.
+        room.forget()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Left, but failed to forget: {e}")))?;
+        Ok(())
+    }
+
     /// List room members. Returns a JSON array of user ID strings.
     #[wasm_bindgen(js_name = listMembers)]
     pub async fn list_members(&self) -> Result<String, JsValue> {

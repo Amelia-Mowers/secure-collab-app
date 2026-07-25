@@ -20,13 +20,14 @@ import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
 import { NewTableModal } from '@/components/NewTableModal'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
-import { notifyWorkspaceChanged } from '@/hooks/useTable'
+import { notifyWorkspaceChanged, useCurrentUserId } from '@/hooks/useTable'
 import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { TrialBadge } from '@/components/TrialStatus'
 import { buildTableDefinition, type TableTemplate } from '@/tableTemplates'
 import './Sidebar.css'
 import { ROLE_LABELS, type Role, type WorkspaceMember } from '@/lib/roles'
 import { useRole } from '@/hooks/useRole'
+import { LeaveWorkspaceModal } from './LeaveWorkspaceModal'
 
 interface SidebarProps {
   workspace: any
@@ -325,6 +326,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
+  const [showLeaveModal, setShowLeaveModal] = useState(false)
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   
   const [showMembers, setShowMembers] = useState(false)
@@ -337,6 +339,9 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const workspaceName = workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace'
   /** This user's role — gates the administrative affordances below. */
   const myRole = useRole(workspace, syncCount)
+  const myUserId = useCurrentUserId(workspace)
+  /** Only a real (Matrix-backed) workspace can be left. */
+  const canLeave = !!workspace && typeof (workspace as any).leaveWorkspace === 'function'
 
   // ── Fetch member list ───────────────────────────────────────
   const loadMembers = useCallback(async () => {
@@ -772,6 +777,15 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
               <span>Share workspace</span>
             </button>
 
+            {canLeave && (
+              <button
+                className="sidebar__item sidebar__item--add"
+                onClick={() => { setShowLeaveModal(true); loadMembers() }}
+              >
+                <span>Leave workspace…</span>
+              </button>
+            )}
+
             {showMembers ? (
               <>
                 <div className="sidebar__member-list">
@@ -827,6 +841,24 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
             <AccountSwitcher />
           </div>
         </>
+      )}
+
+      {showLeaveModal && workspace && (
+        <LeaveWorkspaceModal
+          workspaceName={workspaceName}
+          members={members}
+          myUserId={myUserId}
+          myRole={myRole}
+          onPromote={async (userId: string) => {
+            await (workspace as any).setUserRole(userId, 'admin')
+          }}
+          onLeave={async (removeEveryone: boolean) => {
+            await (workspace as any).leaveWorkspace(removeEveryone)
+            // The workspace is gone from this account — don't linger inside it.
+            navigate('/workspaces')
+          }}
+          onClose={() => setShowLeaveModal(false)}
+        />
       )}
 
       {showShareModal && workspace && (
