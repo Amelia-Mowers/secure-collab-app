@@ -42,7 +42,7 @@ test: ## Run all tests
 test-unit: ## Run only unit tests (fast)
 	cargo test --lib
 
-test-integration: ## Run integration tests (requires Conduit in PATH)
+test-integration: ## Run integration tests (requires synapse_homeserver in PATH — use the Nix dev shell)
 	cargo test -p tables-over-matrix --no-default-features --features matrix-native --test two_client_sync -- --ignored --nocapture
 	cargo test -p tables-over-matrix --no-default-features --features matrix-native --test cold_start_matrix -- --ignored --nocapture
 	cargo test -p app-core --no-default-features --features matrix-native --test workspace_matrix -- --ignored --nocapture --test-threads=4
