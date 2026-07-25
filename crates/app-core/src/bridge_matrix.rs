@@ -1456,6 +1456,13 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// The signed-in user's MXID — the viewer that `@me` filters resolve to.
+    /// `None` only if the client somehow has no session.
+    #[wasm_bindgen(js_name = currentUserId)]
+    pub fn current_user_id(&self) -> Option<String> {
+        self.client.user_id().map(|u| u.to_string())
+    }
+
     /// List room members. Returns a JSON array of user ID strings.
     #[wasm_bindgen(js_name = listMembers)]
     pub async fn list_members(&self) -> Result<String, JsValue> {

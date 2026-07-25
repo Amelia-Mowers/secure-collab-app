@@ -286,3 +286,28 @@
   background: var(--bg, #fff);
   color: var(--text, #111);
 }
+
+/* Filter panel (issue aaae6f3f) — the same FilterBar the table view uses,
+   docked under the toolbar. */
+.kanban-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 16px 0;
+  padding: 12px 16px;
+  background: var(--surface-raised, #f8f9fb);
+  border: 1px solid var(--border, #e2e5ea);
+  border-radius: 8px;
+}
+
+.kanban-filter-bar__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kanban-filter-bar__count {
+  font-size: 12px;
+  color: var(--text-tertiary, #6b7280);
+}

@@ -427,8 +427,14 @@ pub async fn table_show(
     // The saved view's filters apply first (same engine as the app), then any
     // ad-hoc --where on top (AND). An explicit --sort overrides the view's sort.
     if let Some(vc) = &view_config {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        rows.retain(|row| app_core::filter_eval::row_matches(row, &vc.filters, &schema, &today));
+        // Dynamic filter values resolve against THIS caller: `is_today` against
+        // the local date, `@me` against the logged-in MXID — so a shared "mine"
+        // view selects the right rows for whoever runs it.
+        let ctx = app_core::filter_eval::FilterContext::new(
+            chrono::Local::now().format("%Y-%m-%d").to_string(),
+        )
+        .with_me(client.user_id());
+        rows.retain(|row| app_core::filter_eval::row_matches(row, &vc.filters, &schema, &ctx));
     }
     rows.retain(|row| predicates.iter().all(|p| p.matches(row)));
     if !sort_keys.is_empty() {
