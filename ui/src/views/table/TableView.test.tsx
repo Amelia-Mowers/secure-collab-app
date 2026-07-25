@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { TableView } from './TableView'
 import { MockWorkspace, makeTasksWorkspace, seedTasks } from '@/test/mockWorkspace'
@@ -326,6 +326,64 @@ describe('TableView', () => {
       fireEvent.click(screen.getByText('Show all'))
       // Two seeded tasks are assigned to Alice.
       await waitFor(() => expect(screen.queryAllByText('Alice')).toHaveLength(2))
+    })
+  })
+
+  describe('multi-row selection + bulk edit (issue bae5a235)', () => {
+    const selectRow = (n: number) =>
+      fireEvent.click(screen.getAllByLabelText(/^Select entry /)[n])
+
+    it('shows the bulk bar only once something is selected', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+      selectRow(0)
+      expect(screen.getByText('1 selected')).toBeInTheDocument()
+    })
+
+    it('selects and clears every displayed row from the header checkbox', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws) // 4 rows
+      renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      const all = screen.getByLabelText('Select all entries')
+      fireEvent.click(all)
+      expect(screen.getByText('4 selected')).toBeInTheDocument()
+      fireEvent.click(all)
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
+    })
+
+    it('writes one value into that column of every selected row', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      fireEvent.click(screen.getByLabelText('Select all entries'))
+      // First combobox picks the column; that renders the column's OWN editor
+      // as the second — a select column gets its options, for free.
+      fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'status' } })
+      const valueEditor = screen.getAllByRole('combobox')[1]
+      expect(within(valueEditor).getByRole('option', { name: 'Done' })).toBeInTheDocument()
+      fireEvent.change(valueEditor, { target: { value: 'Done' } })
+      await waitFor(() => {
+        const rows = JSON.parse(ws.getTableRows('tasks'))
+        expect(rows.every((r: any) => r.status === 'Done')).toBe(true)
+      })
+    })
+
+    it('requires a second click to delete the selection', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      selectRow(0)
+      fireEvent.click(screen.getByText('Delete'))
+      // Nothing gone yet — the first click only arms the confirm.
+      expect(JSON.parse(ws.getTableRows('tasks'))).toHaveLength(4)
+      fireEvent.click(screen.getByText(/^Delete 1 — confirm$/))
+      await waitFor(() => expect(JSON.parse(ws.getTableRows('tasks'))).toHaveLength(3))
     })
   })
 

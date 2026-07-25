@@ -243,11 +243,16 @@ function SortableTableRow({
   rowId,
   reorderable,
   onOpen,
+  selected,
+  onSelect,
   children,
 }: {
   rowId: string
   reorderable: boolean
   onOpen: () => void
+  selected: boolean
+  /** `range` is true when the click was shift-held (select through). */
+  onSelect: (checked: boolean, range: boolean) => void
   children: React.ReactNode
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -264,6 +269,16 @@ function SortableTableRow({
     <tr ref={setNodeRef} style={style} className={isDragging ? 'row-dragging' : undefined}>
       <td className="cell-open">
         <div className="cell-open-inner">
+          <input
+            type="checkbox"
+            className="cell-select"
+            checked={selected}
+            aria-label={`Select entry ${rowId}`}
+            onClick={e => e.stopPropagation()}
+            onChange={e =>
+              onSelect(e.target.checked, (e.nativeEvent as MouseEvent).shiftKey === true)
+            }
+          />
           {reorderable && (
             <button
               type="button"
@@ -367,6 +382,13 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([])
   const [showColumnMenu, setShowColumnMenu] = useState(false)
+  // Multi-row selection + bulk edit (issue bae5a235). Selection is ephemeral:
+  // it survives sorting and filtering but never persists into a view.
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
+  const [bulkColumn, setBulkColumn] = useState('')
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  /** Anchor for shift-click range selection. */
+  const lastSelectedRef = useRef<string | null>(null)
   /** The saved view currently open (for "Save changes"); null on a raw table. */
   const [loadedView, setLoadedView] = useState<{ id: string; name: string } | null>(null)
   /** Guards the load-once-per-view effect against re-runs (workspace identity). */
@@ -754,6 +776,20 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     }))
   }, [visibleColumns, editing, updateCell, referenceLookup, members, moveEditing, conflictCells])
 
+  /** The CellColumn for the bulk-edit value editor. */
+  const bulkEditColumn: CellColumn | null = useMemo(() => {
+    const col = visibleColumns.find(c => c.id === bulkColumn)
+    if (!col) return null
+    return {
+      id: col.id,
+      name: col.name,
+      column_type: col.column_type,
+      options: col.options,
+      reference_table: col.reference_table,
+      reference_display_column: col.reference_display_column,
+    }
+  }, [visibleColumns, bulkColumn])
+
   const table = useReactTable({
     data: filteredRows as TableRow[],
     columns,
@@ -824,6 +860,76 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         <div className="state-error"><h3>Error loading table</h3><p>{error.message}</p></div>
       </div>
     )
+  }
+
+  /** True when every displayed row is selected (drives the header checkbox). */
+  const allDisplayedSelected =
+    tableRows.length > 0 && tableRows.every(r => selectedRows.has(r.original._row_id))
+
+  // ── Multi-row selection (issue bae5a235) ─────────────────────────────────
+  /** Toggle one row; shift-click extends from the last clicked row through it,
+   *  over the DISPLAYED order, so a range means what the user sees. */
+  const toggleRowSelected = (rowId: string, checked: boolean, range: boolean) => {
+    setSelectedRows(prev => {
+      const next = new Set(prev)
+      const ids = tableRowsRef.current.map((r: any) => r.original._row_id as string)
+      const anchor = lastSelectedRef.current
+      const span =
+        range && anchor && ids.includes(anchor)
+          ? ids.slice(
+              Math.min(ids.indexOf(anchor), ids.indexOf(rowId)),
+              Math.max(ids.indexOf(anchor), ids.indexOf(rowId)) + 1,
+            )
+          : [rowId]
+      for (const id of span) {
+        if (checked) next.add(id)
+        else next.delete(id)
+      }
+      return next
+    })
+    lastSelectedRef.current = rowId
+  }
+
+  const clearSelection = () => {
+    setSelectedRows(new Set())
+    setBulkColumn('')
+    setConfirmBulkDelete(false)
+    lastSelectedRef.current = null
+  }
+
+  /** Write one value into one column of every selected row. The send queue
+   *  coalesces these into a batch, so this is one event, not N. */
+  const applyBulkValue = async (value: any) => {
+    const ids = [...selectedRows]
+    const column = bulkColumn
+    setBulkColumn('')
+    try {
+      await Promise.all(ids.map(id => updateCell(id, column, value)))
+      setToast(`Updated ${ids.length} ${ids.length === 1 ? 'entry' : 'entries'}`)
+    } catch (err: any) {
+      showCellError(err)
+      return
+    }
+    setTimeout(() => setToast(null), 2500)
+  }
+
+  const deleteSelected = async () => {
+    const ids = [...selectedRows]
+    clearSelection()
+    setDeletingRows(prev => new Set([...prev, ...ids]))
+    try {
+      await Promise.all(ids.map(id => deleteRow(id)))
+      setToast(`Deleted ${ids.length} ${ids.length === 1 ? 'entry' : 'entries'}`)
+      setTimeout(() => setToast(null), 2500)
+    } catch (err: any) {
+      showCellError(err)
+    } finally {
+      setDeletingRows(prev => {
+        const next = new Set(prev)
+        ids.forEach(id => next.delete(id))
+        return next
+      })
+    }
   }
 
   // ── Saving the current filters + sort into a view ──────────────────────────
@@ -963,6 +1069,52 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         />
       )}
 
+      {selectedRows.size > 0 && (
+        <div className="table-selection-bar" role="toolbar" aria-label="Bulk actions">
+          <span className="table-selection-bar__count">
+            {selectedRows.size} selected
+          </span>
+          <label className="table-selection-bar__field">
+            Set
+            <select
+              className="table-selection-bar__select"
+              value={bulkColumn}
+              onChange={e => setBulkColumn(e.target.value)}
+            >
+              <option value="">a column…</option>
+              {visibleColumns.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+          {bulkColumn && (
+            <span className="table-selection-bar__value">
+              {/* The column's own editor, so a bulk edit is type-correct for
+                  free — a select gets its options, a member column its people. */}
+              <CellEditor
+                column={bulkEditColumn!}
+                value={undefined}
+                autoFocus
+                lookup={referenceLookup}
+                members={members}
+                commit={v => void applyBulkValue(v)}
+              />
+            </span>
+          )}
+          <span className="table-selection-bar__spacer" />
+          {!confirmBulkDelete ? (
+            <button className="ghost" onClick={() => setConfirmBulkDelete(true)}>
+              Delete
+            </button>
+          ) : (
+            <button className="ghost table-selection-bar__danger" onClick={() => void deleteSelected()}>
+              Delete {selectedRows.size} — confirm
+            </button>
+          )}
+          <button className="ghost" onClick={clearSelection}>Clear</button>
+        </div>
+      )}
+
       <div className="table-view__content">
         <div className="table-scroll" ref={scrollRef}>
           <table className="data-table">
@@ -983,7 +1135,25 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             >
             <thead>
               <tr>
-                <th className="col-open-header" />
+                <th className="col-open-header">
+                  <input
+                    type="checkbox"
+                    className="cell-select"
+                    aria-label="Select all entries"
+                    checked={allDisplayedSelected}
+                    ref={el => {
+                      // Indeterminate when only some rows are selected.
+                      if (el) el.indeterminate = selectedRows.size > 0 && !allDisplayedSelected
+                    }}
+                    onChange={e =>
+                      setSelectedRows(
+                        e.target.checked
+                          ? new Set(tableRows.map(r => r.original._row_id as string))
+                          : new Set(),
+                      )
+                    }
+                  />
+                </th>
                 <SortableContext
                   items={visibleColumns.map(c => c.id)}
                   strategy={horizontalListSortingStrategy}
@@ -1033,6 +1203,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                         rowId={rowId}
                         reorderable={rowsReorderable}
                         onOpen={() => openEntry(rowId)}
+                        selected={selectedRows.has(rowId)}
+                        onSelect={(checked, range) => toggleRowSelected(rowId, checked, range)}
                       >
                         {row.getVisibleCells().map(cell => (
                           <td key={cell.id}>
