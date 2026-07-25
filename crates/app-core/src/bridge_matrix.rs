@@ -1160,6 +1160,50 @@ type CellKey = (String, String, String);
 /// - Sending cell updates to the room on every write
 /// - A sync loop that receives updates from other clients
 /// - A JS callback for change notifications
+
+/// Workspace roles as Matrix power levels. Deliberately the standard rungs:
+/// 100 is the room creator's default, 0 is `events_default`, and anything below
+/// `events_default` cannot send events at all — which is what makes a viewer
+/// read-only at the server rather than only in our UI.
+pub const ROLE_ADMIN_LEVEL: i64 = 100;
+pub const ROLE_EDITOR_LEVEL: i64 = 0;
+pub const ROLE_VIEWER_LEVEL: i64 = -1;
+
+/// Bucket a raw power level into a role name. Levels between the rungs round
+/// DOWN to the role whose privileges they actually have (a PL 50 moderator can
+/// send events but not manage roles, so they read as an editor).
+fn role_name(level: i64) -> &'static str {
+    if level >= ROLE_ADMIN_LEVEL {
+        "admin"
+    } else if level >= ROLE_EDITOR_LEVEL {
+        "editor"
+    } else {
+        "viewer"
+    }
+}
+
+/// Flatten ruma's `UserPowerLevel` to a number. `Infinite` is the room-creator
+/// case introduced in room version 12 — unambiguously an admin.
+fn power_level_value(level: matrix_sdk::ruma::events::room::power_levels::UserPowerLevel) -> i64 {
+    use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
+    match level {
+        UserPowerLevel::Infinite => i64::MAX,
+        UserPowerLevel::Int(i) => i.into(),
+        // The enum is non_exhaustive; an unknown future variant is not evidence
+        // of privilege, so treat it as the floor.
+        _ => ROLE_VIEWER_LEVEL,
+    }
+}
+
+fn power_level_for_role(role: &str) -> Option<i64> {
+    match role {
+        "admin" => Some(ROLE_ADMIN_LEVEL),
+        "editor" => Some(ROLE_EDITOR_LEVEL),
+        "viewer" => Some(ROLE_VIEWER_LEVEL),
+        _ => None,
+    }
+}
+
 #[wasm_bindgen]
 pub struct ConnectedWorkspace {
     /// Shared workspace state (Rc<RefCell> for WASM single-threaded access)
@@ -1463,6 +1507,64 @@ impl ConnectedWorkspace {
         self.client.user_id().map(|u| u.to_string())
     }
 
+    /// The workspace roles, expressed as Matrix power levels — so they are
+    /// enforced by the HOMESERVER, not merely hidden in our UI. That matters:
+    /// the client is the trust boundary everywhere else in this app, but a
+    /// power level is checked server-side on every event.
+    ///
+    /// - `admin`  (100) — manage members and roles; the room creator starts here
+    /// - `editor` (0)   — the default; may send events, i.e. edit data
+    /// - `viewer` (-1)  — below `events_default`, so the server REFUSES their
+    ///                    writes. Read-only for real, not by convention.
+    ///
+    /// Cell updates are ordinary timeline events, so `events_default` is what
+    /// gates editing the data.
+    #[wasm_bindgen(js_name = roleForPowerLevel)]
+    pub fn role_for_power_level(level: i64) -> String {
+        role_name(level).to_string()
+    }
+
+    /// This user's role in the workspace (`admin` / `editor` / `viewer`).
+    #[wasm_bindgen(js_name = myRole)]
+    pub async fn my_role(&self) -> Result<String, JsValue> {
+        let user_id = self
+            .client
+            .user_id()
+            .ok_or_else(|| JsValue::from_str("Not signed in"))?
+            .to_owned();
+        let room = self
+            .client
+            .get_room(&self.room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+        let level = room
+            .get_user_power_level(&user_id)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to read power level: {e}")))?;
+        Ok(role_name(power_level_value(level)).to_string())
+    }
+
+    /// Set a member's role. Requires enough power to change power levels
+    /// (admin); the homeserver rejects it otherwise, which is the point.
+    #[wasm_bindgen(js_name = setUserRole)]
+    pub async fn set_user_role(&self, user_id: String, role: String) -> Result<(), JsValue> {
+        let user_id: OwnedUserId = user_id
+            .as_str()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Invalid user ID"))?;
+        let level = power_level_for_role(&role)
+            .ok_or_else(|| JsValue::from_str(&format!("Unknown role {role:?}")))?;
+        let room = self
+            .client
+            .get_room(&self.room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+        let level = matrix_sdk::ruma::Int::try_from(level)
+            .map_err(|_| JsValue::from_str("Power level out of range"))?;
+        room.update_power_levels(vec![(&user_id, level)])
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to set role: {e}")))?;
+        Ok(())
+    }
+
     /// List room members. Returns a JSON array of user ID strings.
     #[wasm_bindgen(js_name = listMembers)]
     pub async fn list_members(&self) -> Result<String, JsValue> {
@@ -1482,6 +1584,7 @@ impl ConnectedWorkspace {
                 serde_json::json!({
                     "userId": m.user_id().to_string(),
                     "displayName": m.display_name().unwrap_or(""),
+                    "role": role_name(power_level_value(m.power_level())),
                 })
             })
             .collect();

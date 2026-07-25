@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useRole } from '@/hooks/useRole'
 import './EncryptionWarningBanner.css'
 
 interface ReadOnlyBannerProps {
@@ -9,38 +10,55 @@ interface ReadOnlyBannerProps {
 }
 
 /**
- * Workspace-level banner shown when the connected room is NOT end-to-end
- * encrypted — a "legacy" room from before encryption was required. Such rooms
- * are read-only: the bridge send path fails closed, so writes never persist;
- * this banner explains why changes can't be saved.
+ * Workspace-level banner for the two reasons editing can be unavailable:
+ *
+ * 1. The room is NOT end-to-end encrypted — a "legacy" room from before
+ *    encryption was required. The bridge send path fails closed, so writes
+ *    never persist.
+ * 2. This user's role is `viewer`. That's a Matrix power level below
+ *    `events_default`, so the HOMESERVER refuses their events — the read-only
+ *    state is real, not a UI convention.
+ *
+ * Either way the user needs to know why their changes won't save.
  *
  * Mirrors EncryptionWarningBanner: reads `ConnectedWorkspace::isEncrypted()`,
  * renders nothing for the local-only / mock workspace (which doesn't expose it)
  * or when the room is encrypted.
  */
 export function ReadOnlyBanner({ workspace, syncCount }: ReadOnlyBannerProps) {
-  const [readOnly, setReadOnly] = useState(false)
+  const [unencrypted, setUnencrypted] = useState(false)
+  const role = useRole(workspace, syncCount)
 
   useEffect(() => {
     if (workspace && typeof workspace.isEncrypted === 'function') {
       try {
-        setReadOnly(!workspace.isEncrypted())
+        setUnencrypted(!workspace.isEncrypted())
       } catch {
-        setReadOnly(false)
+        setUnencrypted(false)
       }
     } else {
-      setReadOnly(false)
+      setUnencrypted(false)
     }
   }, [workspace, syncCount])
 
-  if (!readOnly) return null
+  const viewer = role === 'viewer'
+  if (!unencrypted && !viewer) return null
 
   return (
     <div className="encryption-warning" role="alert">
       <span className="encryption-warning__icon" aria-hidden="true">🔒</span>
       <span className="encryption-warning__text">
-        This workspace is read-only because it isn&apos;t end-to-end encrypted (a legacy room). You
-        can view its contents, but changes can&apos;t be saved.
+        {unencrypted ? (
+          <>
+            This workspace is read-only because it isn&apos;t end-to-end encrypted (a legacy room).
+            You can view its contents, but changes can&apos;t be saved.
+          </>
+        ) : (
+          <>
+            You have <strong>view-only</strong> access to this workspace. You can read everything
+            here, but changes can&apos;t be saved. Ask an admin for editor access.
+          </>
+        )}
       </span>
     </div>
   )

@@ -387,6 +387,52 @@ describe('TableView', () => {
     })
   })
 
+  describe('viewer role is read-only (workspace roles)', () => {
+    /** A workspace whose bridge reports this user as a viewer. */
+    function asViewer() {
+      const ws: any = makeTasksWorkspace()
+      seedTasks(ws)
+      ws.myRole = () => Promise.resolve('viewer')
+      return ws
+    }
+
+    it('hides every write affordance', async () => {
+      const ws = asViewer()
+      const { container } = renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(screen.queryByText('New entry')).not.toBeInTheDocument()
+      expect(screen.queryByTitle('Add column')).not.toBeInTheDocument()
+      expect(container.querySelector('.cell-delete-btn')).not.toBeInTheDocument()
+    })
+
+    it('does not open an editor when a cell is clicked', async () => {
+      const ws = asViewer()
+      renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      fireEvent.click(screen.getByText('Design homepage'))
+      // The cell stays display-only — no input takes its place.
+      expect(screen.getByText('Design homepage')).toBeInTheDocument()
+      expect(screen.queryByDisplayValue('Design homepage')).not.toBeInTheDocument()
+    })
+
+    it('still shows the data — view-only, not access-denied', async () => {
+      const ws = asViewer()
+      renderTable(ws)
+      await waitFor(() => {
+        expect(screen.getByText('Design homepage')).toBeInTheDocument()
+        expect(screen.getByText('Write unit tests')).toBeInTheDocument()
+      })
+    })
+
+    it('keeps write affordances for an editor', async () => {
+      const ws: any = makeTasksWorkspace()
+      seedTasks(ws)
+      ws.myRole = () => Promise.resolve('editor')
+      renderTable(ws)
+      await waitFor(() => expect(screen.getByText('New entry')).toBeInTheDocument())
+    })
+  })
+
   describe('toolbar', () => {
     it('shows a Filter button in the toolbar', async () => {
       const ws = makeTasksWorkspace()

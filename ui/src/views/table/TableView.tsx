@@ -351,7 +351,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     navigate(`/workspace/${workspaceId}/table/${tableId}/entry/new`, {
       state: { from: location.pathname },
     })
-  const { rows, loading, error, updateCell, deleteRow, refresh, conflictCells } = useTable(workspace, tableId!, workspaceId, syncCount)
+  const { rows, loading, error, updateCell, deleteRow, refresh, conflictCells, readOnly } = useTable(workspace, tableId!, workspaceId, syncCount)
   const members = useMembers(workspace)
   const me = useCurrentUserId(workspace)
   const [schema, setSchema] = useState<any>(null)
@@ -767,14 +767,17 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           <div
             className={conflicted ? 'cell-click cell-conflict' : 'cell-click'}
             title={conflicted ? 'Your change was replaced by a newer edit' : undefined}
-            onClick={e => { e.stopPropagation(); setEditing(cellKey) }}
+            onClick={e => {
+              e.stopPropagation()
+              if (!readOnly) setEditing(cellKey)
+            }}
           >
             <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} members={members} />
           </div>
         )
       },
     }))
-  }, [visibleColumns, editing, updateCell, referenceLookup, members, moveEditing, conflictCells])
+  }, [visibleColumns, editing, updateCell, referenceLookup, members, moveEditing, conflictCells, readOnly])
 
   /** The CellColumn for the bulk-edit value editor. */
   const bulkEditColumn: CellColumn | null = useMemo(() => {
@@ -814,7 +817,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // Manual row reordering applies only to the natural (unsorted, unfiltered)
   // view — a column sort or filter defines its own order, so drag is disabled
   // then to avoid an ambiguous result.
-  const rowsReorderable = sorting.length === 0 && !globalFilter && conditions.length === 0
+  const rowsReorderable =
+    !readOnly && sorting.length === 0 && !globalFilter && conditions.length === 0
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
@@ -1010,8 +1014,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               title="Show or hide columns"
             />
             <ToolbarButton icon={<HistoryIcon />} label="History" active={showHistory} onClick={() => setShowHistory(true)} title="Change history" />
-            <ToolbarButton icon={<PlusIcon />} label="Add column" title="Add column" onClick={() => setIsAddingColumn(true)} />
-            <ToolbarPrimaryButton onClick={newEntry}>New entry</ToolbarPrimaryButton>
+            {!readOnly && (
+              <ToolbarButton icon={<PlusIcon />} label="Add column" title="Add column" onClick={() => setIsAddingColumn(true)} />
+            )}
+            {!readOnly && <ToolbarPrimaryButton onClick={newEntry}>New entry</ToolbarPrimaryButton>}
           </>
         }
       />
@@ -1212,7 +1218,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                           </td>
                         ))}
                         <td className="cell-actions" onClick={e => e.stopPropagation()}>
-                          <button
+                          {!readOnly && <button
                             className="ghost cell-delete-btn"
                             disabled={deletingRows.has(rowId)}
                             onClick={() => {
@@ -1236,7 +1242,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                                 <rect x="2.5" y="3" width="8" height="8.5" rx="1" />
                               </svg>
                             )}
-                          </button>
+                          </button>}
                         </td>
                       </SortableTableRow>
                     )
@@ -1253,7 +1259,11 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                   the empty-table state (issue c79ce975): the first entry is added
                   inline here, no separate CTA. */}
               {columnsMeta.length > 0 && (
-                <tr className="row-shadow" style={{ height: ROW_HEIGHT }} title="Add a new entry">
+                <tr
+                  className="row-shadow"
+                  style={{ height: ROW_HEIGHT, display: readOnly ? 'none' : undefined }}
+                  title="Add a new entry"
+                >
                   <td className="cell-open" aria-hidden="true">
                     <span className="cell-shadow-plus">+</span>
                   </td>
