@@ -29,11 +29,12 @@ import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { useTable, useMembers, useCurrentUserId, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
 import { HistoryDrawer } from '@/views/history/HistoryDrawer'
-import { AddColumnModal, type NewColumnDef, type EditColumnInitial } from '@/components/AddColumnModal'
+import { AddColumnModal, type NewColumnDef, type EditColumnInitial, type ReferenceTarget } from '@/components/AddColumnModal'
 import { CellDisplay, CellEditor, type CellColumn } from '@/cells/cellRegistry'
 import { FilterBar } from './FilterBar'
 import { applyFilters, type FilterCondition } from '@/lib/filters'
 import './TableView.css'
+import { makeReferenceLookup } from '@/lib/referenceLookup'
 
 interface TableViewProps {
   workspace: any
@@ -45,6 +46,8 @@ interface ColumnMeta {
   name: string
   column_type: string
   options?: string[]
+  reference_table?: string
+  reference_display_column?: string
   order?: number | null
 }
 
@@ -333,6 +336,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           name: def?.name || colId.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
           column_type: def?.column_type || 'text',
           options: def?.options,
+          reference_table: def?.reference_table,
+          reference_display_column: def?.reference_display_column,
           order: typeof def?.order === 'number' ? def.order : null,
         }
       })
@@ -498,6 +503,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         columnType: (meta.column_type as any) ?? 'text',
         options: meta.options ?? [],
         defaultValue: schemaCol?.default_value != null ? String(schemaCol.default_value) : undefined,
+        referenceTable: schemaCol?.reference_table,
+        referenceDisplayColumn: schemaCol?.reference_display_column,
       },
       existingValues: Array.from(seen).sort().slice(0, 50),
     })
@@ -513,9 +520,39 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     if (def.columnType === 'select' && def.defaultValue) {
       patch.default_value = def.defaultValue
     }
+    if (def.referenceTable) {
+      patch.reference_table = def.referenceTable
+      patch.reference_display_column = def.referenceDisplayColumn
+    }
     handleUpdateColumn(editingColumn.id, patch)
     setEditingColumn(null)
   }
+
+  // Tables a reference column could point at (every other table in the
+  // workspace), with the columns that could label their rows.
+  const referenceTargets = React.useMemo<ReferenceTarget[]>(() => {
+    if (!workspace) return []
+    try {
+      const tables = JSON.parse(workspace.listTables()) as Array<{ id: string; name: string }>
+      return tables
+        .filter(t => t.id !== tableId && !t.id.startsWith('_'))
+        .map(t => {
+          let columns: ReferenceTarget['columns'] = []
+          try {
+            const s = JSON.parse(workspace.getTableSchema(t.id))
+            const deleted = new Set<string>(s?.deleted_columns ?? [])
+            columns = (Object.values(s?.columns ?? {}) as any[])
+              .filter(c => !deleted.has(c.id))
+              .map(c => ({ id: c.id, name: c.name ?? c.id, column_type: c.column_type }))
+          } catch {
+            /* a table with no readable schema offers no display columns */
+          }
+          return { id: t.id, name: t.name ?? t.id, columns }
+        })
+    } catch {
+      return []
+    }
+  }, [workspace, tableId])
 
   const handleAddColumn = async (def: NewColumnDef) => {
     if (!workspace || !tableId) return
@@ -528,6 +565,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       ...(def.options.length > 0 ? { options: def.options } : {}),
       ...(def.defaultValue !== undefined && def.defaultValue !== ''
         ? { default_value: def.defaultValue }
+        : {}),
+      ...(def.referenceTable ? { reference_table: def.referenceTable } : {}),
+      ...(def.referenceDisplayColumn
+        ? { reference_display_column: def.referenceDisplayColumn }
         : {}),
     }
     try {
@@ -566,25 +607,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     }
   }
 
-  // Resolve the records of a referenced table (id + a text-column label) so
-  // `reference` cells can pick from / display real rows instead of raw ids.
-  const referenceLookup = React.useCallback((refTableId: string) => {
-    if (!workspace) return []
-    try {
-      const refRows = JSON.parse(workspace.getTableRows(refTableId)) as Array<Record<string, any>>
-      let labelColId: string | undefined
-      try {
-        const refSchema = JSON.parse(workspace.getTableSchema(refTableId))
-        labelColId = (Object.values(refSchema.columns ?? {}) as any[]).find(c => c.column_type === 'text')?.id
-      } catch { /* no schema — fall back to the row id */ }
-      return refRows.map(r => ({
-        id: r._row_id,
-        label: labelColId && r[labelColId] != null ? String(r[labelColId]) : r._row_id,
-      }))
-    } catch {
-      return []
-    }
-  }, [workspace])
+  const referenceLookup = useMemo(() => makeReferenceLookup(workspace), [workspace])
 
   // Latest displayed rows/columns in refs so moveEditing stays stable (it's
   // captured by the memoized cell renderer). tableRowsRef is set after the table
@@ -848,7 +871,13 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               </button>
             )}
           </div>
-          <FilterBar columns={columnsMeta} conditions={conditions} onChange={setConditions} members={members} />
+          <FilterBar
+            columns={columnsMeta}
+            conditions={conditions}
+            onChange={setConditions}
+            members={members}
+            lookup={referenceLookup}
+          />
           <div className="table-filter-actions">
             {/* Filters are ephemeral until saved: tweak freely, then either
                 commit to this view ("Save view") or fork a new one. */}
@@ -1044,6 +1073,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         <AddColumnModal
           onAdd={handleAddColumn}
           onClose={() => setIsAddingColumn(false)}
+          referenceTargets={referenceTargets}
         />
       )}
 
@@ -1055,6 +1085,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           onClose={() => setEditingColumn(null)}
           initial={editingColumn.initial}
           existingValues={editingColumn.existingValues}
+          referenceTargets={referenceTargets}
         />
       )}
 

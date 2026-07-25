@@ -5,6 +5,7 @@ function makeCws() {
   return {
     createTable: vi.fn().mockResolvedValue('[]'),
     createView: vi.fn().mockResolvedValue('ok'),
+    addColumn: vi.fn().mockResolvedValue(undefined),
     updateCell: vi.fn().mockResolvedValue(undefined),
   }
 }
@@ -22,7 +23,7 @@ describe('seedDemoWorkspace', () => {
     // The assignee column is a member column (issue bc48a6ed).
     expect(tables[0].columns.assignee.column_type).toBe('member')
 
-    expect(cws.createView).toHaveBeenCalledTimes(1)
+    expect(cws.createView).toHaveBeenCalledTimes(2)
     const view = JSON.parse(cws.createView.mock.calls[0][0])
     expect(view.view_type).toBe('kanban')
     expect(view.table_id).toBe('tasks')
@@ -30,6 +31,35 @@ describe('seedDemoWorkspace', () => {
     expect(view.kanban_config.column_options).toEqual(['Todo', 'In Progress', 'Done'])
     // The card footer is an explicit view setting, not inferred (bc48a6ed).
     expect(view.kanban_config.assignee_column).toBe('assignee')
+
+    // The second board is the personal one: same table, filtered to the viewer
+    // via the `@me` sentinel (issue aaae6f3f).
+    const mine = JSON.parse(cws.createView.mock.calls[1][0])
+    expect(mine.name).toBe('My Board')
+    expect(mine.filters).toEqual([
+      { column_id: 'assignee', operator: 'equals', value: '@me' },
+    ])
+  })
+
+  it('links tasks to contacts with an explicit display column', async () => {
+    const cws = makeCws()
+    await seedDemoWorkspace(cws, '@me:tidework.io')
+
+    expect(cws.addColumn).toHaveBeenCalledTimes(1)
+    const [tableId, json] = cws.addColumn.mock.calls[0]
+    expect(tableId).toBe('tasks')
+    const col = JSON.parse(json)
+    expect(col.column_type).toBe('reference')
+    expect(col.reference_table).toBe('contacts')
+    // Which contact column labels a linked row is stored, not inferred.
+    expect(col.reference_display_column).toBe('name')
+
+    // Every seeded client value points at a contacts row that actually exists.
+    const writes = cws.updateCell.mock.calls
+    const contactIds = new Set(writes.filter(w => w[0] === 'contacts').map(w => w[1]))
+    const clients = writes.filter(w => w[0] === 'tasks' && w[2] === 'client').map(w => JSON.parse(w[3]))
+    expect(clients.length).toBeGreaterThan(0)
+    for (const c of clients) expect(contactIds.has(c)).toBe(true)
   })
 
   it('seeds rows into both tables, skipping empty values', async () => {

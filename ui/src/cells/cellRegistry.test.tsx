@@ -101,6 +101,49 @@ describe('cellRegistry', () => {
       render(<CellEditor column={refCol} value="p1" commit={vi.fn()} />)
       expect(screen.getByRole('textbox')).toBeInTheDocument()
     })
+
+    it('passes the configured display column to the lookup', () => {
+      const lookupSpy = vi.fn().mockReturnValue([{ id: 'p1', label: 'Apollo' }])
+      const configured = col({
+        id: 'project',
+        name: 'Project',
+        column_type: 'reference',
+        reference_table: 'projects',
+        reference_display_column: 'codename',
+      })
+      render(<CellEditor column={configured} value="" commit={vi.fn()} lookup={lookupSpy} />)
+      expect(lookupSpy).toHaveBeenCalledWith('projects', 'codename')
+    })
+  })
+
+  describe('CellEditor — multireference', () => {
+    const multiCol = col({
+      id: 'clients',
+      name: 'Clients',
+      column_type: 'multireference',
+      reference_table: 'contacts',
+      reference_display_column: 'name',
+    })
+    const lookup = () => [
+      { id: 'c1', label: 'Dana' },
+      { id: 'c2', label: 'Marcus' },
+    ]
+
+    it('adds a referenced row to the list', () => {
+      const commit = vi.fn()
+      render(<CellEditor column={multiCol} value={['c1']} commit={commit} lookup={lookup} />)
+      // The already-selected row is a removable tag, not an option.
+      expect(screen.getByText('Dana')).toBeInTheDocument()
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c2' } })
+      expect(commit).toHaveBeenCalledWith(['c1', 'c2'])
+    })
+
+    it('removes a referenced row from the list', () => {
+      const commit = vi.fn()
+      render(<CellEditor column={multiCol} value={['c1', 'c2']} commit={commit} lookup={lookup} />)
+      fireEvent.click(screen.getByLabelText('Remove Dana'))
+      expect(commit).toHaveBeenCalledWith(['c2'])
+    })
   })
 
   describe('CellEditor — document', () => {
@@ -202,6 +245,35 @@ describe('cellRegistry', () => {
         />,
       )
       expect(screen.getByText('Apollo')).toBeInTheDocument()
+    })
+
+    it('shows a dangling reference as its raw id rather than a blank cell', () => {
+      const lookup = () => [{ id: 'p1', label: 'Apollo' }]
+      const { container } = render(
+        <CellDisplay
+          column={col({ column_type: 'reference', reference_table: 'projects' })}
+          value="p_deleted"
+          lookup={lookup}
+        />,
+      )
+      expect(screen.getByText('p_deleted')).toBeInTheDocument()
+      expect(container.querySelector('.cell-ref--dangling')).toBeInTheDocument()
+    })
+
+    it('renders every label of a multireference cell', () => {
+      const lookup = () => [
+        { id: 'c1', label: 'Dana' },
+        { id: 'c2', label: 'Marcus' },
+      ]
+      render(
+        <CellDisplay
+          column={col({ column_type: 'multireference', reference_table: 'contacts' })}
+          value={['c1', 'c2']}
+          lookup={lookup}
+        />,
+      )
+      expect(screen.getByText('Dana')).toBeInTheDocument()
+      expect(screen.getByText('Marcus')).toBeInTheDocument()
     })
   })
 

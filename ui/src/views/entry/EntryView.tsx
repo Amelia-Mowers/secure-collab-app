@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { FieldRenderer } from './FieldRenderer'
 import { useMembers } from '@/hooks/useTable'
+import { makeReferenceLookup } from '@/lib/referenceLookup'
 import './EntryView.css'
 
 interface EntryViewProps {
@@ -162,24 +163,7 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
     }
   }
 
-  // Resolve referenced-table records (id + text-column label) for reference fields.
-  const referenceLookup = useCallback((refTableId: string) => {
-    if (!workspace) return []
-    try {
-      const refRows = JSON.parse(workspace.getTableRows(refTableId)) as Array<Record<string, any>>
-      let labelColId: string | undefined
-      try {
-        const refSchema = JSON.parse(workspace.getTableSchema(refTableId))
-        labelColId = (Object.values(refSchema.columns ?? {}) as any[]).find(c => c.column_type === 'text')?.id
-      } catch { /* no schema — fall back to the row id */ }
-      return refRows.map(r => ({
-        id: r._row_id,
-        label: labelColId && r[labelColId] != null ? String(r[labelColId]) : r._row_id,
-      }))
-    } catch {
-      return []
-    }
-  }, [workspace])
+  const referenceLookup = useMemo(() => makeReferenceLookup(workspace), [workspace])
 
   const handleReturn = () => {
     // Return to the view we came from (kanban / card / table) when the opening

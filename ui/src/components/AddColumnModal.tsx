@@ -11,6 +11,8 @@ export type ColumnType =
   | 'document'
   | 'member'
   | 'multimember'
+  | 'reference'
+  | 'multireference'
 
 interface ColumnTypeMeta {
   type: ColumnType
@@ -28,7 +30,17 @@ const COLUMN_TYPES: ColumnTypeMeta[] = [
   { type: 'document',    label: 'Document',     description: 'Rich Markdown content field'       },
   { type: 'member',      label: 'Member',       description: 'A person from this workspace'      },
   { type: 'multimember', label: 'Members',      description: 'Several people from this workspace' },
+  { type: 'reference',   label: 'Reference',    description: 'A row from another table'          },
+  { type: 'multireference', label: 'References', description: 'Several rows from another table'  },
 ]
+
+/** A table this column could point at, with the columns that could label its
+ *  rows. Supplied by the parent (only it can read the workspace schema). */
+export interface ReferenceTarget {
+  id: string
+  name: string
+  columns: Array<{ id: string; name: string; column_type: string }>
+}
 
 export interface NewColumnDef {
   name: string
@@ -38,6 +50,11 @@ export interface NewColumnDef {
    *  columns (defaults to the first option) so single-selects start on a value
    *  instead of blank. */
   defaultValue?: string
+  /** reference / multireference: the table pointed at. */
+  referenceTable?: string
+  /** reference / multireference: which of its columns labels a row. Written
+   *  explicitly at creation time rather than inferred later (issue c14e01a0). */
+  referenceDisplayColumn?: string
 }
 
 export interface EditColumnInitial {
@@ -45,6 +62,8 @@ export interface EditColumnInitial {
   columnType: ColumnType
   options: string[]
   defaultValue?: string
+  referenceTable?: string
+  referenceDisplayColumn?: string
 }
 
 interface AddColumnModalProps {
@@ -56,9 +75,18 @@ interface AddColumnModalProps {
   /** Distinct existing values of the column, used to auto-fill Select options
    *  when changing a column to select/multiselect (#6). */
   existingValues?: string[]
+  /** Tables this column could reference. Empty (the default) hides the
+   *  reference types — there is nothing to point at. */
+  referenceTargets?: ReferenceTarget[]
 }
 
-export function AddColumnModal({ onAdd, onClose, initial, existingValues }: AddColumnModalProps) {
+export function AddColumnModal({
+  onAdd,
+  onClose,
+  initial,
+  existingValues,
+  referenceTargets = [],
+}: AddColumnModalProps) {
   const isEdit = !!initial
   const [name, setName] = useState(initial?.name ?? '')
   const [columnType, setColumnType] = useState<ColumnType>(initial?.columnType ?? 'text')
@@ -66,10 +94,18 @@ export function AddColumnModal({ onAdd, onClose, initial, existingValues }: AddC
     initial?.options?.length ? initial.options.join(', ') : 'Option 1, Option 2, Option 3',
   )
   const [defaultValue, setDefaultValue] = useState(initial?.defaultValue ?? '')
+  const [referenceTable, setReferenceTable] = useState(initial?.referenceTable ?? '')
+  const [displayColumn, setDisplayColumn] = useState(initial?.referenceDisplayColumn ?? '')
   const [adding, setAdding] = useState(false)
 
   const isSelectType = columnType === 'select' || columnType === 'multiselect'
-  const canSubmit = name.trim().length > 0
+  const isReferenceType = columnType === 'reference' || columnType === 'multireference'
+  // Nothing to point at → don't offer the reference types at all.
+  const columnTypes = referenceTargets.length
+    ? COLUMN_TYPES
+    : COLUMN_TYPES.filter(ct => ct.type !== 'reference' && ct.type !== 'multireference')
+  const target = referenceTargets.find(t => t.id === referenceTable)
+  const canSubmit = name.trim().length > 0 && (!isReferenceType || !!referenceTable)
 
   const options = useMemo(
     () => optionsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0),
@@ -87,6 +123,22 @@ export function AddColumnModal({ onAdd, onClose, initial, existingValues }: AddC
     }
   }, [columnType, options])
 
+  // Pick sane starting points for a reference column, but MATERIALIZE them into
+  // the saved config — a display column that was merely inferred at read time
+  // is a hidden rule nobody can change (see the `lean-on-view-settings` rule).
+  useEffect(() => {
+    if (!isReferenceType) return
+    setReferenceTable(prev => (referenceTargets.some(t => t.id === prev) ? prev : referenceTargets[0]?.id ?? ''))
+  }, [isReferenceType, referenceTargets])
+  useEffect(() => {
+    if (!isReferenceType || !target) return
+    setDisplayColumn(prev =>
+      target.columns.some(c => c.id === prev)
+        ? prev
+        : target.columns.find(c => c.column_type === 'text')?.id ?? target.columns[0]?.id ?? '',
+    )
+  }, [isReferenceType, target])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!canSubmit || adding) return
@@ -97,6 +149,8 @@ export function AddColumnModal({ onAdd, onClose, initial, existingValues }: AddC
         columnType,
         options: isSelectType ? options : [],
         defaultValue: columnType === 'select' && defaultValue ? defaultValue : undefined,
+        referenceTable: isReferenceType ? referenceTable : undefined,
+        referenceDisplayColumn: isReferenceType && displayColumn ? displayColumn : undefined,
       })
     } finally {
       setAdding(false)
@@ -129,7 +183,7 @@ export function AddColumnModal({ onAdd, onClose, initial, existingValues }: AddC
           <div className="acm__form-group">
             <label className="acm__label">Column type</label>
             <div className="acm__type-list">
-              {COLUMN_TYPES.map(ct => (
+              {columnTypes.map(ct => (
                 <label
                   key={ct.type}
                   className={`acm__type-row ${columnType === ct.type ? 'acm__type-row--active' : ''}`}
@@ -178,6 +232,41 @@ export function AddColumnModal({ onAdd, onClose, initial, existingValues }: AddC
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Reference target + the column that labels a referenced row */}
+          {isReferenceType && (
+            <>
+              <div className="acm__form-group">
+                <label className="acm__label" htmlFor="acm-ref-table">Referenced table</label>
+                <select
+                  id="acm-ref-table"
+                  className="acm__input"
+                  value={referenceTable}
+                  onChange={e => setReferenceTable(e.target.value)}
+                >
+                  {referenceTargets.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="acm__form-group">
+                <label className="acm__label" htmlFor="acm-ref-display">
+                  Display column <span className="acm__label-hint">(what a linked row shows as)</span>
+                </label>
+                <select
+                  id="acm-ref-display"
+                  className="acm__input"
+                  value={displayColumn}
+                  onChange={e => setDisplayColumn(e.target.value)}
+                  disabled={!target}
+                >
+                  {(target?.columns ?? []).map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            </>
           )}
 
           {/* Default value — single-select starts on a value instead of blank */}

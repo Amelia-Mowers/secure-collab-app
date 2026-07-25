@@ -2,7 +2,8 @@
  * Seed content for the "Create demo workspace" button (issue c0ace30a): a
  * real, synced workspace (unlike the old local-only demo) pre-populated so
  * every surface has something to show — a project tracker with a kanban
- * board, and a contacts table with a document cell.
+ * board, a contacts table with a document cell, tasks linked to the contact
+ * they belong to (a reference column), and a personal board filtered to `@me`.
  *
  * Writes go through the normal ConnectedWorkspace APIs, so the result is an
  * ordinary workspace: encrypted, collaborative, and safe to delete.
@@ -18,15 +19,17 @@ type Row = Record<string, unknown>
  *  creating user's MXID at seed time — the only member of a fresh demo room. */
 const SELF = '@@self'
 
+/** `client` holds a CONTACTS row id — the reference column below renders it
+ *  through the contact's `name`. */
 const TASKS: Row[] = [
-  { title: 'Sketch landing page hero', status: 'Done', assignee: SELF, due_date: '2026-07-10', priority: 'High' },
-  { title: 'Wire up sign-up flow', status: 'Done', assignee: '', due_date: '2026-07-14', priority: 'High' },
-  { title: 'Draft pricing copy', status: 'In Progress', assignee: SELF, due_date: '2026-07-24', priority: 'Medium' },
-  { title: 'Instrument onboarding funnel', status: 'In Progress', assignee: '', due_date: '2026-07-28', priority: 'Medium' },
-  { title: 'Fix mobile nav overlap', status: 'In Progress', assignee: SELF, due_date: '2026-07-22', priority: 'High' },
-  { title: 'Choose launch date', status: 'Todo', assignee: SELF, due_date: '2026-08-04', priority: 'High' },
-  { title: 'Write changelog post', status: 'Todo', assignee: '', due_date: '2026-08-06', priority: 'Low' },
-  { title: 'QA pass on dark mode', status: 'Todo', assignee: '', due_date: '', priority: 'Low' },
+  { title: 'Sketch landing page hero', status: 'Done', assignee: SELF, due_date: '2026-07-10', priority: 'High', client: 'demo_contacts_1' },
+  { title: 'Wire up sign-up flow', status: 'Done', assignee: '', due_date: '2026-07-14', priority: 'High', client: 'demo_contacts_1' },
+  { title: 'Draft pricing copy', status: 'In Progress', assignee: SELF, due_date: '2026-07-24', priority: 'Medium', client: 'demo_contacts_3' },
+  { title: 'Instrument onboarding funnel', status: 'In Progress', assignee: '', due_date: '2026-07-28', priority: 'Medium', client: 'demo_contacts_2' },
+  { title: 'Fix mobile nav overlap', status: 'In Progress', assignee: SELF, due_date: '2026-07-22', priority: 'High', client: '' },
+  { title: 'Choose launch date', status: 'Todo', assignee: SELF, due_date: '2026-08-04', priority: 'High', client: 'demo_contacts_2' },
+  { title: 'Write changelog post', status: 'Todo', assignee: '', due_date: '2026-08-06', priority: 'Low', client: '' },
+  { title: 'QA pass on dark mode', status: 'Todo', assignee: '', due_date: '', priority: 'Low', client: 'demo_contacts_4' },
 ]
 
 const CONTACTS: Row[] = [
@@ -49,6 +52,7 @@ export async function seedDemoWorkspace(
   cws: {
     createTable(json: string): Promise<string>
     createView(json: string): Promise<string>
+    addColumn(tableId: string, columnJson: string): Promise<void>
     updateCell(tableId: string, rowId: string, colId: string, valueJson: string): Promise<void>
   },
   /** The creating user's MXID — the demo's member-column assignee. */
@@ -59,6 +63,22 @@ export async function seedDemoWorkspace(
 
   await cws.createTable(JSON.stringify(buildTableDefinition('tasks', 'Projects', project)))
   await cws.createTable(JSON.stringify(buildTableDefinition('contacts', 'Contacts', contacts)))
+
+  // The cross-table link, added after both tables exist. Which contact column
+  // labels a linked row is stored explicitly (`reference_display_column`), not
+  // guessed at read time.
+  await cws.addColumn(
+    'tasks',
+    JSON.stringify({
+      id: 'client',
+      name: 'Client',
+      column_type: 'reference',
+      required: false,
+      order: 5,
+      reference_table: 'contacts',
+      reference_display_column: 'name',
+    }),
+  )
 
   await cws.createView(
     JSON.stringify({
@@ -75,6 +95,26 @@ export async function seedDemoWorkspace(
         column_options: project.columns.find(c => c.id === 'status')?.options ?? [],
         // Explicit view setting (never inferred): the demo shows the member
         // column on cards.
+        assignee_column: 'assignee',
+      },
+    }),
+  )
+
+  // A second board over the same table, filtered to the viewer — the `@me`
+  // value resolves per-viewer, so this is everyone's own board.
+  await cws.createView(
+    JSON.stringify({
+      id: 'tasks-mine',
+      name: 'My Board',
+      table_id: 'tasks',
+      view_type: 'kanban',
+      sort: [],
+      filters: [{ column_id: 'assignee', operator: 'equals', value: '@me' }],
+      kanban_config: {
+        group_by_column: 'status',
+        title_column: 'title',
+        display_columns: [],
+        column_options: project.columns.find(c => c.id === 'status')?.options ?? [],
         assignee_column: 'assignee',
       },
     }),

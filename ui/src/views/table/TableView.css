@@ -244,6 +244,15 @@
   color: var(--text);
 }
 
+/* A reference whose target row no longer exists (issue c14e01a0): show the raw
+   id, struck through, so a broken link is visible rather than blank. */
+.cell-ref--dangling {
+  background: var(--red-muted, rgba(248, 113, 113, 0.14));
+  color: var(--red, #f87171);
+  text-decoration: line-through;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
 .cell-display--tags { flex-wrap: wrap; }
 .cell-tag {
   padding: 1px 7px;

@@ -12,6 +12,7 @@
  */
 import { useEffect, useState } from 'react'
 import { MarkdownEditor } from '@/views/entry/MarkdownEditor'
+import { referenceLabel, type ReferenceLookup } from '@/lib/referenceLookup'
 import './cells.css'
 
 export interface CellColumn {
@@ -21,11 +22,14 @@ export interface CellColumn {
   required?: boolean
   options?: string[]
   reference_table?: string
+  /** Which column of `reference_table` labels a row (issue c14e01a0). */
+  reference_display_column?: string
 }
 
 /** Resolve the selectable records of a referenced table (id + display label).
- *  Supplied by the consumer (grid / entry view) since only it has the workspace. */
-export type ReferenceLookup = (tableId: string) => Array<{ id: string; label: string }>
+ *  Supplied by the consumer (grid / entry view) since only it has the
+ *  workspace — see `lib/referenceLookup`. */
+export type { ReferenceLookup }
 
 /** The workspace room's members (id = MXID, label = display name), for
  *  `member` / `multimember` columns. Supplied by the consumer. */
@@ -77,6 +81,31 @@ export function memberLabel(members: MemberList | undefined, mxid: string): stri
   return m ? m[1] : mxid
 }
 
+/** One referenced row as a pill. A row that no longer exists renders its raw
+ *  id in a "dangling" style — a broken link should be visible, not blank. */
+function referencePill(
+  column: CellColumn,
+  lookup: ReferenceLookup | undefined,
+  id: string,
+  tag = false,
+) {
+  const records =
+    lookup && column.reference_table
+      ? lookup(column.reference_table, column.reference_display_column)
+      : null
+  const { label, dangling } = referenceLabel(records, id)
+  const base = tag ? 'cell-tag' : 'cell-pill'
+  return (
+    <span
+      key={id}
+      className={dangling ? `${base} cell-ref--dangling` : base}
+      title={dangling ? `Referenced row ${id} no longer exists` : undefined}
+    >
+      {label}
+    </span>
+  )
+}
+
 export function CellDisplay({ column, value, lookup, members }: CellDisplayProps) {
   switch (column.column_type) {
     case 'member': {
@@ -123,10 +152,15 @@ export function CellDisplay({ column, value, lookup, members }: CellDisplayProps
       return <span className="cell-display cell-display--mono">{defaultText(value)}</span>
     case 'reference': {
       if (value == null || value === '') return <span className="cell-display" />
-      const label = lookup && column.reference_table
-        ? lookup(column.reference_table).find(r => r.id === value)?.label ?? String(value)
-        : String(value)
-      return <span className="cell-display cell-pill">{label}</span>
+      return <span className="cell-display">{referencePill(column, lookup, String(value))}</span>
+    }
+    case 'multireference': {
+      const items = Array.isArray(value) ? value : value != null && value !== '' ? [value] : []
+      return (
+        <span className="cell-display cell-display--tags">
+          {items.map((id: any) => referencePill(column, lookup, String(id), true))}
+        </span>
+      )
     }
     default:
       return <span className="cell-display">{defaultText(value)}</span>
@@ -364,7 +398,10 @@ function MultiMemberEditor({ value, commit, autoFocus, onDone, members }: CellEd
 }
 
 function ReferenceEditor({ column, value, commit, autoFocus, onDone, lookup }: CellEditorProps) {
-  const records = lookup && column.reference_table ? lookup(column.reference_table) : null
+  const records =
+    lookup && column.reference_table
+      ? lookup(column.reference_table, column.reference_display_column)
+      : null
   // Hook must run unconditionally; only the fallback path uses the draft.
   const [draft, setDraft] = useDraft(value ?? '')
 
@@ -468,6 +505,45 @@ function JsonEditor({ value, commit, autoFocus, onDone }: CellEditorProps) {
   )
 }
 
+/** Multi-reference: the same add/remove shape as MultiMemberEditor, over rows
+ *  of the referenced table. */
+function MultiReferenceEditor({ column, value, commit, autoFocus, onDone, lookup }: CellEditorProps) {
+  const selected: string[] = Array.isArray(value) ? value.map(String) : []
+  const records =
+    (lookup && column.reference_table
+      ? lookup(column.reference_table, column.reference_display_column)
+      : null) ?? []
+  const remaining = records.filter(r => !selected.includes(r.id))
+  const labelOf = (id: string) => referenceLabel(records, id).label
+  return (
+    <div className="cell-multiselect">
+      {selected.map(id => (
+        <span key={id} className="cell-tag cell-tag--editable">
+          <span className="cell-tag__label">{labelOf(id)}</span>
+          <button
+            type="button"
+            className="cell-tag__remove"
+            aria-label={`Remove ${labelOf(id)}`}
+            onClick={() => commit(selected.filter(s => s !== id))}
+          >×</button>
+        </span>
+      ))}
+      <select
+        className="cell-input cell-input--select"
+        value=""
+        autoFocus={autoFocus}
+        onChange={e => { if (e.target.value) commit([...selected, e.target.value]) }}
+        onBlur={onDone}
+      >
+        <option value="">Add {column.name}...</option>
+        {remaining.map(r => (
+          <option key={r.id} value={r.id}>{r.label}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 const EDITORS: Record<string, (p: CellEditorProps) => JSX.Element> = {
   text: TextEditor,
   number: NumberEditor,
@@ -478,6 +554,7 @@ const EDITORS: Record<string, (p: CellEditorProps) => JSX.Element> = {
   member: MemberEditor,
   multimember: MultiMemberEditor,
   reference: ReferenceEditor,
+  multireference: MultiReferenceEditor,
   document: DocumentEditor,
   json: JsonEditor,
 }
