@@ -9,8 +9,13 @@
  *
  * Cell value shapes by column type: text/document = string; number = number;
  * boolean = boolean; date = ISO `YYYY-MM-DD`; select/reference = string | null;
- * multiselect = string[]; json = arbitrary. "Empty" means `null`, `undefined`,
- * `''`, or an empty array.
+ * multiselect = string[]; json = arbitrary. member = MXID string; multimember =
+ * MXID string[]. "Empty" means `null`, `undefined`, `''`, or an empty array.
+ *
+ * Dynamic values (`is_today`, the {@link ME} sentinel) resolve against a
+ * {@link FilterContext} at evaluation time, never at save time — so one saved
+ * "assigned to me" view means something different, and correct, for each
+ * viewer. `crates/app-core/src/filter_eval.rs` mirrors this; keep them in sync.
  */
 
 export type FilterOp =
@@ -35,6 +40,21 @@ export interface FilterCondition {
   operator: FilterOp
   /** Omitted/undefined for is_empty / is_not_empty / is_today. */
   value?: unknown
+}
+
+/**
+ * The filter value standing for "whoever is looking", on member columns.
+ * Saved verbatim in the view; resolved per-viewer via {@link FilterContext.me}.
+ * Not a valid MXID (those are `@localpart:server`), so it can't collide.
+ */
+export const ME = '@me'
+
+/** Caller-supplied values for the operators that depend on who/when. */
+export interface FilterContext {
+  /** The viewer's MXID. Absent → {@link ME} matches nobody (never everybody). */
+  me?: string | null
+  /** Override for "today" as `YYYY-MM-DD`; defaults to the local calendar day. */
+  today?: string
 }
 
 export interface FilterColumn {
@@ -190,13 +210,30 @@ function compare(
   return a < b ? -1 : a > b ? 1 : 0
 }
 
+/**
+ * Substitute {@link ME} for the viewer's MXID, on member columns only. An
+ * unresolvable `@me` (no viewer) becomes `null`, which the positive operators
+ * treat as "no match" — the safe direction.
+ */
+function resolveMe(filterValue: unknown, columnType: string, ctx?: FilterContext): unknown {
+  if (columnType !== 'member' && columnType !== 'multimember') return filterValue
+  const me = ctx?.me ?? null
+  if (filterValue === ME) return me
+  if (Array.isArray(filterValue) && filterValue.includes(ME)) {
+    return filterValue.map(v => (v === ME ? me : v))
+  }
+  return filterValue
+}
+
 /** Whether a single cell value satisfies one operator. */
 export function matchesCondition(
   cellValue: unknown,
   op: FilterOp,
-  filterValue: unknown,
+  rawFilterValue: unknown,
   columnType: string,
+  ctx?: FilterContext,
 ): boolean {
+  const filterValue = resolveMe(rawFilterValue, columnType, ctx)
   switch (op) {
     case 'is_empty':
       return isEmpty(cellValue)
@@ -204,7 +241,7 @@ export function matchesCondition(
       return !isEmpty(cellValue)
     case 'is_today':
       if (isEmpty(cellValue)) return false
-      return dayPrefix(cellValue) === todayLocal()
+      return dayPrefix(cellValue) === (ctx?.today ?? todayLocal())
     case 'equals':
       return equalsMatch(cellValue, filterValue, columnType)
     case 'not_equals':
@@ -264,13 +301,14 @@ export function applyFilters<T extends Record<string, unknown>>(
   rows: T[],
   conditions: FilterCondition[],
   columnsById: Record<string, FilterColumn>,
+  ctx?: FilterContext,
 ): T[] {
   if (conditions.length === 0) return rows
   return rows.filter((row) =>
     conditions.every((c) => {
       const column = columnsById[c.columnId]
       if (!column) return true
-      return matchesCondition(row[c.columnId], c.operator, c.value, column.column_type)
+      return matchesCondition(row[c.columnId], c.operator, c.value, column.column_type, ctx)
     }),
   )
 }

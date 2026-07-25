@@ -4,6 +4,7 @@ import {
   operatorNeedsValue,
   matchesCondition,
   applyFilters,
+  ME,
   type FilterCondition,
   type FilterColumn,
   type FilterOp,
@@ -230,5 +231,61 @@ describe('applyFilters', () => {
     ]
     const out = applyFilters(rows, conditions, columnsById)
     expect(out.map((r) => r.title)).toEqual(['Alpha', 'Beta', 'Gamma'])
+  })
+})
+
+describe('the @me sentinel', () => {
+  const ALICE = '@alice:example.org'
+  const BOB = '@bob:example.org'
+
+  it('resolves to the viewer on member columns', () => {
+    expect(matchesCondition(ALICE, 'equals', ME, 'member', { me: ALICE })).toBe(true)
+    expect(matchesCondition(ALICE, 'equals', ME, 'member', { me: BOB })).toBe(false)
+    // Inside a list, next to literal MXIDs.
+    expect(matchesCondition(ALICE, 'is_any_of', [BOB, ME], 'member', { me: ALICE })).toBe(true)
+    // Multi-member cells.
+    expect(matchesCondition([BOB, ALICE], 'has_any_of', [ME], 'multimember', { me: ALICE })).toBe(
+      true,
+    )
+    expect(matchesCondition([BOB], 'has_any_of', [ME], 'multimember', { me: ALICE })).toBe(false)
+  })
+
+  it('is a literal string off member columns', () => {
+    expect(matchesCondition(ME, 'equals', ME, 'text', { me: ALICE })).toBe(true)
+    expect(matchesCondition(ALICE, 'equals', ME, 'text', { me: ALICE })).toBe(false)
+  })
+
+  it('matches nobody when there is no viewer', () => {
+    expect(matchesCondition(ALICE, 'equals', ME, 'member')).toBe(false)
+    expect(matchesCondition(ALICE, 'equals', ME, 'member', { me: null })).toBe(false)
+    expect(matchesCondition([ALICE], 'has_any_of', [ME], 'multimember', {})).toBe(false)
+  })
+
+  it('selects a personal board through applyFilters', () => {
+    const columnsById: Record<string, FilterColumn> = {
+      assignee: { id: 'assignee', column_type: 'member' },
+    }
+    const rows = [
+      { title: 'mine', assignee: ALICE },
+      { title: 'theirs', assignee: BOB },
+      { title: 'nobody', assignee: null },
+    ]
+    const mine: FilterCondition[] = [{ columnId: 'assignee', operator: 'equals', value: ME }]
+    expect(applyFilters(rows, mine, columnsById, { me: ALICE }).map((r) => r.title)).toEqual([
+      'mine',
+    ])
+    // The SAME saved view, a different viewer.
+    expect(applyFilters(rows, mine, columnsById, { me: BOB }).map((r) => r.title)).toEqual([
+      'theirs',
+    ])
+  })
+})
+
+describe('the injected today', () => {
+  it('overrides the local calendar day', () => {
+    expect(matchesCondition('2020-01-01', 'is_today', undefined, 'date', { today: '2020-01-01' }))
+      .toBe(true)
+    expect(matchesCondition(todayLocal(), 'is_today', undefined, 'date', { today: '2020-01-01' }))
+      .toBe(false)
   })
 })

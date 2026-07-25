@@ -396,4 +396,57 @@ describe('KanbanView', () => {
       expect(screen.getByText('amelia')).toBeInTheDocument()
     })
   })
+
+  describe('saved filters (issue aaae6f3f)', () => {
+    /** A board over `tasks` with an `owner` member column and the given filters. */
+    function boardWithFilters(filters: any[], viewer?: string) {
+      const ws: any = makeKanbanWorkspace()
+      ws.addColumn('tasks', JSON.stringify({ id: 'owner', name: 'Owner', column_type: 'member' }))
+      ws.updateCell('tasks', 'task-1', 'owner', JSON.stringify('@amelia:tidework.io'))
+      ws.updateCell('tasks', 'task-2', 'owner', JSON.stringify('@bob:tidework.io'))
+      ws.createView(JSON.stringify({
+        id: 'filtered',
+        name: 'Filtered Board',
+        table_id: 'tasks',
+        view_type: 'kanban',
+        sort: [],
+        filters,
+        kanban_config: {
+          group_by_column: 'status',
+          title_column: 'title',
+          display_columns: [],
+          column_options: ['Todo', 'In Progress', 'Done'],
+        },
+      }))
+      if (viewer) ws.currentUserId = () => viewer
+      return ws
+    }
+
+    it("applies a saved filter to the board's cards", async () => {
+      const ws = boardWithFilters([
+        { column_id: 'owner', operator: 'equals', value: '@bob:tidework.io' },
+      ])
+      renderKanban(ws, 'tasks', 'filtered')
+      await waitFor(() => expect(screen.getByText('Filtered Board')).toBeInTheDocument())
+      expect(screen.queryByText('Design homepage')).not.toBeInTheDocument()
+      expect(screen.getByText('Set up CI/CD')).toBeInTheDocument()
+    })
+
+    it('resolves @me against the viewer — one view, a personal board each', async () => {
+      const mine = boardWithFilters(
+        [{ column_id: 'owner', operator: 'equals', value: '@me' }],
+        '@amelia:tidework.io',
+      )
+      renderKanban(mine, 'tasks', 'filtered')
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(screen.queryByText('Set up CI/CD')).not.toBeInTheDocument()
+    })
+
+    it('shows nothing for @me when the viewer is unknown', async () => {
+      const ws = boardWithFilters([{ column_id: 'owner', operator: 'equals', value: '@me' }])
+      const { container } = renderKanban(ws, 'tasks', 'filtered')
+      await waitFor(() => expect(screen.getByText('Filtered Board')).toBeInTheDocument())
+      expect(container.querySelectorAll('.kcard').length).toBe(0)
+    })
+  })
 })

@@ -3,9 +3,12 @@
 //! Keep the two in sync: a view must select the same rows in the CLI as in the
 //! app.
 //!
-//! `is_today` compares against a caller-supplied `today` (`YYYY-MM-DD`, the
-//! caller's local calendar date) so this module needs no clock and stays
-//! portable across native and wasm.
+//! Dynamic values live in a caller-supplied [`FilterContext`] rather than being
+//! read from the environment: `is_today` compares against `today`
+//! (`YYYY-MM-DD`, the caller's local calendar date) and the `@me` sentinel on
+//! Member columns resolves to `me` (the viewer's MXID). That keeps this module
+//! clock- and identity-free, so it stays portable across native and wasm — and
+//! makes "assigned to me" a property of who is looking, not of the saved view.
 
 use serde_json::Value;
 
@@ -14,6 +17,65 @@ use crate::views::{FilterConfig, FilterOperator, SortConfig, SortDirection};
 
 /// A materialized row, as returned by `Workspace::get_table_rows`.
 pub type Row = indexmap::IndexMap<String, Value>;
+
+/// The filter value that stands for "whoever is looking" on Member columns.
+/// Stored verbatim in the saved view; resolved per-viewer at evaluation time
+/// (mirrors `ME` in `ui/src/lib/filters.ts`).
+pub const ME: &str = "@me";
+
+/// Everything a filter needs from the caller's environment. Both fields are
+/// resolved at evaluation time, never baked into the saved view.
+#[derive(Debug, Clone, Default)]
+pub struct FilterContext {
+    /// The caller's local calendar date as `YYYY-MM-DD` (used by `is_today`).
+    pub today: String,
+    /// The viewer's MXID, substituted for the [`ME`] sentinel. `None` (signed
+    /// out / unknown) makes `@me` match nothing rather than match everything.
+    pub me: Option<String>,
+}
+
+impl FilterContext {
+    /// A context with only a date — for callers with no notion of a viewer.
+    pub fn new(today: impl Into<String>) -> Self {
+        Self {
+            today: today.into(),
+            me: None,
+        }
+    }
+
+    /// Builder: set the viewer whose MXID `@me` resolves to.
+    pub fn with_me(mut self, me: Option<String>) -> Self {
+        self.me = me;
+        self
+    }
+}
+
+/// Substitute [`ME`] for the viewer's MXID in a filter value, for Member
+/// columns only. Returns `None` when nothing needed substituting (the caller
+/// keeps the original value). An unresolvable `@me` (no viewer) becomes `null`,
+/// which the positive operators treat as "no match" — the safe direction: a
+/// signed-out viewer sees nothing rather than everything.
+fn resolve_me(filter: Option<&Value>, ctype: &ColumnType, ctx: &FilterContext) -> Option<Value> {
+    if !matches!(ctype, ColumnType::Member | ColumnType::MultiMember) {
+        return None;
+    }
+    let me = || ctx.me.clone().map(Value::String).unwrap_or(Value::Null);
+    match filter {
+        Some(Value::String(s)) if s == ME => Some(me()),
+        Some(Value::Array(a)) if a.iter().any(|v| v.as_str() == Some(ME)) => Some(Value::Array(
+            a.iter()
+                .map(|v| {
+                    if v.as_str() == Some(ME) {
+                        me()
+                    } else {
+                        v.clone()
+                    }
+                })
+                .collect(),
+        )),
+        _ => None,
+    }
+}
 
 /// Empty = missing cell, `null`, `""`, or an empty array (mirrors the TS
 /// `isEmpty`).
@@ -121,19 +183,22 @@ fn as_string_array(v: Option<&Value>) -> Option<Vec<String>> {
 }
 
 /// Whether one cell value satisfies one operator (the TS `matchesCondition`).
-/// `today` is the caller's local date as `YYYY-MM-DD`, used only by `IsToday`.
+/// Dynamic filter values (`is_today`, the `@me` sentinel) resolve against
+/// `ctx`.
 pub fn matches_condition(
     cell: Option<&Value>,
     op: &FilterOperator,
     filter: Option<&Value>,
     ctype: &ColumnType,
-    today: &str,
+    ctx: &FilterContext,
 ) -> bool {
     use FilterOperator::*;
+    let resolved = resolve_me(filter, ctype, ctx);
+    let filter = resolved.as_ref().or(filter);
     match op {
         IsEmpty => is_empty(cell),
         IsNotEmpty => !is_empty(cell),
-        IsToday => !is_empty(cell) && cell.map(day_prefix).as_deref() == Some(today),
+        IsToday => !is_empty(cell) && cell.map(day_prefix).as_deref() == Some(ctx.today.as_str()),
         Equals => equals_match(cell, filter, ctype),
         NotEquals => is_empty(cell) || !equals_match(cell, filter, ctype),
         Contains => contains_match(cell, filter),
@@ -184,7 +249,7 @@ pub fn row_matches(
     row: &Row,
     filters: &[FilterConfig],
     schema: &TableDefinition,
-    today: &str,
+    ctx: &FilterContext,
 ) -> bool {
     filters.iter().all(|f| {
         let Some(col) = schema.columns.get(&f.column_id) else {
@@ -195,7 +260,7 @@ pub fn row_matches(
             &f.operator,
             f.value.as_ref(),
             &col.column_type,
-            today,
+            ctx,
         )
     })
 }
@@ -270,6 +335,11 @@ mod tests {
     use serde_json::json;
 
     const TODAY: &str = "2026-07-21";
+    const ALICE: &str = "@alice:example.org";
+
+    fn ctx() -> FilterContext {
+        FilterContext::new(TODAY)
+    }
 
     fn schema() -> TableDefinition {
         TableDefinition::new("t", "T")
@@ -299,7 +369,97 @@ mod tests {
         filter: Option<Value>,
         ctype: ColumnType,
     ) -> bool {
-        matches_condition(cell.as_ref(), &op, filter.as_ref(), &ctype, TODAY)
+        matches_condition(cell.as_ref(), &op, filter.as_ref(), &ctype, &ctx())
+    }
+
+    /// Same as `cond`, but with a viewer for the `@me` sentinel to resolve to.
+    fn cond_as(
+        me: Option<&str>,
+        cell: Option<Value>,
+        op: FilterOperator,
+        filter: Option<Value>,
+        ctype: ColumnType,
+    ) -> bool {
+        let ctx = ctx().with_me(me.map(String::from));
+        matches_condition(cell.as_ref(), &op, filter.as_ref(), &ctype, &ctx)
+    }
+
+    #[test]
+    fn me_sentinel_resolves_to_the_viewer() {
+        use FilterOperator::*;
+        // Member: `@me` is whoever is looking.
+        assert!(cond_as(
+            Some(ALICE),
+            Some(json!(ALICE)),
+            Equals,
+            Some(json!(ME)),
+            ColumnType::Member
+        ));
+        assert!(!cond_as(
+            Some("@bob:example.org"),
+            Some(json!(ALICE)),
+            Equals,
+            Some(json!(ME)),
+            ColumnType::Member
+        ));
+        // Inside a list, alongside literal MXIDs.
+        assert!(cond_as(
+            Some(ALICE),
+            Some(json!(ALICE)),
+            IsAnyOf,
+            Some(json!(["@carol:example.org", ME])),
+            ColumnType::Member
+        ));
+        // MultiMember cells.
+        assert!(cond_as(
+            Some(ALICE),
+            Some(json!(["@bob:example.org", ALICE])),
+            HasAnyOf,
+            Some(json!([ME])),
+            ColumnType::MultiMember
+        ));
+        assert!(!cond_as(
+            Some(ALICE),
+            Some(json!(["@bob:example.org"])),
+            HasAnyOf,
+            Some(json!([ME])),
+            ColumnType::MultiMember
+        ));
+    }
+
+    #[test]
+    fn me_is_literal_off_member_columns_and_inert_without_a_viewer() {
+        use FilterOperator::*;
+        // On a Text column `@me` is just a string — no substitution.
+        assert!(cond_as(
+            Some(ALICE),
+            Some(json!(ME)),
+            Equals,
+            Some(json!(ME)),
+            ColumnType::Text
+        ));
+        assert!(!cond_as(
+            Some(ALICE),
+            Some(json!(ALICE)),
+            Equals,
+            Some(json!(ME)),
+            ColumnType::Text
+        ));
+        // No viewer: `@me` matches nobody rather than everybody.
+        assert!(!cond_as(
+            None,
+            Some(json!(ALICE)),
+            Equals,
+            Some(json!(ME)),
+            ColumnType::Member
+        ));
+        assert!(!cond_as(
+            None,
+            Some(json!([ALICE])),
+            HasAnyOf,
+            Some(json!([ME])),
+            ColumnType::MultiMember
+        ));
     }
 
     #[test]
@@ -557,9 +717,9 @@ mod tests {
             },
         ];
         let s = schema();
-        assert!(row_matches(&row("1", "open", 1), &filters, &s, TODAY));
-        assert!(!row_matches(&row("2", "closed", 1), &filters, &s, TODAY));
-        assert!(!row_matches(&row("3", "open", 5), &filters, &s, TODAY));
+        assert!(row_matches(&row("1", "open", 1), &filters, &s, &ctx()));
+        assert!(!row_matches(&row("2", "closed", 1), &filters, &s, &ctx()));
+        assert!(!row_matches(&row("3", "open", 5), &filters, &s, &ctx()));
     }
 
     #[test]

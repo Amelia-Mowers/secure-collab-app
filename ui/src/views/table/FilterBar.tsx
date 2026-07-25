@@ -1,4 +1,4 @@
-import { operatorsForType, operatorNeedsValue, type FilterCondition, type FilterOp } from '@/lib/filters'
+import { operatorsForType, operatorNeedsValue, ME, type FilterCondition, type FilterOp } from '@/lib/filters'
 import './FilterBar.css'
 
 export interface FilterColumnMeta {
@@ -6,6 +6,12 @@ export interface FilterColumnMeta {
   name: string
   column_type: string
   options?: string[]
+}
+
+/** A room member offered as a filter value on member columns. */
+export interface FilterMember {
+  id: string
+  label?: string
 }
 
 const MULTI_VALUE_OPS: FilterOp[] = ['is_any_of', 'has_any_of', 'has_all_of', 'has_none_of']
@@ -20,10 +26,13 @@ export function FilterBar({
   columns,
   conditions,
   onChange,
+  members = [],
 }: {
   columns: FilterColumnMeta[]
   conditions: FilterCondition[]
   onChange: (conditions: FilterCondition[]) => void
+  /** Room members, offered as values on member columns (alongside "Me"). */
+  members?: FilterMember[]
 }) {
   const update = (i: number, patch: Partial<FilterCondition>) =>
     onChange(conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)))
@@ -78,6 +87,7 @@ export function FilterBar({
                 column={col}
                 operator={c.operator}
                 value={c.value}
+                members={members}
                 onChange={v => update(i, { value: v })}
               />
             )}
@@ -104,32 +114,43 @@ function ValueEditor({
   column,
   operator,
   value,
+  members,
   onChange,
 }: {
   column: FilterColumnMeta | undefined
   operator: FilterOp
   value: unknown
+  members: FilterMember[]
   onChange: (v: unknown) => void
 }) {
   const type = column?.column_type ?? 'text'
-  const options = column?.options ?? []
+  const isMember = type === 'member' || type === 'multimember'
+  // Member columns pick from the room roster, led by "Me" — the sentinel value
+  // that resolves to whoever is viewing, so one saved view is everyone's
+  // personal board. Everything else picks from the column's select options.
+  const choices: Array<{ value: string; label: string }> = isMember
+    ? [
+        { value: ME, label: 'Me' },
+        ...members.map(m => ({ value: m.id, label: m.label || m.id })),
+      ]
+    : (column?.options ?? []).map(o => ({ value: o, label: o }))
 
   // is_any_of / has any/all/none → pick one or more option values.
   if (MULTI_VALUE_OPS.includes(operator)) {
     const selected = Array.isArray(value) ? (value as string[]) : []
-    if (options.length) {
+    if (choices.length) {
       const toggle = (opt: string) =>
         onChange(selected.includes(opt) ? selected.filter(o => o !== opt) : [...selected, opt])
       return (
         <div className="filter-value-multi">
-          {options.map(opt => (
-            <label key={opt} className="filter-value-multi__opt">
+          {choices.map(opt => (
+            <label key={opt.value} className="filter-value-multi__opt">
               <input
                 type="checkbox"
-                checked={selected.includes(opt)}
-                onChange={() => toggle(opt)}
+                checked={selected.includes(opt.value)}
+                onChange={() => toggle(opt.value)}
               />
-              {opt}
+              {opt.label}
             </label>
           ))}
         </div>
@@ -145,7 +166,7 @@ function ValueEditor({
     )
   }
 
-  if (type === 'select' && options.length) {
+  if ((type === 'select' || isMember) && choices.length) {
     return (
       <select
         className="filter-condition__value"
@@ -153,9 +174,9 @@ function ValueEditor({
         onChange={e => onChange(e.target.value)}
       >
         <option value="">—</option>
-        {options.map(opt => (
-          <option key={opt} value={opt}>
-            {opt}
+        {choices.map(opt => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
           </option>
         ))}
       </select>

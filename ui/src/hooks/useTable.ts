@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { getWasmModule } from '../wasm/loader'
 import { loadSnapshot, saveSnapshot } from '../lib/snapshotStore'
 import { loadOutbox, saveOutbox, clearOutbox } from '../lib/outboxStore'
@@ -75,6 +75,9 @@ export interface WorkspaceHandle {
   startSync?(onChange: () => void): void
   inviteUser?(userId: string): Promise<void>
   listMembers?(): Promise<string>
+  /** The signed-in user's MXID (ConnectedWorkspace only) — what `@me` filters
+   *  resolve to. */
+  currentUserId?(): string | undefined
   /** Serialize current state for incremental cold start (ConnectedWorkspace only). */
   snapshot?(): string
   /** Change history (edits + reverts) as a JSON array, newest-first, optionally
@@ -128,6 +131,20 @@ export function useMembers(workspace: WorkspaceHandle | null): Array<{ id: strin
     }
   }, [workspace])
   return members
+}
+
+/** The signed-in user's MXID — the viewer a `@me` filter resolves to. `null`
+ *  until the workspace handle exposes it (older bindings) or if signed out. */
+export function useCurrentUserId(workspace: WorkspaceHandle | null): string | null {
+  return useMemo(() => {
+    const ws = workspace as any
+    if (!ws || typeof ws.currentUserId !== 'function') return null
+    try {
+      return ws.currentUserId() ?? null
+    } catch {
+      return null
+    }
+  }, [workspace])
 }
 
 interface UseTableResult {

@@ -26,7 +26,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
-import { useTable, useMembers, notifyWorkspaceChanged } from '@/hooks/useTable'
+import { useTable, useMembers, useCurrentUserId, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
 import { HistoryDrawer } from '@/views/history/HistoryDrawer'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial } from '@/components/AddColumnModal'
@@ -283,6 +283,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     })
   const { rows, loading, error, updateCell, deleteRow, refresh, conflictCells } = useTable(workspace, tableId!, workspaceId, syncCount)
   const members = useMembers(workspace)
+  const me = useCurrentUserId(workspace)
   const [schema, setSchema] = useState<any>(null)
   const [isAddingColumn, setIsAddingColumn] = useState(false)
   /** The column being edited in the Edit-column modal, or null. */
@@ -353,8 +354,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // Pre-filter rows with the per-column conditions; TanStack still applies the
   // global text search + sort on top of the result.
   const filteredRows = React.useMemo(
-    () => applyFilters(rows as Record<string, unknown>[], conditions, columnsById),
-    [rows, conditions, columnsById],
+    () => applyFilters(rows as Record<string, unknown>[], conditions, columnsById, { me }),
+    [rows, conditions, columnsById, me],
   )
 
   useEffect(() => {
@@ -847,7 +848,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               </button>
             )}
           </div>
-          <FilterBar columns={columnsMeta} conditions={conditions} onChange={setConditions} />
+          <FilterBar columns={columnsMeta} conditions={conditions} onChange={setConditions} members={members} />
           <div className="table-filter-actions">
             {/* Filters are ephemeral until saved: tweak freely, then either
                 commit to this view ("Save view") or fork a new one. */}

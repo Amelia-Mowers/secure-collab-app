@@ -19,10 +19,12 @@ import {
 } from '@dnd-kit/sortable'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useTable, useMembers, notifyWorkspaceChanged } from '@/hooks/useTable'
+import { useTable, useMembers, useCurrentUserId, notifyWorkspaceChanged } from '@/hooks/useTable'
 import { computeReorderWrites } from '@/fractionalIndex'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
 import { ViewSettingsModal } from '@/components/ViewSettingsModal'
+import { FilterBar, type FilterColumnMeta } from '@/views/table/FilterBar'
+import { applyFilters, type FilterCondition } from '@/lib/filters'
 import { memberLabel } from '@/cells/cellRegistry'
 import { resolveTargetColumn } from './kanbanUtils'
 import './KanbanView.css'
@@ -167,6 +169,10 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const [toast, setToast] = useState<string | null>(null)
   const [regroupCol, setRegroupCol] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  // Per-column conditions, same engine and editor as the table view (issue
+  // aaae6f3f). Loaded from the view, tweakable ad hoc, saveable back.
+  const [showFilter, setShowFilter] = useState(false)
+  const [conditions, setConditions] = useState<FilterCondition[]>([])
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -176,7 +182,15 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   useEffect(() => {
     if (workspace && viewId) {
       try {
-        setViewConfig(JSON.parse(workspace.getView(viewId)))
+        const cfg = JSON.parse(workspace.getView(viewId))
+        setViewConfig(cfg)
+        const saved: FilterCondition[] = (cfg?.filters ?? []).map((f: any) => ({
+          columnId: f.column_id,
+          operator: f.operator,
+          value: f.value ?? undefined,
+        }))
+        setConditions(saved)
+        if (saved.length > 0) setShowFilter(true)
         setViewError(null)
       } catch (err) {
         console.error('Failed to load view config:', err)
@@ -210,6 +224,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   // user's choice, never inferred). Unset, or pointing at a since-deleted
   // column → no footer.
   const members = useMembers(workspace)
+  const me = useCurrentUserId(workspace)
   const memberCol = useMemo(() => {
     const configured = viewConfig?.kanban_config?.assignee_column
     if (!configured) return null
@@ -273,16 +288,64 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
     }
   }
 
+  // Filter columns for the editor, and the type map the engine needs.
+  const filterColumns: FilterColumnMeta[] = useMemo(
+    () =>
+      availableColumns.map(c => ({
+        id: c.id,
+        name: c.name,
+        column_type: c.column_type ?? 'text',
+        options: c.options,
+      })),
+    [availableColumns],
+  )
+  const columnsById = useMemo(
+    () => Object.fromEntries(filterColumns.map(c => [c.id, { id: c.id, column_type: c.column_type }])),
+    [filterColumns],
+  )
+  // Cards come from the filtered rows — `@me` resolves against this viewer, so
+  // a shared "assigned to me" board is personal to whoever opens it.
+  const filteredRows = useMemo(
+    () => applyFilters(rows as Record<string, unknown>[], conditions, columnsById, { me }),
+    [rows, conditions, columnsById, me],
+  )
+
+  /** Persist the current conditions into this view, leaving the rest of the
+   *  config (name, sort, kanban_config) exactly as it was. */
+  const saveFilters = async () => {
+    if (!viewConfig || !viewId || !tableId) return
+    const payload = {
+      ...viewConfig,
+      id: viewId,
+      table_id: tableId,
+      view_type: 'kanban',
+      filters: conditions.map(c => ({
+        column_id: c.columnId,
+        operator: c.operator,
+        value: c.value ?? null,
+      })),
+    }
+    try {
+      await workspace.createView(JSON.stringify(payload))
+      setViewConfig(JSON.parse(workspace.getView(viewId)))
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+      setToast('Filters saved to this board')
+    } catch (err) {
+      setToast(`Could not save filters: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    setTimeout(() => setToast(null), 3000)
+  }
+
   const columns: KanbanColumn[] = useMemo(() => {
-    if (!viewConfig?.kanban_config || !rows) return []
+    if (!viewConfig?.kanban_config || !filteredRows) return []
     const { group_by_column, title_column, column_options } = viewConfig.kanban_config
     const groupMap = new Map<string, KanbanCard[]>()
     if (column_options?.length) {
       column_options.forEach((opt: string) => groupMap.set(opt, []))
     }
-    rows.forEach(row => {
+    filteredRows.forEach(row => {
       const groupValue = String(row[group_by_column] || 'Uncategorized')
-      const card: KanbanCard = { id: row._row_id, title: String(row[title_column] || 'Untitled'), ...row }
+      const card: KanbanCard = { id: String(row._row_id), title: String(row[title_column] || 'Untitled'), ...row }
       if (!groupMap.has(groupValue)) groupMap.set(groupValue, [])
       groupMap.get(groupValue)!.push(card)
     })
@@ -291,7 +354,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
       title: groupValue,
       cards,
     }))
-  }, [rows, viewConfig])
+  }, [filteredRows, viewConfig])
 
   const handleDragStart = (event: DragStartEvent) => setActiveId(String(event.active.id))
 
@@ -386,7 +449,12 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
         title={viewConfig.name}
         actions={
           <>
-            <ToolbarButton icon={<FilterIcon />} label="Filter" />
+            <ToolbarButton
+              icon={<FilterIcon />}
+              label="Filter"
+              active={showFilter}
+              onClick={() => setShowFilter(s => !s)}
+            />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
             <ToolbarButton
               icon={<GearIcon />}
@@ -417,6 +485,25 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
             if (workspaceId) notifyWorkspaceChanged(workspaceId)
           }}
         />
+      )}
+
+      {showFilter && (
+        <div className="kanban-filter-bar">
+          <div className="kanban-filter-bar__row">
+            <span className="kanban-filter-bar__count">
+              {filteredRows.length} of {rows.length} card{rows.length === 1 ? '' : 's'}
+            </span>
+            <button className="ghost" onClick={saveFilters} title="Store these filters in the board">
+              Save to board
+            </button>
+          </div>
+          <FilterBar
+            columns={filterColumns}
+            conditions={conditions}
+            onChange={setConditions}
+            members={members}
+          />
+        </div>
       )}
 
       {/* Invalid settings block the board (issue cc70fdc5): grouping by a
