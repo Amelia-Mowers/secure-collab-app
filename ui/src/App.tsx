@@ -15,9 +15,8 @@ import { ViewRouter } from './views/ViewRouter'
 import { SignInPage } from './views/auth/SignInPage'
 import { OauthCallbackPage } from './views/auth/OauthCallbackPage'
 import { TrialGate } from './components/TrialStatus'
-import { OfflineOverlay } from './components/OfflineOverlay'
 import { UpdateBanner } from './components/UpdateBanner'
-import { DisconnectedOverlay } from './components/DisconnectedOverlay'
+import { ConnectionStatus } from './components/ConnectionStatus'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
 import './App.css'
 
@@ -89,7 +88,7 @@ function WorkspaceShell() {
 
   return (
     <div className="app">
-      <DisconnectedOverlay workspace={workspace} />
+      <ConnectionStatus workspace={workspace} />
       <Sidebar workspace={workspace} workspaceId={decodedWorkspaceId} syncCount={syncCount} />
       <div className="app-main">
         <ReadOnlyBanner workspace={workspace} syncCount={syncCount} />
@@ -141,10 +140,10 @@ export default function App() {
       {/* Full-page subscribe prompt when the hosted account is locked
           (trial over / lapsed) — ADR 0002 trial-first flow. */}
       <TrialGate />
-      {/* Interim offline guard (#2): block interaction (except reload) while the
-          browser reports no connection, since offline edits queue in memory and
-          are lost on reload before reconnect. */}
-      <OfflineOverlay />
+      {/* Connection status outside a workspace: browser-offline only, since
+          there's no sync loop to watch yet. Inside a workspace the same
+          component also watches homeserver health. */}
+      <ConnectionStatus />
       <UpdateBanner />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
