@@ -237,6 +237,16 @@ impl ViewManager {
             timestamp + 1,
         ));
 
+        // Explicit not-deleted marker: harmless on first creation, and on
+        // RE-creating a deleted view id it beats the old tombstone under LWW.
+        updates.push(CellUpdate::new(
+            VIEWS_TABLE_ID,
+            &view_id,
+            "deleted",
+            serde_json::json!(false),
+            timestamp + 1,
+        ));
+
         updates.push(CellUpdate::new(
             VIEWS_TABLE_ID,
             &view_id,
@@ -300,7 +310,34 @@ impl ViewManager {
     }
 
     /// Get a view configuration
+    /// Whether a view carries a `deleted = true` tombstone (decay model, the
+    /// same shape as a deleted column or table).
+    pub fn is_view_deleted(&self, view_id: &str) -> bool {
+        self.views_table
+            .get_value(view_id, "deleted")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
+    /// Delete a view (decay model): write a `deleted = true` marker. `get_view`
+    /// then returns `None` and `list_views_for_table` skips it; its cells age
+    /// out of the timeline like any other data. Re-creating the same id clears
+    /// the tombstone, because `create_view` writes `deleted = false` and LWW
+    /// takes the newer write.
+    pub fn delete_view(&self, view_id: &str, timestamp: u64) -> Vec<CellUpdate> {
+        vec![CellUpdate::new(
+            VIEWS_TABLE_ID,
+            view_id,
+            "deleted",
+            serde_json::json!(true),
+            timestamp,
+        )]
+    }
+
     pub fn get_view(&self, view_id: &str) -> Option<ViewConfig> {
+        if self.is_view_deleted(view_id) {
+            return None;
+        }
         let name = self.views_table.get_value(view_id, "name")?.as_str()?;
         let table_id = self.views_table.get_value(view_id, "table_id")?.as_str()?;
         let view_type: ViewType =
@@ -338,7 +375,7 @@ impl ViewManager {
 
         for row_id in self.views_table.rows() {
             if let Some(tid) = self.views_table.get_value(&row_id, "table_id") {
-                if tid.as_str() == Some(table_id) {
+                if tid.as_str() == Some(table_id) && !self.is_view_deleted(&row_id) {
                     view_ids.push(row_id);
                 }
             }

@@ -280,6 +280,16 @@ impl Workspace {
         Ok(updates)
     }
 
+    /// Rename a table in place: rewrites just the `name` cell of its `_tables`
+    /// row, leaving its columns and data alone.
+    pub fn rename_table(&mut self, table_id: &str, name: &str) -> Result<Vec<CellUpdate>> {
+        if !self.tables.contains_key(table_id) {
+            return Err(crate::Error::TableNotFound);
+        }
+        let timestamp = self.next_timestamp();
+        Ok(self.schema_manager.rename_table(table_id, name, timestamp))
+    }
+
     /// Delete a column (decay model): marks it deleted in the schema. Returns the
     /// schema CellUpdates to persist.
     pub fn delete_column(&mut self, table_id: &str, column_id: &str) -> Result<Vec<CellUpdate>> {
@@ -308,6 +318,19 @@ impl Workspace {
 
         #[cfg(not(target_arch = "wasm32"))]
         info!("Created view: {} for table: {}", config.id, config.table_id);
+        Ok(updates)
+    }
+
+    /// Delete a view (decay model). Returns the tombstone CellUpdate to
+    /// persist. Unknown ids are not an error — deleting twice converges.
+    pub fn delete_view(&mut self, view_id: &str) -> Result<Vec<CellUpdate>> {
+        let timestamp = self.next_timestamp();
+        let updates = self.view_manager.delete_view(view_id, timestamp);
+        self.view_manager.apply_updates(updates.clone());
+
+        #[cfg(not(target_arch = "wasm32"))]
+        info!("Tombstoned view: {}", view_id);
+
         Ok(updates)
     }
 
@@ -778,7 +801,7 @@ impl Workspace {
 mod tests {
     use super::*;
     use crate::schema::{ColumnDefinition, ColumnType};
-    use crate::views::ViewConfig;
+    use crate::views::{ViewConfig, ViewType};
     use serde_json::json;
 
     /// Exotic rollback: data hidden by a column's `deleted_at` cutoff ("stale")
@@ -2224,5 +2247,64 @@ mod tests {
             ws.list_tables(),
             vec!["m".to_string(), "a".to_string(), "z".to_string()]
         );
+    }
+
+    #[test]
+    fn delete_view_hides_it_and_recreating_the_id_brings_it_back() {
+        let mut ws = Workspace::new("w");
+        let def = TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+            "title",
+            "Title",
+            ColumnType::Text,
+        ));
+        ws.create_table(def).unwrap();
+        let view = ViewConfig::new("board", "Board", "tasks", ViewType::Table);
+        ws.create_view(view.clone()).unwrap();
+        assert_eq!(ws.list_views_for_table("tasks"), vec!["board".to_string()]);
+
+        ws.delete_view("board").unwrap();
+        assert!(
+            ws.get_view("board").is_none(),
+            "deleted view must not resolve"
+        );
+        assert!(
+            ws.list_views_for_table("tasks").is_empty(),
+            "deleted view must not be listed"
+        );
+
+        // Re-creating the same id clears the tombstone (LWW: the newer write).
+        ws.create_view(view).unwrap();
+        assert!(ws.get_view("board").is_some());
+        assert_eq!(ws.list_views_for_table("tasks"), vec!["board".to_string()]);
+    }
+
+    #[test]
+    fn rename_table_keeps_columns_and_rows() {
+        let mut ws = Workspace::new("w");
+        let def = TableDefinition::new("tasks", "Tasks").with_column(ColumnDefinition::new(
+            "title",
+            "Title",
+            ColumnType::Text,
+        ));
+        ws.create_table(def).unwrap();
+        ws.update_cell("tasks", "r1", "title", serde_json::json!("Ship it"))
+            .unwrap();
+
+        ws.rename_table("tasks", "Projects").unwrap();
+
+        // Same id, new name — and nothing else moved.
+        assert!(ws.list_tables().contains(&"tasks".to_string()));
+        let schema = ws.get_table_schema("tasks").unwrap();
+        assert_eq!(schema.name, "Projects");
+        assert!(schema.columns.contains_key("title"));
+        let rows = ws.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["title"], serde_json::json!("Ship it"));
+    }
+
+    #[test]
+    fn renaming_an_unknown_table_is_an_error() {
+        let mut ws = Workspace::new("w");
+        assert!(ws.rename_table("ghost", "Nope").is_err());
     }
 }

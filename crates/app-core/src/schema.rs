@@ -611,6 +611,19 @@ impl SchemaManager {
         updates
     }
 
+    /// Rename a table: one LWW write to the `name` cell of its `_tables` row.
+    pub fn rename_table(&mut self, table_id: &str, name: &str, timestamp: u64) -> Vec<CellUpdate> {
+        let update = CellUpdate::new(
+            TABLES_TABLE_ID,
+            table_id,
+            "name",
+            serde_json::json!(name),
+            timestamp,
+        );
+        self.tables_table.apply_update(update.clone());
+        vec![update]
+    }
+
     /// Delete a column (decay model — architecture.md "Deletion as Natural
     /// Decay"): write a `deleted = true` marker on the column's schema row.
     /// `get_table_schema` then excludes it and reports it in `deleted_columns`;

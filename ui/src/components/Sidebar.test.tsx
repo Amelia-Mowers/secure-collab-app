@@ -140,6 +140,62 @@ describe('Sidebar', () => {
     })
   })
 
+  describe('CRUD parity (issue row_1785004488887)', () => {
+    it('renames a table in place, keeping its rows and views', async () => {
+      const ws = makeKanbanWorkspace()
+      vi.spyOn(window, 'prompt').mockReturnValue('Projects')
+      renderSidebar(ws)
+
+      fireEvent.click(screen.getByLabelText('Rename table'))
+      await waitFor(() => expect(screen.getByText('Projects')).toBeInTheDocument())
+      // Same table: its rows and its view are still there.
+      expect(JSON.parse(ws.getTableRows('tasks')).length).toBeGreaterThan(0)
+      expect(screen.getByText('Task Board')).toBeInTheDocument()
+      vi.restoreAllMocks()
+    })
+
+    it('leaves the name alone when the rename prompt is cancelled', async () => {
+      const ws = makeKanbanWorkspace()
+      vi.spyOn(window, 'prompt').mockReturnValue(null)
+      renderSidebar(ws)
+      fireEvent.click(screen.getByLabelText('Rename table'))
+      await waitFor(() => expect(screen.getAllByText('Tasks').length).toBeGreaterThan(0))
+      vi.restoreAllMocks()
+    })
+
+    it('renames a view', async () => {
+      const ws = makeKanbanWorkspace()
+      vi.spyOn(window, 'prompt').mockReturnValue('Sprint Board')
+      renderSidebar(ws)
+      fireEvent.click(screen.getByLabelText('Rename view'))
+      await waitFor(() => expect(screen.getByText('Sprint Board')).toBeInTheDocument())
+      vi.restoreAllMocks()
+    })
+
+    it('deletes a view after confirming, leaving the table and its data', async () => {
+      const ws = makeKanbanWorkspace()
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      renderSidebar(ws)
+      expect(screen.getByText('Task Board')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByLabelText('Delete view'))
+      await waitFor(() => expect(screen.queryByText('Task Board')).not.toBeInTheDocument())
+      // Only the projection went.
+      expect(JSON.parse(ws.listTables())).toContain('tasks')
+      expect(JSON.parse(ws.getTableRows('tasks')).length).toBeGreaterThan(0)
+      vi.restoreAllMocks()
+    })
+
+    it('keeps the view when the delete confirm is declined', async () => {
+      const ws = makeKanbanWorkspace()
+      vi.spyOn(window, 'confirm').mockReturnValue(false)
+      renderSidebar(ws)
+      fireEvent.click(screen.getByLabelText('Delete view'))
+      await waitFor(() => expect(screen.getByText('Task Board')).toBeInTheDocument())
+      vi.restoreAllMocks()
+    })
+  })
+
   describe('table creation', () => {
     it('clicking "New table" reveals the new-table input', () => {
       const ws = new MockWorkspace()

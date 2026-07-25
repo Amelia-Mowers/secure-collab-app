@@ -69,6 +69,10 @@ export interface WorkspaceHandle {
   deleteRow(tableId: string, rowId: string): void | Promise<void>
   // Table-level delete / reorder (issue c36f496d). Present on both bridges.
   deleteTable?(tableId: string): void | Promise<void>
+  /** Rename a table in place — id, columns, rows, and views all survive. */
+  renameTable?(tableId: string, name: string): void | Promise<void>
+  /** Delete a saved view (tombstone). The table and its data are untouched. */
+  deleteView?(viewId: string): void | Promise<void>
   setTableOrder?(tableId: string, orderKey: string): void | Promise<void>
   getTableOrderKeys?(): string
   // ConnectedWorkspace-only methods (optional)
