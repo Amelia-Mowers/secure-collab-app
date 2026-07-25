@@ -103,5 +103,20 @@ experimental_features:
 trusted_key_servers:
   - server_name: "matrix.org"
 
+# Reclaim workspaces nobody is in any more.
+#
+# Matrix has no delete-a-room operation: a room persists as long as any member
+# remains. What a client CAN do is leave and then forget it, which is what
+# `leaveWorkspace()` does. This setting is the other half — Synapse purges a
+# room from the database once every local user has forgotten it, so an
+# abandoned or deleted workspace stops costing storage instead of lingering
+# forever. Without it, forgetting only hides the room.
+#
+# 28 days is a deliberate grace period: a purge is irreversible, and a user who
+# left by mistake can be re-invited within the window and still have history.
+# (`forget_rooms_on_leave` is left off — our client forgets explicitly, so
+# auto-forgetting every left room would be a broader policy than we want.)
+forgotten_room_retention_period: 28d
+
 # Media limits — generous enough for document workspaces, bounded for a 4GB box.
 max_upload_size: 50M
