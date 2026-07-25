@@ -25,6 +25,8 @@ import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { TrialBadge } from '@/components/TrialStatus'
 import { buildTableDefinition, type TableTemplate } from '@/tableTemplates'
 import './Sidebar.css'
+import { ROLE_LABELS, type Role, type WorkspaceMember } from '@/lib/roles'
+import { useRole } from '@/hooks/useRole'
 
 interface SidebarProps {
   workspace: any
@@ -323,7 +325,8 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
-  const [members, setMembers] = useState<string[]>([])
+  const [members, setMembers] = useState<WorkspaceMember[]>([])
+  
   const [showMembers, setShowMembers] = useState(false)
   // null = unknown (e.g. local-only or mock workspace); true/false = real room state.
   const [encrypted, setEncrypted] = useState<boolean | null>(null)
@@ -332,18 +335,47 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const { theme, toggleTheme } = useTheme()
   const { workspaces } = useAuth()
   const workspaceName = workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace'
+  /** This user's role — gates the administrative affordances below. */
+  const myRole = useRole(workspace, syncCount)
 
   // ── Fetch member list ───────────────────────────────────────
   const loadMembers = useCallback(async () => {
     if (!workspace?.listMembers) return
     try {
       const json = await workspace.listMembers()
-      const memberIds = JSON.parse(json) as string[]
-      setMembers(memberIds)
+      const parsed = JSON.parse(json) as Array<{
+        userId: string
+        displayName?: string
+        role?: Role
+      }>
+      setMembers(
+        parsed.map(m => ({
+          id: m.userId,
+          name: m.displayName || '',
+          role: m.role ?? 'editor',
+        })),
+      )
     } catch (err) {
       console.error('Failed to load members:', err)
     }
   }, [workspace])
+
+  /** Only an admin may change roles; the homeserver enforces it regardless, but
+   *  offering a control that will be rejected is its own bug. */
+  const changeRole = async (member: WorkspaceMember, role: Role) => {
+    const ws = workspace as any
+    if (!ws || typeof ws.setUserRole !== 'function') return
+    const previous = member.role
+    setMembers(prev => prev.map(m => (m.id === member.id ? { ...m, role } : m)))
+    try {
+      await ws.setUserRole(member.id, role)
+      loadMembers()
+    } catch (err) {
+      console.error('Failed to set role:', err)
+      alert('Failed to change role: ' + (err instanceof Error ? err.message : String(err)))
+      setMembers(prev => prev.map(m => (m.id === member.id ? { ...m, role: previous } : m)))
+    }
+  }
 
   useEffect(() => {
     loadMembers()
@@ -744,9 +776,23 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
               <>
                 <div className="sidebar__member-list">
                   {members.map(m => (
-                    <div key={m} className="sidebar__member">
+                    <div key={m.id} className="sidebar__member">
                       <UserIcon />
-                      <span className="sidebar__member-id">{m}</span>
+                      <span className="sidebar__member-id">{m.name || m.id}</span>
+                      {myRole === 'admin' ? (
+                        <select
+                          className="sidebar__member-role"
+                          value={m.role}
+                          aria-label={`Role for ${m.name || m.id}`}
+                          onChange={e => void changeRole(m, e.target.value as Role)}
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="editor">Editor</option>
+                          <option value="viewer">Viewer</option>
+                        </select>
+                      ) : (
+                        <span className="sidebar__member-role-label">{ROLE_LABELS[m.role]}</span>
+                      )}
                     </div>
                   ))}
                 </div>

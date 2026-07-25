@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+
+/** Shown when a viewer attempts a write the homeserver would refuse anyway. */
+const READ_ONLY_MESSAGE = 'You have view-only access to this workspace'
 import { getWasmModule } from '../wasm/loader'
 import { loadSnapshot, saveSnapshot } from '../lib/snapshotStore'
 import { loadOutbox, saveOutbox, clearOutbox } from '../lib/outboxStore'
 import { getSnapshotKey } from '../lib/atRestSession'
+import { useRole } from './useRole'
+import { canEdit } from '../lib/roles'
 
 // ── Cross-tab broadcast ──────────────────────────────────────────────────────
 //
@@ -163,6 +168,9 @@ interface UseTableResult {
    *  highlight; the history drawer is the recovery path. Entries expire after
    *  a few seconds. (ADR 0003 item 4) */
   conflictCells: Set<string>
+  /** True when this user may not write (a `viewer` role). Views should hide
+   *  their editing affordances; `updateCell`/`deleteRow` also refuse. */
+  readOnly: boolean
 }
 
 /** How long a local edit is "recent" — a remote overwrite inside this window
@@ -193,6 +201,8 @@ export function useTable(
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const [conflictCells, setConflictCells] = useState<Set<string>>(new Set())
+  /** Viewers may read everything and change nothing (issue: workspace roles). */
+  const readOnly = !canEdit(useRole(workspace, syncCount))
   const prevSyncCountRef = useRef(syncCount)
 
   // Track in-flight mutations so sync-triggered re-reads don't clobber
@@ -284,6 +294,12 @@ export function useTable(
       if (!workspace) {
         throw new Error('Workspace not initialized')
       }
+      // A viewer's power level is below events_default, so the homeserver would
+      // reject this write anyway. Refusing here keeps it out of the optimistic
+      // path and the outbox, so nothing appears to save and then vanish.
+      if (readOnly) {
+        throw new Error(READ_ONLY_MESSAGE)
+      }
 
       pendingMutationsRef.current++
       try {
@@ -318,13 +334,16 @@ export function useTable(
         pendingMutationsRef.current--
       }
     },
-    [workspace, tableId, workspaceId, fetchRows]
+    [workspace, tableId, workspaceId, fetchRows, readOnly]
   )
 
   const deleteRow = useCallback(
     async (rowId: string) => {
       if (!workspace) {
         throw new Error('Workspace not initialized')
+      }
+      if (readOnly) {
+        throw new Error(READ_ONLY_MESSAGE)
       }
 
       pendingMutationsRef.current++
@@ -349,7 +368,7 @@ export function useTable(
         pendingMutationsRef.current--
       }
     },
-    [workspace, tableId, workspaceId, fetchRows]
+    [workspace, tableId, workspaceId, fetchRows, readOnly]
   )
 
   return {
@@ -360,6 +379,7 @@ export function useTable(
     deleteRow,
     refresh: fetchRows,
     conflictCells,
+    readOnly,
   }
 }
 
