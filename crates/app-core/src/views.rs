@@ -92,6 +92,22 @@ pub struct KanbanConfig {
     pub assignee_column: Option<String>,
 }
 
+/// Table-specific configuration: how the grid is laid out (issue 848dcbf7).
+/// All fields are optional so an existing view keeps today's behaviour —
+/// every column visible, at the default width.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TableConfig {
+    /// Per-column pixel widths, keyed by column id. A column with no entry
+    /// renders at the grid's default width. Persisted so a resize is a
+    /// property of the VIEW, shared with everyone who opens it.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub column_widths: std::collections::HashMap<String, f64>,
+    /// Columns hidden in this view. The column still exists and holds data —
+    /// this is presentation only, unlike a schema column delete.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_columns: Vec<String>,
+}
+
 /// Calendar-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CalendarConfig {
@@ -124,6 +140,8 @@ pub struct ViewConfig {
     pub kanban_config: Option<KanbanConfig>,
     pub calendar_config: Option<CalendarConfig>,
     pub tasklist_config: Option<TaskListConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_config: Option<TableConfig>,
 }
 
 impl ViewConfig {
@@ -143,6 +161,7 @@ impl ViewConfig {
             kanban_config: None,
             calendar_config: None,
             tasklist_config: None,
+            table_config: None,
         }
     }
 

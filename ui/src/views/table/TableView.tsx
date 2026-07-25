@@ -57,6 +57,12 @@ interface TableRow {
 }
 
 const ROW_HEIGHT = 40
+/** Grid layout (issue 848dcbf7). `table-layout: fixed` + explicit widths is
+ *  what makes long content truncate to its column instead of stretching the
+ *  table past the viewport — auto layout sizes columns to their content, so a
+ *  `max-width` on a cell constrains nothing. */
+const DEFAULT_COL_WIDTH = 180
+const MIN_COL_WIDTH = 72
 
 /**
  * Global filter that searches every column's value as text — including select
@@ -110,6 +116,8 @@ function SortableHeader({
   onSort,
   onEdit,
   onDelete,
+  onHide,
+  onResize,
 }: {
   id: string
   label: string
@@ -117,6 +125,9 @@ function SortableHeader({
   onSort: ((event: unknown) => void) | undefined
   onEdit: () => void
   onDelete: () => void
+  onHide: () => void
+  /** Live width during a drag; committed on pointer-up. */
+  onResize: (width: number, done: boolean) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
   const [menuOpen, setMenuOpen] = useState(false)
@@ -178,6 +189,12 @@ function SortableHeader({
               Edit column…
             </button>
             <button
+              className="col-menu__item"
+              onClick={() => { setMenuOpen(false); onHide() }}
+            >
+              Hide column
+            </button>
+            <button
               className="col-menu__item col-menu__delete"
               onClick={() => { setMenuOpen(false); onDelete() }}
             >
@@ -186,6 +203,34 @@ function SortableHeader({
           </div>
         )}
       </div>
+      {/* Resize grip. Pointer capture keeps the drag alive outside the handle,
+          and stopPropagation keeps dnd-kit's column reorder from claiming it. */}
+      <div
+        className="col-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Resize ${label}`}
+        onClick={e => e.stopPropagation()}
+        onPointerDown={e => {
+          e.stopPropagation()
+          e.preventDefault()
+          const th = (e.target as HTMLElement).closest('th')
+          const startX = e.clientX
+          const startWidth = th?.getBoundingClientRect().width ?? DEFAULT_COL_WIDTH
+          const target = e.currentTarget
+          target.setPointerCapture(e.pointerId)
+          const move = (ev: PointerEvent) =>
+            onResize(Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX), false)
+          const up = (ev: PointerEvent) => {
+            onResize(Math.max(MIN_COL_WIDTH, startWidth + ev.clientX - startX), true)
+            target.releasePointerCapture(ev.pointerId)
+            target.removeEventListener('pointermove', move)
+            target.removeEventListener('pointerup', up)
+          }
+          target.addEventListener('pointermove', move)
+          target.addEventListener('pointerup', up)
+        }}
+      />
     </th>
   )
 }
@@ -257,6 +302,13 @@ function SortableTableRow({
   )
 }
 
+const ColumnsIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3">
+    <rect x="1.5" y="2" width="11" height="10" rx="1" />
+    <path d="M5.2 2v10M8.8 2v10" />
+  </svg>
+)
+
 const HistoryIcon = () => (
   <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.3">
     <path d="M2 6.5a4.6 4.6 0 1 0 1.5-3.4" />
@@ -309,6 +361,12 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // Per-column "where" conditions (issue: Real filter UI). Applied client-side
   // and saveable into a view (filters + sort). Loaded from a saved view below.
   const [conditions, setConditions] = useState<FilterCondition[]>([])
+  // Grid layout, per view (issue 848dcbf7): pixel widths by column id, and the
+  // columns hidden from this view. Both are presentation — the column and its
+  // data are untouched — and both save with the view like filters and sort.
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>([])
+  const [showColumnMenu, setShowColumnMenu] = useState(false)
   /** The saved view currently open (for "Save changes"); null on a raw table. */
   const [loadedView, setLoadedView] = useState<{ id: string; name: string } | null>(null)
   /** Guards the load-once-per-view effect against re-runs (workspace identity). */
@@ -349,6 +407,11 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       })
   }, [rows, schema])
 
+  const visibleColumns = React.useMemo(
+    () => columnsMeta.filter(c => !hiddenColumns.includes(c.id)),
+    [columnsMeta, hiddenColumns],
+  )
+
   const columnsById = React.useMemo(
     () =>
       Object.fromEntries(columnsMeta.map(c => [c.id, { id: c.id, column_type: c.column_type }])),
@@ -387,6 +450,8 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       const { conditions: c, sorting: s } = mapViewFilters(cfg)
       setConditions(c)
       setSorting(s)
+      setColumnWidths(cfg?.table_config?.column_widths ?? {})
+      setHiddenColumns(cfg?.table_config?.hidden_columns ?? [])
       if (c.length > 0) setShowFilter(true)
     } catch (err) {
       console.error('Failed to load view config:', err)
@@ -640,7 +705,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // ── TanStack column model (data columns only; add-column + actions are
   //    rendered separately so the grid model stays purely schema-driven) ──
   const columns = useMemo<ColumnDef<TableRow>[]>(() => {
-    return columnsMeta.map(col => ({
+    return visibleColumns.map(col => ({
       id: col.id,
       accessorFn: (row: TableRow) => row[col.id],
       header: col.name,
@@ -687,7 +752,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         )
       },
     }))
-  }, [columnsMeta, editing, updateCell, referenceLookup, members, moveEditing, conflictCells])
+  }, [visibleColumns, editing, updateCell, referenceLookup, members, moveEditing, conflictCells])
 
   const table = useReactTable({
     data: filteredRows as TableRow[],
@@ -774,6 +839,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         operator: c.operator,
         value: c.value ?? null,
       })),
+      table_config: {
+        column_widths: columnWidths,
+        hidden_columns: hiddenColumns,
+      },
     })
 
   const saveAsView = async (name: string) => {
@@ -827,6 +896,13 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           <>
             <ToolbarButton icon={<FilterIcon />} label="Filter" active={showFilter} onClick={() => setShowFilter(s => !s)} />
             <ToolbarButton icon={<SortIcon />} label="Sort" />
+            <ToolbarButton
+              icon={<ColumnsIcon />}
+              label="Columns"
+              active={showColumnMenu}
+              onClick={() => setShowColumnMenu(s => !s)}
+              title="Show or hide columns"
+            />
             <ToolbarButton icon={<HistoryIcon />} label="History" active={showHistory} onClick={() => setShowHistory(true)} title="Change history" />
             <ToolbarButton icon={<PlusIcon />} label="Add column" title="Add column" onClick={() => setIsAddingColumn(true)} />
             <ToolbarPrimaryButton onClick={newEntry}>New entry</ToolbarPrimaryButton>
@@ -844,6 +920,31 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             if (workspaceId) notifyWorkspaceChanged(workspaceId)
           }}
         />
+      )}
+
+      {showColumnMenu && (
+        <div className="table-columns-panel" role="group" aria-label="Column visibility">
+          {columnsMeta.map(c => {
+            const hidden = hiddenColumns.includes(c.id)
+            return (
+              <label key={c.id} className="table-columns-panel__item">
+                <input
+                  type="checkbox"
+                  checked={!hidden}
+                  onChange={() =>
+                    setHiddenColumns(prev =>
+                      hidden ? prev.filter(id => id !== c.id) : [...prev, c.id],
+                    )
+                  }
+                />
+                {c.name}
+              </label>
+            )
+          })}
+          {hiddenColumns.length > 0 && (
+            <button className="ghost" onClick={() => setHiddenColumns([])}>Show all</button>
+          )}
+        </div>
       )}
 
       {showFilter && (
@@ -865,6 +966,16 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       <div className="table-view__content">
         <div className="table-scroll" ref={scrollRef}>
           <table className="data-table">
+            {/* Explicit widths: with table-layout: fixed these define the grid,
+                so overlong content truncates inside its column instead of
+                widening the table past the viewport. */}
+            <colgroup>
+              <col className="col-open" />
+              {visibleColumns.map(c => (
+                <col key={c.id} style={{ width: columnWidths[c.id] ?? DEFAULT_COL_WIDTH }} />
+              ))}
+              <col className="col-actions" />
+            </colgroup>
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
@@ -874,7 +985,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
               <tr>
                 <th className="col-open-header" />
                 <SortableContext
-                  items={columnsMeta.map(c => c.id)}
+                  items={visibleColumns.map(c => c.id)}
                   strategy={horizontalListSortingStrategy}
                 >
                   {table.getHeaderGroups()[0]?.headers.map(header => {
@@ -888,6 +999,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                         onSort={header.column.getToggleSortingHandler()}
                         onEdit={() => openEditColumn(header.column.id)}
                         onDelete={() => handleDeleteColumn(header.column.id, label)}
+                        onHide={() => setHiddenColumns(prev => [...prev, header.column.id])}
+                        onResize={(w) =>
+                          setColumnWidths(prev => ({ ...prev, [header.column.id]: Math.round(w) }))
+                        }
                       />
                     )
                   })}
