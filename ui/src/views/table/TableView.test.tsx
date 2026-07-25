@@ -93,6 +93,52 @@ describe('TableView', () => {
     })
   })
 
+  describe('reference cells (issue c14e01a0)', () => {
+    /** tasks.client → contacts, labelled by the contact's `name`. */
+    function workspaceWithReference(displayColumn?: string) {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      ws.createTable(JSON.stringify({
+        id: 'contacts',
+        name: 'Contacts',
+        columns: {
+          name: { id: 'name', name: 'Name', column_type: 'text', order: 0 },
+          email: { id: 'email', name: 'Email', column_type: 'text', order: 1 },
+        },
+      }))
+      ws.updateCell('contacts', 'c1', 'name', JSON.stringify('Dana Whitfield'))
+      ws.updateCell('contacts', 'c1', 'email', JSON.stringify('dana@acme.test'))
+      ws.addColumn('tasks', JSON.stringify({
+        id: 'client',
+        name: 'Client',
+        column_type: 'reference',
+        reference_table: 'contacts',
+        ...(displayColumn ? { reference_display_column: displayColumn } : {}),
+      }))
+      ws.updateCell('tasks', 'task-1', 'client', JSON.stringify('c1'))
+      return ws
+    }
+
+    it('renders a referenced row through its display column, not its id', async () => {
+      renderTable(workspaceWithReference('email'))
+      await waitFor(() => expect(screen.getByText('dana@acme.test')).toBeInTheDocument())
+      expect(screen.queryByText('c1')).not.toBeInTheDocument()
+    })
+
+    it('falls back to the first text column when none is configured', async () => {
+      renderTable(workspaceWithReference())
+      await waitFor(() => expect(screen.getByText('Dana Whitfield')).toBeInTheDocument())
+    })
+
+    it('shows a reference to a missing row as its raw id', async () => {
+      const ws = workspaceWithReference('name')
+      ws.updateCell('tasks', 'task-2', 'client', JSON.stringify('c_gone'))
+      const { container } = renderTable(ws)
+      await waitFor(() => expect(screen.getByText('c_gone')).toBeInTheDocument())
+      expect(container.querySelector('.cell-ref--dangling')).toBeInTheDocument()
+    })
+  })
+
   describe('row operations', () => {
     it('adds the first entry inline by editing the shadow row on an empty table', async () => {
       const ws = makeTasksWorkspace() // no rows yet

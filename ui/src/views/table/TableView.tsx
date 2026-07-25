@@ -656,6 +656,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           name: col.name,
           column_type: col.column_type,
           options: col.options,
+          // Reference cells need both to resolve a row id to its label.
+          reference_table: col.reference_table,
+          reference_display_column: col.reference_display_column,
         }
         if (editing === cellKey) {
           return (
