@@ -23,48 +23,11 @@ interface TableSchema {
   columns: Record<string, Column>
 }
 
-interface Comment {
-  id: string
-  author: string
-  authorColor: string
-  text: string
-  timestamp: string
-}
-
 const ChevronRightIcon = () => (
   <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5">
     <polyline points="4,1.5 7.5,5.5 4,9.5" />
   </svg>
 )
-
-const CommentIcon = () => (
-  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.4">
-    <path d="M1.5 2.5h10a.5.5 0 01.5.5v5.5a.5.5 0 01-.5.5H4.5L1.5 12V3a.5.5 0 01.5-.5z" />
-  </svg>
-)
-
-function avatarColor(name: string): string {
-  const palette = ['#6d9fff', '#a78bfa', '#f472b6', '#4ade80', '#f59e0b', '#f87171']
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff
-  return palette[h % palette.length]
-}
-
-function CommentBubble({ comment }: { comment: Comment }) {
-  const color = comment.authorColor || avatarColor(comment.author)
-  return (
-    <div className="comment">
-      <div className="comment__header">
-        <span className="comment__avatar" style={{ background: color }}>
-          {comment.author[0]?.toUpperCase()}
-        </span>
-        <span className="comment__author">{comment.author}</span>
-        <span className="comment__time">{comment.timestamp}</span>
-      </div>
-      <div className="comment__body">{comment.text}</div>
-    </div>
-  )
-}
 
 export function EntryView({ workspace, syncCount }: EntryViewProps) {
   const { workspaceId, tableId, rowId } = useParams<{ workspaceId: string; tableId: string; rowId: string }>()
@@ -89,9 +52,6 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
   // Whether a new entry's row has been persisted yet — gates flushing prefilled
   // column defaults alongside the first user write (rows are created lazily).
   const establishedRef = useRef(!!rowId && rowId !== 'new')
-  // Comments are local-only for now (no WASM storage yet)
-  const [comments] = useState<Comment[]>([])
-  const [commentDraft, setCommentDraft] = useState('')
 
   useEffect(() => {
     if (!workspace || !tableId) { setLoading(false); return }
@@ -229,7 +189,7 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
 
   return (
     <div className="entry-view">
-      {/* Toolbar strip — breadcrumb + comment count */}
+      {/* Toolbar strip — breadcrumb */}
       <div className="entry-view__toolbar">
         <div className="entry-view__breadcrumb">
           <button className="entry-view__back" onClick={handleReturn}>
@@ -238,15 +198,9 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
           <ChevronRightIcon />
           <span className="entry-view__breadcrumb-current">{breadcrumbLabel}</span>
         </div>
-        <div className="entry-view__toolbar-right">
-          <span className="entry-view__comment-count">
-            <CommentIcon />
-            {comments.length}
-          </span>
-        </div>
       </div>
 
-      {/* Body: main content + comments sidebar */}
+      {/* Body */}
       <div className="entry-view__body">
         {/* Main content */}
         <div className="entry-view__main">
@@ -267,34 +221,6 @@ export function EntryView({ workspace, syncCount }: EntryViewProps) {
           </div>
         </div>
 
-        {/* Comments sidebar */}
-        <div className="entry-view__comments">
-          <div className="comments__header">
-            <CommentIcon />
-            Comments
-            <span className="comments__count">({comments.length})</span>
-          </div>
-
-          <div className="comments__list">
-            {comments.length === 0 && (
-              <p className="comments__empty">No comments yet</p>
-            )}
-            {comments.map(comment => (
-              <CommentBubble key={comment.id} comment={comment} />
-            ))}
-          </div>
-
-          {/* Comment input */}
-          <div className="comments__input-wrap">
-            <textarea
-              className="comments__input"
-              placeholder="Add a comment..."
-              value={commentDraft}
-              onChange={e => setCommentDraft(e.target.value)}
-              rows={2}
-            />
-          </div>
-        </div>
       </div>
 
       {/* Persistent bottom bar — always visible */}

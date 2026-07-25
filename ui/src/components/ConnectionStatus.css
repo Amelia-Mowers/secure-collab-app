@@ -1,0 +1,76 @@
+/* Brief interruption: a quiet corner badge that never blocks anything. */
+.conn-badge {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 900;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
+.conn-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: conn-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes conn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conn-badge__dot { animation: none; }
+}
+
+/* Sustained outage: the ADR 0003 write lock. */
+.conn-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.conn-overlay__card {
+  max-width: 380px;
+  text-align: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 24px;
+  box-shadow: var(--shadow-lg);
+}
+
+.conn-overlay__icon {
+  color: var(--amber);
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.conn-overlay__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.conn-overlay__msg {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
