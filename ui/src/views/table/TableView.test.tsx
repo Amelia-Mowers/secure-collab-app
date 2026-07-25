@@ -258,6 +258,77 @@ describe('TableView', () => {
     })
   })
 
+  describe('column layout (issue 848dcbf7)', () => {
+    /** A saved table view over `tasks` with the given layout config. */
+    function viewWithLayout(tableConfig: Record<string, unknown>) {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      ws.createView(JSON.stringify({
+        id: 'grid',
+        name: 'Grid',
+        table_id: 'tasks',
+        view_type: 'table',
+        sort: [],
+        filters: [],
+        table_config: tableConfig,
+      }))
+      return ws
+    }
+
+    function renderView(workspace: any) {
+      return render(
+        <MemoryRouter initialEntries={['/workspace/ws_test/table/tasks/view/grid']}>
+          <Routes>
+            <Route
+              path="/workspace/:workspaceId/table/:tableId/view/:viewId"
+              element={<TableView workspace={workspace} />}
+            />
+          </Routes>
+        </MemoryRouter>,
+      )
+    }
+
+    it('uses fixed layout so long content truncates instead of widening the grid', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      const { container } = renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      // Auto layout is what made a max-width unenforceable on a doc preview.
+      expect(container.querySelector('table.data-table')).toBeInTheDocument()
+      // One <col> per visible column, plus the leading and actions columns.
+      expect(container.querySelectorAll('colgroup col').length).toBeGreaterThan(2)
+    })
+
+    it("applies a saved view's column widths", async () => {
+      const ws = viewWithLayout({ column_widths: { title: 420 } })
+      const { container } = renderView(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      const cols = Array.from(container.querySelectorAll('colgroup col')) as HTMLElement[]
+      // The leading open-entry col is first; the title column follows.
+      expect(cols.some(c => c.style.width === '420px')).toBe(true)
+    })
+
+    it("hides the columns a view hides, without touching their data", async () => {
+      const ws = viewWithLayout({ hidden_columns: ['assignee'] })
+      renderView(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(screen.queryAllByText('Alice')).toHaveLength(0)
+      // Still in the schema — the row data is untouched, this is presentation.
+      expect(JSON.parse(ws.getTableRows('tasks'))[0].assignee).toBe('Alice')
+    })
+
+    it('restores a hidden column from the Columns menu', async () => {
+      const ws = viewWithLayout({ hidden_columns: ['assignee'] })
+      renderView(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      expect(screen.queryAllByText('Alice')).toHaveLength(0)
+      fireEvent.click(screen.getByText('Columns'))
+      fireEvent.click(screen.getByText('Show all'))
+      // Two seeded tasks are assigned to Alice.
+      await waitFor(() => expect(screen.queryAllByText('Alice')).toHaveLength(2))
+    })
+  })
+
   describe('toolbar', () => {
     it('shows a Filter button in the toolbar', async () => {
       const ws = makeTasksWorkspace()
