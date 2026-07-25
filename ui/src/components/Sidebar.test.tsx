@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { Sidebar, viewPath } from './Sidebar'
 import { AuthProvider } from '@/hooks/useAuth'
@@ -193,6 +193,53 @@ describe('Sidebar', () => {
       fireEvent.click(screen.getByLabelText('Delete view'))
       await waitFor(() => expect(screen.getByText('Task Board')).toBeInTheDocument())
       vi.restoreAllMocks()
+    })
+  })
+
+  describe('last-admin guard (issue 31fc3247)', () => {
+    /** A workspace reporting this user as an admin, with the given roster. */
+    function withMembers(list: Array<{ userId: string; role: string }>) {
+      const ws: any = makeKanbanWorkspace()
+      ws.myRole = () => Promise.resolve('admin')
+      ws.currentUserId = () => '@me:tidework.io'
+      ws.listMembers = () =>
+        Promise.resolve(JSON.stringify(list.map(m => ({ ...m, displayName: '' }))))
+      ws.setUserRole = vi.fn().mockResolvedValue(undefined)
+      return ws
+    }
+
+    it('disables self-demotion when you are the only admin', async () => {
+      const ws = withMembers([
+        { userId: '@me:tidework.io', role: 'admin' },
+        { userId: '@bob:tidework.io', role: 'editor' },
+      ])
+      renderSidebar(ws)
+      fireEvent.click(await screen.findByText(/^Show \d+ members?$/))
+      const mine = await screen.findByLabelText('Role for @me:tidework.io')
+      expect(within(mine).getByRole('option', { name: 'Editor' })).toBeDisabled()
+      expect(within(mine).getByRole('option', { name: 'Viewer' })).toBeDisabled()
+    })
+
+    it('allows self-demotion once another admin exists', async () => {
+      const ws = withMembers([
+        { userId: '@me:tidework.io', role: 'admin' },
+        { userId: '@bob:tidework.io', role: 'admin' },
+      ])
+      renderSidebar(ws)
+      fireEvent.click(await screen.findByText(/^Show \d+ members?$/))
+      const mine = await screen.findByLabelText('Role for @me:tidework.io')
+      expect(within(mine).getByRole('option', { name: 'Editor' })).not.toBeDisabled()
+    })
+
+    it('never blocks demoting someone else', async () => {
+      const ws = withMembers([
+        { userId: '@me:tidework.io', role: 'admin' },
+        { userId: '@bob:tidework.io', role: 'editor' },
+      ])
+      renderSidebar(ws)
+      fireEvent.click(await screen.findByText(/^Show \d+ members?$/))
+      const theirs = await screen.findByLabelText('Role for @bob:tidework.io')
+      expect(within(theirs).getByRole('option', { name: 'Viewer' })).not.toBeDisabled()
     })
   })
 

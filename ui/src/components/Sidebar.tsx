@@ -365,6 +365,14 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
     }
   }, [workspace])
 
+  /** True when demoting this member would leave the workspace with no admin —
+   *  which is only ever the case for yourself, since you can't demote another
+   *  admin into being the last one. */
+  const isLastAdmin = (m: WorkspaceMember) =>
+    m.id === myUserId &&
+    m.role === 'admin' &&
+    !members.some(o => o.id !== m.id && o.role === 'admin')
+
   /** Only an admin may change roles; the homeserver enforces it regardless, but
    *  offering a control that will be rejected is its own bug. */
   const changeRole = async (member: WorkspaceMember, role: Role) => {
@@ -798,11 +806,20 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                           className="sidebar__member-role"
                           value={m.role}
                           aria-label={`Role for ${m.name || m.id}`}
+                          title={
+                            isLastAdmin(m)
+                              ? 'You are the only admin — make someone else an admin first'
+                              : undefined
+                          }
                           onChange={e => void changeRole(m, e.target.value as Role)}
                         >
                           <option value="admin">Admin</option>
-                          <option value="editor">Editor</option>
-                          <option value="viewer">Viewer</option>
+                          {/* Stepping down as the ONLY admin would strand the
+                              workspace: nobody could manage roles, and raising a
+                              power level requires one. Disabled rather than
+                              offered-then-rejected. */}
+                          <option value="editor" disabled={isLastAdmin(m)}>Editor</option>
+                          <option value="viewer" disabled={isLastAdmin(m)}>Viewer</option>
                         </select>
                       ) : (
                         <span className="sidebar__member-role-label">{ROLE_LABELS[m.role]}</span>
