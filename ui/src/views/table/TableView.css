@@ -14,6 +14,48 @@
 /* ── Filter bar ─────────────────────────────────────────────── */
 /* The filter panel now lives in components/FilterPanel.css — shared with the
    kanban board so both views filter through identical controls. */
+/* Bulk-action bar (issue bae5a235) — appears only while rows are selected. */
+.table-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text);
+}
+.table-selection-bar__count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.table-selection-bar__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.table-selection-bar__select {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated, var(--bg-surface));
+  color: var(--text);
+}
+.table-selection-bar__value {
+  min-width: 160px;
+}
+.table-selection-bar__spacer { flex: 1; }
+.table-selection-bar__danger { color: var(--red, #f87171); }
+
+.cell-select {
+  flex: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 /* ── States ─────────────────────────────────────────────────── */
 .state-empty,
 .state-error {
@@ -54,7 +96,7 @@
   table-layout: fixed;
 }
 
-.data-table col.col-open { width: 56px; }
+.data-table col.col-open { width: 78px; }
 .data-table col.col-actions { width: 40px; }
 
 /* Fixed layout only sets the box — the cell still has to clip. */
