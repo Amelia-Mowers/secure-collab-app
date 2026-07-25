@@ -2014,6 +2014,28 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Persist a column's display width. Column metadata, not a view setting,
+    /// so a resize reaches collaborators and applies on the raw table too.
+    #[wasm_bindgen(js_name = setColumnWidth)]
+    pub async fn set_column_width(
+        &self,
+        table_id: String,
+        column_id: String,
+        width: f64,
+    ) -> Result<(), JsValue> {
+        let updates = {
+            let mut ws = self.inner.borrow_mut();
+            ws.update_column(
+                &table_id,
+                &column_id,
+                &serde_json::json!({ "width": width }),
+            )
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?
+        };
+        self.send_updates(&updates).await?;
+        Ok(())
+    }
+
     /// Rename a table in place — one LWW write to its `_tables` name cell, so
     /// columns, rows, and views all survive untouched.
     #[wasm_bindgen(js_name = renameTable)]
