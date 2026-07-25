@@ -8,7 +8,7 @@ source of truth for open work; it's a pointer.
 ## Where the backlog lives
 
 - Homeserver: `https://matrix.tidework.io`
-- Workspace: **TideWork PM** — room `!LMfjStzneNvPmmnGWJ:tidework.io`
+- Workspace: **TideWork PM** — room `!JGjEYLjqGJRfCDfSAG:tidework.io`
 - Table: **Issues** — columns `name`, `status` (open · in-progress · closed),
   `description` (markdown), `priority` (0 = highest), `opened`, `closed`
 

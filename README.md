@@ -4,15 +4,28 @@
 
 ## Features
 
-- **🔐 End-to-End Encrypted**: All data is encrypted using Matrix's Megolm protocol
+- **🔐 End-to-End Encrypted**: All data is encrypted using Matrix's Megolm protocol —
+  cross-signing, key backup, recovery keys, and SAS device verification included
+- **🔑 Passkey Custody**: A WebAuthn passkey with the PRF extension derives the
+  secret that keys secure backup, so a biometric tap unlocks your E2EE keys on a
+  new device instead of a typed recovery key (kept as break-glass). Existing
+  accounts can enroll one without rotating anything
 - **🌐 Federated**: Collaborate across different Matrix homeservers
-- **📊 Flexible Views**: View your data as tables, kanban boards, calendars, or task lists
-- **📝 Entry View**: Full-page interface for viewing and editing individual rows with multiple field types
-- **📄 Document Cells**: Markdown document cells with live preview for rich content
+- **📊 Views**: Tables, kanban boards, and card grids, each saveable with its own
+  filters, sort, and layout
+- **🔎 Filters**: Per-column conditions (type-aware) with dynamic values that
+  resolve per-viewer — `is today` for dates, `@me` for people
+- **🧩 Column Types**: Text, number, date, checkbox, select/multi-select, Markdown
+  documents, JSON, workspace members, and references to rows of another table
+- **📝 Entry View**: Full-page interface for viewing and editing a single row
+- **🕘 Change History**: Every edit is in the timeline; revert a table to any point
 - **🔄 Real-time Sync**: Changes sync instantly across all devices
+- **📴 Offline-tolerant Writes**: Unsent edits persist in an encrypted outbox and
+  replay on reconnect; the UI locks writes rather than accumulate divergence
 - **🏗️ LWW CRDTs**: Last-Write-Wins conflict resolution for seamless collaboration
 - **⚡ Efficient Cold Start**: Order-based bumping bounds lookback windows
-- **🦀 Rust Core**: High-performance core compiled to WebAssembly
+- **🦀 Rust Core**: High-performance core compiled to WebAssembly — and reused by a
+  native [CLI](#the-tidework-cli)
 
 ## Architecture
 
@@ -24,6 +37,9 @@ See [architecture.md](./architecture.md) for a detailed architecture overview.
 2. **`app-core`** (Rust): Application-specific logic and WASM bridge
 3. **`ui`** (TypeScript/React): Thin view layer
 
+`crates/cli` is a fourth consumer: a native binary that links `app-core`
+directly instead of through WASM, so the CLI and the app share one engine.
+
 ## Prerequisites
 
 ### Using Nix (Recommended)
@@ -34,9 +50,6 @@ If you're on NixOS or using Nix, the development environment is fully reproducib
 # Enter the Nix development shell
 nix develop
 
-# Or use the legacy nix-shell
-nix-shell
-
 # If you get disk space errors, run garbage collection first:
 nix-collect-garbage -d
 ```
@@ -46,6 +59,7 @@ The Nix shell automatically provides **everything** you need:
 - wasm-pack and wasm-bindgen-cli
 - Node.js 20
 - Build tools (pkg-config, openssl, sqlite)
+- A Synapse homeserver on `PATH`, for the integration and browser tests
 - UI dependencies (auto-installed on first run)
 
 No additional setup needed! Just `nix develop` and you're ready to code.
@@ -88,16 +102,24 @@ If not using Nix, you'll need:
 secure-collab-app/
 ├── crates/
 │   ├── tables-over-matrix/    # Core library for LWW tables over Matrix
-│   │   └── tests/             # Unit + Conduit integration tests
-│   └── app-core/              # Application logic and WASM bridge
-│       └── tests/             # Workspace + Matrix integration tests
+│   │   └── tests/             # Unit + Synapse integration tests
+│   ├── app-core/              # Application logic and WASM bridge
+│   │   └── tests/             # Workspace + Matrix integration tests
+│   └── cli/                   # `tidework` — native CLI over the same app-core
 ├── ui/                        # React/TypeScript frontend
-│   └── e2e/                   # Two-browser Playwright tests (real WASM + Conduit)
+│   └── e2e/                   # Two-browser Playwright tests (real WASM + Synapse)
+├── billing/                   # Stripe subscription worker (hosted service)
+├── infra/                     # Homeserver deployment + healthchecks
+├── site/                      # Marketing site (tidework.io)
 ├── docs/adr/                  # Architecture decision records
 ├── scripts/                   # Integration-test runner, build helpers
 ├── flake.nix                  # Nix development environment
 └── Cargo.toml                 # Rust workspace manifest
 ```
+
+`crates/cli` is excluded from `default-members` (it's a native binary in an
+otherwise wasm-first workspace), so build it explicitly: `cargo build -p
+tidework-cli`.
 
 ## Getting Started
 
@@ -180,9 +202,11 @@ cargo test --release -- --nocapture
 
 #### Integration Tests
 
-Integration tests run against a real, throwaway Conduit homeserver (provided by
-the Nix dev shell) and cover two-client sync, encrypted round-trips, cold start,
-key backup/recovery, and SAS verification:
+Integration tests run against a real, throwaway **Synapse** homeserver (provided
+by the Nix dev shell) and cover two-client sync, encrypted round-trips, cold
+start, key backup/recovery, and SAS verification. Synapse rather than something
+lighter because it's what production runs (ADR 0002), and because Conduit omits
+the invite-time fields the shared-history path depends on:
 
 ```bash
 nix develop --command bash scripts/run-integration-tests.sh
@@ -205,9 +229,10 @@ npm run lint
 
 #### End-to-end browser tests
 
-A two-browser Playwright harness drives the **real compiled WASM** against a
-live Conduit — covering registration, recovery, SAS verification, and the core
-single-device product journey (including reload persistence). See
+A two-browser Playwright harness drives the **real compiled WASM** against a live
+Synapse — covering registration, recovery, SAS verification, collaborator
+history-on-invite, and the core single-device product journey (including reload
+persistence). A second suite runs the OAuth flow against Synapse+MAS. See
 [`ui/e2e/README.md`](./ui/e2e/README.md):
 
 ```bash
@@ -279,6 +304,28 @@ let table_def = TableDefinition::new("tasks", "Tasks")
 let updates = workspace.create_table(table_def)?;
 ```
 
+## The TideWork CLI
+
+`crates/cli` builds `tidework`, a native client for the same encrypted
+workspaces the app serves. It links `app-core` directly rather than through
+WASM, so a view selects the same rows in the terminal as it does in the browser
+— including dynamic filter values like `is today` and `@me`, which resolve
+against whoever is running the command.
+
+```bash
+cargo build -p tidework-cli          # not in default-members; build explicitly
+
+tidework login --sso --homeserver https://matrix.tidework.io
+tidework workspace list
+tidework table show "My Workspace" Tasks --view "Open Issues"
+tidework row add "My Workspace" Tasks name="Fix the thing" status=open
+tidework column set "My Workspace" Tasks status --options open,closed
+```
+
+It builds natively on Windows, macOS, and Linux (SQLite is bundled). Encryption,
+key handling, and LWW merge are the same code paths as the app; `--sso` performs
+the OAuth/MAS browser sign-in the production homeserver requires.
+
 ## UI Features
 
 ### Entry View
@@ -290,11 +337,12 @@ The entry view is the primary interface for viewing and editing individual rows 
 - **Multiple field types**:
   - Text, Number, Boolean, Date
   - Select and MultiSelect dropdowns
-  - Reference fields (links to other entries)
+  - Member and Members (people in the workspace room)
+  - Reference and References (rows of another table, shown through that table's
+    configured display column)
   - Document cells (Markdown with live preview)
   - JSON fields for complex data
 - **Navigation**: Breadcrumb navigation and back button
-- **Rapid creation**: Support for creating multiple entries in sequence (coming soon)
 
 **Routes:**
 - `/table/:tableId/entry/:rowId` - View/edit existing entry
@@ -405,8 +453,9 @@ cargo build
 ### Building for Production
 
 ```bash
-# Build optimized WASM modules
-wasm-pack build crates/app-core --target web --out-dir ../../ui/src/wasm --release
+# Build the WASM bindings (same command as `make wasm`; --release is the default
+# for wasm-pack, and the feature flags are required — see step 3 above)
+make wasm
 
 # Build UI
 cd ui
@@ -437,7 +486,10 @@ You'll need access to a Matrix homeserver. Options:
 
 1. **Public homeserver**: `matrix.org` (not recommended for production)
 2. **Self-hosted Synapse**: https://matrix-org.github.io/synapse/
-3. **Self-hosted Conduit**: https://conduit.rs/ (lightweight, Rust-based)
+3. **Self-hosted Conduit**: https://conduit.rs/ (lightweight, Rust-based — but
+   it omits some invite-time fields TideWork's shared-history path uses, so
+   parts of collaboration degrade; the test harnesses run Synapse for this
+   reason)
 4. **Managed hosting**: Element Matrix Services, Beeper, etc.
 
 ## Contributing
@@ -464,9 +516,18 @@ Apache-2.0 (see [LICENSE](./LICENSE))
 
 ## Status & Roadmap
 
-Current state lives in **[STATUS.md](./STATUS.md)**; the prioritized backlog is
-**[TODO.md](./TODO.md)** (the single source of truth for outstanding work).
-Non-obvious design decisions are recorded in **[docs/adr/](./docs/adr/)**.
+Current state lives in **[STATUS.md](./STATUS.md)**. Non-obvious design decisions
+are recorded in **[docs/adr/](./docs/adr/)**.
+
+The outstanding backlog is no longer a file in this repo — it's the `Issues`
+table of the **TideWork PM** workspace on the production homeserver (TideWork
+dogfooding TideWork). Read it with the CLI:
+
+```bash
+tidework table show "TideWork PM" Issues
+```
+
+[TODO.md](./TODO.md) is a pointer to that workspace.
 
 ## Resources
 
@@ -486,11 +547,17 @@ Built on the shoulders of giants:
 
 ---
 
-**Status**: Working prototype — see [STATUS.md](./STATUS.md)
+**Status**: Deployed and in daily use, still early — see [STATUS.md](./STATUS.md)
 
-The core architecture is implemented end to end: encrypted Matrix sync with
-full key management (cross-signing, key backup, recovery, device
-verification), LWW convergence on a hybrid logical clock, order-based
-compaction, and a multi-view UI — validated by unit, property, Conduit
-integration, and two-browser end-to-end tests. Not yet production-ready; see
-[TODO.md](./TODO.md) for what stands between here and real data.
+The core architecture is implemented end to end: encrypted Matrix sync with full
+key management (cross-signing, key backup, recovery, device verification), LWW
+convergence on a hybrid logical clock, order-based compaction, a multi-view UI,
+and a native CLI — validated by unit, property, Synapse integration, and
+two-browser end-to-end tests.
+
+It runs as a hosted service at [tidework.io](https://tidework.io) (Synapse + MAS,
+subscriptions via Stripe) and holds real data, including this project's own
+backlog. "Early" is about breadth, not stability: the feature surface is
+narrower than the products it resembles, and the schema and event formats may
+still change in ways that need migration. Self-hosting works — it's Matrix — but
+is not yet documented as a supported path.
