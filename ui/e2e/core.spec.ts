@@ -140,7 +140,7 @@ test('core journey: table, typed cells, sort/filter, views, reload persistence',
   await test.step('global filter narrows rows and reports matches', async () => {
     await page.getByRole('button', { name: 'Filter' }).click()
     await page.getByPlaceholder(/Search all columns/).fill('beta')
-    await expect(page.locator('.table-filter-count')).toHaveText('1 row')
+    await expect(page.locator('.filter-panel__count')).toHaveText('1 row')
     await expect(gridRow(page, 'Beta task v2')).toBeVisible()
     await expect(gridRow(page, 'Alpha task')).toBeHidden()
     await page.getByRole('button', { name: 'Reset' }).click()

@@ -31,7 +31,7 @@ import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, Plu
 import { HistoryDrawer } from '@/views/history/HistoryDrawer'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial, type ReferenceTarget } from '@/components/AddColumnModal'
 import { CellDisplay, CellEditor, type CellColumn } from '@/cells/cellRegistry'
-import { FilterBar } from './FilterBar'
+import { FilterPanel } from '@/components/FilterPanel'
 import { applyFilters, type FilterCondition } from '@/lib/filters'
 import './TableView.css'
 import { makeReferenceLookup } from '@/lib/referenceLookup'
@@ -309,8 +309,6 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // Per-column "where" conditions (issue: Real filter UI). Applied client-side
   // and saveable into a view (filters + sort). Loaded from a saved view below.
   const [conditions, setConditions] = useState<FilterCondition[]>([])
-  const [savingView, setSavingView] = useState(false)
-  const [newViewName, setNewViewName] = useState('')
   /** The saved view currently open (for "Save changes"); null on a raw table. */
   const [loadedView, setLoadedView] = useState<{ id: string; name: string } | null>(null)
   /** Guards the load-once-per-view effect against re-runs (workspace identity). */
@@ -778,15 +776,11 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       })),
     })
 
-  const saveAsView = async () => {
-    const name = newViewName.trim()
-    if (!name) return
+  const saveAsView = async (name: string) => {
     const id = globalThis.crypto?.randomUUID?.() ?? `view_${Date.now()}`
     try {
       await workspace.createView(buildViewPayload(id, name))
       if (workspaceId) notifyWorkspaceChanged(workspaceId)
-      setSavingView(false)
-      setNewViewName('')
       navigate(`/workspace/${workspaceId}/table/${tableId}/view/${id}`)
     } catch (err: any) {
       showCellError(err)
@@ -853,74 +847,19 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       )}
 
       {showFilter && (
-        <div className="table-filter-bar table-filter-bar--stacked">
-          <div className="table-filter-row">
-            <input
-              className="table-filter-input"
-              placeholder="Search all columns…"
-              value={globalFilter}
-              onChange={e => setGlobalFilter(e.target.value)}
-            />
-            <span className="table-filter-count">
-              {tableRows.length} row{tableRows.length === 1 ? '' : 's'}
-            </span>
-            {(globalFilter || conditions.length > 0) && (
-              <button
-                className="ghost table-filter-clear"
-                onClick={resetFilters}
-                title={loadedView ? 'Reset to this view’s saved filters' : 'Clear all filters'}
-              >
-                Reset
-              </button>
-            )}
-          </div>
-          <FilterBar
-            columns={columnsMeta}
-            conditions={conditions}
-            onChange={setConditions}
-            members={members}
-            lookup={referenceLookup}
-          />
-          <div className="table-filter-actions">
-            {/* Filters are ephemeral until saved: tweak freely, then either
-                commit to this view ("Save view") or fork a new one. */}
-            {loadedView && (
-              <button className="ghost" onClick={saveChanges} title={`Update “${loadedView.name}”`}>
-                Save view
-              </button>
-            )}
-            {!savingView ? (
-              <button
-                className="ghost"
-                onClick={() => {
-                  setNewViewName('')
-                  setSavingView(true)
-                }}
-              >
-                {loadedView ? 'Save as separate view' : 'Save view'}
-              </button>
-            ) : (
-              <span className="table-save-view">
-                <input
-                  className="table-filter-input"
-                  placeholder="View name"
-                  value={newViewName}
-                  autoFocus
-                  onChange={e => setNewViewName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') void saveAsView()
-                  }}
-                />
-                <button className="ghost" onClick={() => void saveAsView()} disabled={!newViewName.trim()}>
-                  Save
-                </button>
-                <button className="ghost" onClick={() => setSavingView(false)}>
-                  Cancel
-                </button>
-              </span>
-            )}
-          </div>
-        </div>
+        <FilterPanel
+          columns={columnsMeta}
+          conditions={conditions}
+          onChange={setConditions}
+          members={members}
+          lookup={referenceLookup}
+          search={{ value: globalFilter, onChange: setGlobalFilter }}
+          count={{ shown: tableRows.length, noun: 'row' }}
+          onReset={globalFilter || conditions.length > 0 ? resetFilters : undefined}
+          loadedViewName={loadedView?.name ?? null}
+          onSaveView={loadedView ? saveChanges : undefined}
+          onSaveAsView={saveAsView}
+        />
       )}
 
       <div className="table-view__content">

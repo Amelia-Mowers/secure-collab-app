@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { KanbanView } from './KanbanView'
 import { makeKanbanWorkspace, makeTasksWorkspace, seedTasks } from '@/test/mockWorkspace'
@@ -440,6 +440,19 @@ describe('KanbanView', () => {
       renderKanban(mine, 'tasks', 'filtered')
       await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
       expect(screen.queryByText('Set up CI/CD')).not.toBeInTheDocument()
+    })
+
+    it('filters through the SAME panel component as the grid', async () => {
+      const ws = boardWithFilters([])
+      const { container } = renderKanban(ws, 'tasks', 'filtered')
+      await waitFor(() => expect(screen.getByText('Filtered Board')).toBeInTheDocument())
+      expect(container.querySelector('.filter-panel')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByText('Filter'))
+      // Shared classes, not a board-only copy: same markup, same theme tokens.
+      expect(container.querySelector('.filter-panel')).toBeInTheDocument()
+      expect(container.querySelector('.filter-panel__count')).toHaveTextContent('4 cards')
+      // A board has no free-text search — that input is grid-only.
+      expect(screen.queryByPlaceholderText('Search all columns…')).not.toBeInTheDocument()
     })
 
     it('shows nothing for @me when the viewer is unknown', async () => {
