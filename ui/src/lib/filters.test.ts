@@ -28,8 +28,8 @@ describe('operatorsForType', () => {
     }
   })
 
-  it('offers text-like ops for text, document and reference', () => {
-    for (const t of ['text', 'document', 'reference']) {
+  it('offers text-like ops for text and document', () => {
+    for (const t of ['text', 'document']) {
       expect(ops(t)).toEqual([
         'contains',
         'not_contains',
@@ -39,6 +39,14 @@ describe('operatorsForType', () => {
         'is_not_empty',
       ])
     }
+  })
+
+  // A reference cell holds a row id, so substring matching on it is
+  // meaningless — references pick from rows, like a select (issue c14e01a0).
+  it('offers identity ops for reference, set ops for multireference', () => {
+    expect(ops('reference')).toEqual(ops('select'))
+    expect(ops('multireference')).toEqual(ops('multiselect'))
+    expect(ops('reference')).not.toContain('contains')
   })
 
   it('offers ordered relative-date ops for date', () => {

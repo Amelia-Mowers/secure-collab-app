@@ -11,6 +11,10 @@ export interface TemplateColumn {
   required?: boolean
   options?: string[]
   default_value?: unknown
+  /** reference / multireference: the table pointed at, and which of its
+   *  columns labels a row (issue c14e01a0). */
+  reference_table?: string
+  reference_display_column?: string
 }
 
 export interface TableTemplate {
@@ -77,6 +81,10 @@ export function buildTableDefinition(tableId: string, name: string, template: Ta
       order: idx,
       ...(col.options ? { options: col.options } : {}),
       ...(col.default_value !== undefined ? { default_value: col.default_value } : {}),
+      ...(col.reference_table ? { reference_table: col.reference_table } : {}),
+      ...(col.reference_display_column
+        ? { reference_display_column: col.reference_display_column }
+        : {}),
     }
   })
   return { id: tableId, name, columns }

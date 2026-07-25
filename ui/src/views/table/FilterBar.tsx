@@ -1,4 +1,5 @@
 import { operatorsForType, operatorNeedsValue, ME, type FilterCondition, type FilterOp } from '@/lib/filters'
+import type { ReferenceLookup } from '@/lib/referenceLookup'
 import './FilterBar.css'
 
 export interface FilterColumnMeta {
@@ -6,6 +7,8 @@ export interface FilterColumnMeta {
   name: string
   column_type: string
   options?: string[]
+  reference_table?: string
+  reference_display_column?: string
 }
 
 /** A room member offered as a filter value on member columns. */
@@ -27,12 +30,16 @@ export function FilterBar({
   conditions,
   onChange,
   members = [],
+  lookup,
 }: {
   columns: FilterColumnMeta[]
   conditions: FilterCondition[]
   onChange: (conditions: FilterCondition[]) => void
   /** Room members, offered as values on member columns (alongside "Me"). */
   members?: FilterMember[]
+  /** Resolve referenced rows, so reference columns filter by row rather than
+   *  by raw id. Omitted → a plain id input. */
+  lookup?: ReferenceLookup
 }) {
   const update = (i: number, patch: Partial<FilterCondition>) =>
     onChange(conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)))
@@ -88,6 +95,7 @@ export function FilterBar({
                 operator={c.operator}
                 value={c.value}
                 members={members}
+                lookup={lookup}
                 onChange={v => update(i, { value: v })}
               />
             )}
@@ -115,16 +123,19 @@ function ValueEditor({
   operator,
   value,
   members,
+  lookup,
   onChange,
 }: {
   column: FilterColumnMeta | undefined
   operator: FilterOp
   value: unknown
   members: FilterMember[]
+  lookup?: ReferenceLookup
   onChange: (v: unknown) => void
 }) {
   const type = column?.column_type ?? 'text'
   const isMember = type === 'member' || type === 'multimember'
+  const isReference = type === 'reference' || type === 'multireference'
   // Member columns pick from the room roster, led by "Me" — the sentinel value
   // that resolves to whoever is viewing, so one saved view is everyone's
   // personal board. Everything else picks from the column's select options.
@@ -133,7 +144,12 @@ function ValueEditor({
         { value: ME, label: 'Me' },
         ...members.map(m => ({ value: m.id, label: m.label || m.id })),
       ]
-    : (column?.options ?? []).map(o => ({ value: o, label: o }))
+    : isReference && lookup && column?.reference_table
+      ? lookup(column.reference_table, column.reference_display_column).map(r => ({
+          value: r.id,
+          label: r.label,
+        }))
+      : (column?.options ?? []).map(o => ({ value: o, label: o }))
 
   // is_any_of / has any/all/none → pick one or more option values.
   if (MULTI_VALUE_OPS.includes(operator)) {
@@ -166,7 +182,7 @@ function ValueEditor({
     )
   }
 
-  if ((type === 'select' || isMember) && choices.length) {
+  if ((type === 'select' || isMember || isReference) && choices.length) {
     return (
       <select
         className="filter-condition__value"

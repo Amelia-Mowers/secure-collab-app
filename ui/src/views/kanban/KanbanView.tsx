@@ -25,6 +25,7 @@ import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } fr
 import { ViewSettingsModal } from '@/components/ViewSettingsModal'
 import { FilterBar, type FilterColumnMeta } from '@/views/table/FilterBar'
 import { applyFilters, type FilterCondition } from '@/lib/filters'
+import { makeReferenceLookup } from '@/lib/referenceLookup'
 import { memberLabel } from '@/cells/cellRegistry'
 import { resolveTargetColumn } from './kanbanUtils'
 import './KanbanView.css'
@@ -225,6 +226,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   // column → no footer.
   const members = useMembers(workspace)
   const me = useCurrentUserId(workspace)
+  const referenceLookup = useMemo(() => makeReferenceLookup(workspace), [workspace])
   const memberCol = useMemo(() => {
     const configured = viewConfig?.kanban_config?.assignee_column
     if (!configured) return null
@@ -296,6 +298,8 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
         name: c.name,
         column_type: c.column_type ?? 'text',
         options: c.options,
+        reference_table: (c as any).reference_table,
+        reference_display_column: (c as any).reference_display_column,
       })),
     [availableColumns],
   )
@@ -502,6 +506,7 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
             conditions={conditions}
             onChange={setConditions}
             members={members}
+            lookup={referenceLookup}
           />
         </div>
       )}

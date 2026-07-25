@@ -86,7 +86,6 @@ export function operatorsForType(columnType: string): OperatorOption[] {
   switch (columnType) {
     case 'text':
     case 'document':
-    case 'reference':
       return [
         { op: 'contains', label: 'contains' },
         { op: 'not_contains', label: 'does not contain' },
@@ -123,6 +122,7 @@ export function operatorsForType(columnType: string): OperatorOption[] {
       ]
     case 'select':
     case 'member':
+    case 'reference':
       return [
         { op: 'equals', label: 'is' },
         { op: 'not_equals', label: 'is not' },
@@ -131,6 +131,7 @@ export function operatorsForType(columnType: string): OperatorOption[] {
       ]
     case 'multiselect':
     case 'multimember':
+    case 'multireference':
       return [
         { op: 'has_any_of', label: 'has any of' },
         { op: 'has_all_of', label: 'has all of' },

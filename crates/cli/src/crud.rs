@@ -141,10 +141,13 @@ fn parse_column_type(s: &str) -> Result<ColumnType> {
         "json" => ColumnType::Json,
         "member" => ColumnType::Member,
         "members" | "multimember" => ColumnType::MultiMember,
+        "reference" | "ref" => ColumnType::Reference,
+        "references" | "multireference" => ColumnType::MultiReference,
         other => {
             return Err(anyhow!(
                 "unknown column type {other:?} \
-                 (text|number|boolean|date|select|multiselect|document|json|member|members)"
+                 (text|number|boolean|date|select|multiselect|document|json|\
+                 member|members|reference|references)"
             ))
         }
     })
@@ -217,7 +220,7 @@ fn coerce_and_validate(column: &ColumnDefinition, raw: &str) -> Result<serde_jso
             check_option(column, raw)?;
             Ok(serde_json::json!(raw))
         }
-        ColumnType::MultiMember => {
+        ColumnType::MultiMember | ColumnType::MultiReference => {
             let values: Vec<String> = raw
                 .split(',')
                 .map(|v| v.trim().to_string())

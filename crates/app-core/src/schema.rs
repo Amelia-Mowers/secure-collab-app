@@ -20,7 +20,12 @@ pub enum ColumnType {
     Date,
     Select,
     MultiSelect,
+    /// A row of another table, stored as that row's id and rendered through the
+    /// referenced table's `reference_display_column`.
     Reference,
+    /// Array of referenced row ids (like MultiSelect for rows). See issue
+    /// c14e01a0.
+    MultiReference,
     Document,
     Json,
     /// A Matrix user in the workspace room (stores the stable MXID; renders
@@ -42,6 +47,13 @@ pub struct ColumnDefinition {
     pub options: Option<Vec<String>>,
     /// For reference type - target table ID
     pub reference_table: Option<String>,
+    /// For reference types — which column of the referenced table supplies a
+    /// row's human-readable label. An explicit setting, never inferred from the
+    /// target schema (the picker materializes a default at creation time); an
+    /// eventual Typst formula replaces the single-column form. Legacy columns
+    /// leave it `None`, which falls back to the first text column.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_display_column: Option<String>,
     /// Display position. Lower sorts first; `None` (legacy columns created before
     /// ordering existed) sorts after ordered columns. Reordering rewrites these.
     #[serde(default)]
@@ -58,6 +70,7 @@ impl ColumnDefinition {
             default_value: None,
             options: None,
             reference_table: None,
+            reference_display_column: None,
             order: None,
         }
     }
@@ -84,6 +97,12 @@ impl ColumnDefinition {
 
     pub fn with_reference(mut self, table_id: String) -> Self {
         self.reference_table = Some(table_id);
+        self
+    }
+
+    /// Set which column of the referenced table labels a referenced row.
+    pub fn with_reference_display(mut self, column_id: impl Into<String>) -> Self {
+        self.reference_display_column = Some(column_id.into());
         self
     }
 }
@@ -281,6 +300,18 @@ impl SchemaManager {
                 updates.push(ref_update);
             }
 
+            if let Some(display) = column.reference_display_column {
+                let display_update = CellUpdate::new(
+                    SCHEMA_TABLE_ID,
+                    &row_id,
+                    "reference_display_column",
+                    serde_json::json!(display),
+                    ts + 8,
+                );
+                self.schema_table.apply_update(display_update.clone());
+                updates.push(display_update);
+            }
+
             let order_update = CellUpdate::new(
                 SCHEMA_TABLE_ID,
                 &row_id,
@@ -364,6 +395,13 @@ impl SchemaManager {
 
         if let Some(ref_table) = self.schema_table.get_value(row_id, "reference_table") {
             column.reference_table = ref_table.as_str().map(String::from);
+        }
+
+        if let Some(display) = self
+            .schema_table
+            .get_value(row_id, "reference_display_column")
+        {
+            column.reference_display_column = display.as_str().map(String::from);
         }
 
         if let Some(order) = self.schema_table.get_value(row_id, "order") {
@@ -559,6 +597,8 @@ impl SchemaManager {
             ("column_type", "type"),
             ("options", "options"),
             ("default_value", "default"),
+            ("reference_table", "reference_table"),
+            ("reference_display_column", "reference_display_column"),
         ];
         for (patch_key, cell) in mappings {
             if let Some(value) = patch.get(patch_key) {
@@ -949,6 +989,38 @@ mod tests {
         let schema = manager.get_table_schema("tasks").unwrap();
         let col = schema.columns.get("project").unwrap();
         assert_eq!(col.reference_table, Some("projects".to_string()));
+        // Legacy shape: no display column set.
+        assert_eq!(col.reference_display_column, None);
+    }
+
+    #[test]
+    fn test_reference_display_column_round_trips_and_is_patchable() {
+        let mut manager = SchemaManager::new();
+
+        let def = TableDefinition::new("tasks", "Tasks").with_column(
+            ColumnDefinition::new("client", "Client", ColumnType::MultiReference)
+                .with_reference("contacts".to_string())
+                .with_reference_display("name"),
+        );
+        let updates = manager.create_table(def, 80);
+        manager.apply_updates(updates);
+
+        let col = manager.get_table_schema("tasks").unwrap().columns["client"].clone();
+        assert_eq!(col.column_type, ColumnType::MultiReference);
+        assert_eq!(col.reference_display_column, Some("name".to_string()));
+
+        // Repointing the display column is an ordinary column patch.
+        let updates = manager.update_column(
+            "tasks",
+            "client",
+            &serde_json::json!({ "reference_display_column": "email" }),
+            900,
+        );
+        manager.apply_updates(updates);
+        assert_eq!(
+            manager.get_table_schema("tasks").unwrap().columns["client"].reference_display_column,
+            Some("email".to_string())
+        );
     }
 
     #[test]
