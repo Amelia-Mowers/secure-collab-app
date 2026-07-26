@@ -38,12 +38,16 @@ function fakePreview(_tableId: string, _csv: string, overrides: CsvPreviewColumn
   }
 }
 
-/** Drive the file input, which is how the dialogue actually gets its text. */
+/** Drive the file input, which is how the dialogue actually gets its text.
+ *
+ *  Waits on the preview's own controls rather than on a text node: FileReader
+ *  is async, and under a loaded full-suite run the default 1s timeout is not
+ *  always enough for the read plus the re-render. */
 async function selectFile(text = CSV) {
   const input = screen.getByLabelText('CSV file') as HTMLInputElement
   const file = new File([text], 'tasks.csv', { type: 'text/csv' })
   fireEvent.change(input, { target: { files: [file] } })
-  await screen.findByText('Title')
+  await waitFor(() => expect(screen.getByText('Count')).toBeInTheDocument(), { timeout: 10_000 })
 }
 
 describe('CsvImportModal', () => {

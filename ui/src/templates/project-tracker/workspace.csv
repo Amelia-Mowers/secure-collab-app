@@ -1,0 +1,4 @@
+key,value
+name,Project tracker
+description,"Tasks with status, assignee, due date, and priority, plus a kanban board."
+format_version,1.0

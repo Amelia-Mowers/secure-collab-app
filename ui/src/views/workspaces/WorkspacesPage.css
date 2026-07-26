@@ -267,6 +267,31 @@
   font-size: 13px;
 }
 
+.workspace-new-form__template {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.workspace-new-form__template select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text);
+}
+
+.workspace-new-form__blurb {
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
 .workspace-new-form__actions {
   display: flex;
   gap: 6px;

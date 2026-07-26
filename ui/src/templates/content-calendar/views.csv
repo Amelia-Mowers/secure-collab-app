@@ -1,0 +1,2 @@
+id,name,table,type,settings
+content-calendar,Calendar,content,calendar,"{""calendar"":{""date_column"":""publish_date"",""title_column"":""title"",""end_date_column"":null}}"

@@ -4,7 +4,12 @@ import { useAuth, InvitedRoom } from '@/hooks/useAuth'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { TrialBadge } from '@/components/TrialStatus'
 import { getWasmModule } from '@/wasm/loader'
-import { seedDemoWorkspace, DEMO_WORKSPACE_NAME } from '@/lib/demoWorkspace'
+import {
+  loadWorkspaceTemplates,
+  templateFiles,
+  DEMO_SLUG,
+  type WorkspaceTemplate,
+} from '@/lib/workspaceTemplates'
 import './WorkspacesPage.css'
 
 function formatDate(ts: number): string {
@@ -27,6 +32,43 @@ export function WorkspacesPage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [demoLoading, setDemoLoading] = useState(false)
+  const [templates, setTemplates] = useState<WorkspaceTemplate[]>([])
+  const [templateSlug, setTemplateSlug] = useState('')
+
+  // Templates are inlined at build time, so this only awaits the wasm module.
+  useEffect(() => {
+    let cancelled = false
+    void loadWorkspaceTemplates().then(list => {
+      if (!cancelled) setTemplates(list)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Open a ConnectedWorkspace for a freshly created room. The room can 404
+   *  until the SDK cache catches up — same retry shape as useTable's
+   *  initWorkspace. */
+  const connect = async (roomId: string) => {
+    const wasm = await getWasmModule()
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await wasm.ConnectedWorkspace.create(matrixSession, roomId)
+      } catch (err) {
+        if (attempt >= 5) throw err
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+      }
+    }
+  }
+
+  /** Seed a new workspace from a shipped template archive (ADR 0004). The same
+   *  code path as importing an archive someone sent you — a template is not a
+   *  special case, it is just an archive we ship. */
+  const applyTemplate = async (roomId: string, template: WorkspaceTemplate) => {
+    const cws: any = await connect(roomId)
+    const files = templateFiles(template, matrixSession?.userId?.() ?? undefined)
+    await cws.importWorkspaceArchive(JSON.stringify(files))
+  }
 
   // Create a REAL, populated workspace (issue c0ace30a) — encrypted and synced
   // like any other, unlike the old local-only demo. The seeding connection is
@@ -34,24 +76,16 @@ export function WorkspacesPage() {
   // debounced cell sends complete in the background.
   const handleCreateDemo = async () => {
     if (demoLoading || actionLoading || !matrixSession) return
+    const demo = templates.find(t => t.slug === DEMO_SLUG)
+    if (!demo) {
+      setActionError('The demo template is unavailable in this build')
+      return
+    }
     setDemoLoading(true)
     setActionError(null)
     try {
-      const ws = await createWorkspace(DEMO_WORKSPACE_NAME)
-      const wasm = await getWasmModule()
-      // The freshly created room can 404 until the SDK cache catches up —
-      // same retry shape as useTable's initWorkspace.
-      let cws: any
-      for (let attempt = 0; ; attempt++) {
-        try {
-          cws = await wasm.ConnectedWorkspace.create(matrixSession, ws.id)
-          break
-        } catch (err) {
-          if (attempt >= 5) throw err
-          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
-        }
-      }
-      await seedDemoWorkspace(cws, matrixSession.userId?.() ?? undefined)
+      const ws = await createWorkspace(demo.name)
+      await applyTemplate(ws.id, demo)
       navigate(`/workspace/${encodeURIComponent(ws.id)}`)
     } catch (err: any) {
       setActionError(err?.message ?? 'Failed to create the demo workspace')
@@ -124,7 +158,10 @@ export function WorkspacesPage() {
     setActionError(null)
     try {
       const ws = await createWorkspace(newName.trim())
+      const template = templates.find(t => t.slug === templateSlug)
+      if (template) await applyTemplate(ws.id, template)
       setNewName('')
+      setTemplateSlug('')
       setIsCreating(false)
       navigate(`/workspace/${encodeURIComponent(ws.id)}`)
     } catch (err: any) {
@@ -246,6 +283,29 @@ export function WorkspacesPage() {
                   autoFocus
                   disabled={actionLoading}
                 />
+                {templates.length > 0 && (
+                  <label className="workspace-new-form__template">
+                    <span>Start from</span>
+                    <select
+                      aria-label="Template"
+                      value={templateSlug}
+                      disabled={actionLoading}
+                      onChange={e => setTemplateSlug(e.target.value)}
+                    >
+                      <option value="">Empty workspace</option>
+                      {templates.map(t => (
+                        <option key={t.slug} value={t.slug}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                    {templateSlug && (
+                      <span className="workspace-new-form__blurb">
+                        {templates.find(t => t.slug === templateSlug)?.description}
+                      </span>
+                    )}
+                  </label>
+                )}
                 <div className="workspace-new-form__actions">
                   <button type="submit" className="primary" disabled={!newName.trim() || actionLoading}>
                     {actionLoading ? 'Creating...' : 'Create'}

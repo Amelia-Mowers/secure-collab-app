@@ -2164,6 +2164,40 @@ impl ConnectedWorkspace {
             .map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
+    /// Read an archive's metadata without applying it — `{name, description,
+    /// tables:[{id,name,rows}], views}`. This is what a template gallery
+    /// renders: the blurb lives in the archive, not in app code beside it.
+    #[wasm_bindgen(js_name = describeArchive)]
+    pub fn describe_archive(files_json: &str) -> Result<String, JsValue> {
+        let files: crate::archive::Files = serde_json::from_str(files_json)
+            .map_err(|_| JsValue::from_str("Invalid archive files"))?;
+        let archive = crate::archive::Archive::from_files(&files)
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        Ok(serde_json::json!({
+            "name": archive.name,
+            "description": archive.description,
+            "views": archive.views.len(),
+            "tables": archive.tables.iter().map(|t| serde_json::json!({
+                "id": t.id,
+                "name": t.name,
+                "rows": t.rows.len(),
+            })).collect::<Vec<_>>(),
+        })
+        .to_string())
+    }
+
+    /// Apply an archive given as a JSON map of `path -> contents` — the form
+    /// shipped templates take, since a directory of CSVs is reviewable in a
+    /// PR in a way a zip is not.
+    #[wasm_bindgen(js_name = importWorkspaceArchive)]
+    pub async fn import_workspace_archive(&self, files_json: String) -> Result<String, JsValue> {
+        let files: crate::archive::Files = serde_json::from_str(&files_json)
+            .map_err(|_| JsValue::from_str("Invalid archive files"))?;
+        let archive = crate::archive::Archive::from_files(&files)
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        Ok(self.apply_archive(archive))
+    }
+
     /// Import a workspace archive (zip) into this workspace. Existing tables
     /// are appended to rather than replaced — see
     /// [`crate::archive::Archive::apply_to_workspace`].
@@ -2173,6 +2207,14 @@ impl ConnectedWorkspace {
     pub async fn import_workspace_zip(&self, bytes: Vec<u8>) -> Result<String, JsValue> {
         let archive = crate::archive::Archive::from_zip(&bytes)
             .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        Ok(self.apply_archive(archive))
+    }
+
+    /// Shared tail of every archive import: apply, enqueue the writes, and
+    /// report. Enqueued rather than sent inline for the same reason `importCsv`
+    /// is — a template with a few hundred cells would otherwise be a few
+    /// hundred requests.
+    fn apply_archive(&self, archive: crate::archive::Archive) -> String {
         let stamp = js_sys::Date::now() as u64;
         let result = {
             let mut ws = self.inner.borrow_mut();
@@ -2181,7 +2223,7 @@ impl ConnectedWorkspace {
             })
         };
         self.enqueue_updates(result.updates);
-        Ok(serde_json::json!({
+        serde_json::json!({
             "rowsWritten": result.rows_written,
             "issues": result.issues.iter().map(|i| serde_json::json!({
                 "table": i.table,
@@ -2190,7 +2232,7 @@ impl ConnectedWorkspace {
                 "message": i.message,
             })).collect::<Vec<_>>(),
         })
-        .to_string())
+        .to_string()
     }
 
     /// Inspect a CSV without importing it — the data behind the preview step.
@@ -2311,6 +2353,7 @@ impl ConnectedWorkspace {
             let mut ws = self.inner.borrow_mut();
             crate::archive::Archive {
                 name: table_name,
+                description: String::new(),
                 tables: vec![table],
                 views: Vec::new(),
             }

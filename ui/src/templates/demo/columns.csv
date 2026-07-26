@@ -1,0 +1,13 @@
+table,column,name,type,options,reference_table,reference_display_column,width,required,default,order
+tasks,title,Title,text,,,,,,,0
+tasks,status,Status,select,"Todo, In Progress, Done",,,,,Todo,1
+tasks,assignee,Assignee,member,,,,,,,2
+tasks,due_date,Due date,date,,,,,,,3
+tasks,priority,Priority,select,"Low, Medium, High",,,,,,4
+tasks,client,Client,reference,,contacts,name,,,,5
+tasks,stakeholders,Stakeholders,multireference,,contacts,name,,,,6
+contacts,name,Name,text,,,,,,,0
+contacts,email,Email,text,,,,,,,1
+contacts,company,Company,text,,,,,,,2
+contacts,status,Status,select,"Lead, Active, Closed",,,,,Lead,3
+contacts,notes,Notes,document,,,,,,,4
