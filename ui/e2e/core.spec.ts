@@ -1,5 +1,13 @@
 import { test, expect, type Page, type Locator } from '@playwright/test'
-import { homeserverUrl, registerDevice, captureMasterKey, uniqueUser } from './helpers'
+import {
+  homeserverUrl,
+  registerDevice,
+  captureMasterKey,
+  uniqueUser,
+  createWorkspace,
+  createTable,
+  addColumn,
+} from './helpers'
 
 /**
  * Core single-device product behaviour (TODO.md "E2E — Core behaviour"):
@@ -11,41 +19,6 @@ import { homeserverUrl, registerDevice, captureMasterKey, uniqueUser } from './h
  * One journey, one registration: every step builds on real prior state, which
  * is exactly what the unit tests (MockWorkspace) can't cover.
  */
-
-// ── Flow helpers ────────────────────────────────────────────────────────────
-
-async function createWorkspace(page: Page, name: string) {
-  await page.locator('.workspace-card--new').click()
-  await page.getByPlaceholder('Workspace name').fill(name)
-  await page.getByRole('button', { name: 'Create workspace', exact: true }).click()
-  // Room creation + encryption enablement + initial sync.
-  await expect(page).toHaveURL(/\/workspace\//, { timeout: 90_000 })
-  await expect(page.getByRole('button', { name: 'New table' })).toBeVisible({ timeout: 90_000 })
-}
-
-async function createTable(page: Page, name: string) {
-  await page.getByRole('button', { name: 'New table' }).click()
-  const input = page.getByPlaceholder('Table name...')
-  await input.fill(name)
-  await input.press('Enter')
-  // createTable navigates to the new table's grid on success.
-  await expect(page).toHaveURL(new RegExp(`/table/${name.toLowerCase()}`), { timeout: 90_000 })
-}
-
-/** Add a column via the toolbar "Add column" button + modal. */
-async function addColumn(page: Page, name: string, typeLabel: string, options?: string) {
-  await page.getByRole('button', { name: 'Add column' }).click()
-  const dialog = page.getByRole('dialog')
-  await dialog.getByPlaceholder('e.g. Priority').fill(name)
-  // Anchored: a plain "Select" substring would also match the "Multi-select" row.
-  await dialog.locator('.acm__type-row', { hasText: new RegExp(`^${typeLabel}`) }).click()
-  if (options !== undefined) {
-    await dialog.getByPlaceholder('Todo, In Progress, Done').fill(options)
-  }
-  await dialog.getByRole('button', { name: 'Add column' }).click()
-  await expect(dialog).toBeHidden({ timeout: 30_000 })
-  await expect(page.locator('th', { hasText: name })).toBeVisible({ timeout: 30_000 })
-}
 
 /** A data row in the grid (excludes the virtualizer's aria-hidden spacer rows). */
 function gridRow(page: Page, text: string) {

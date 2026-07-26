@@ -1,5 +1,12 @@
 import { test, expect, type Page } from '@playwright/test'
-import { homeserverUrl, registerDevice, captureMasterKey, uniqueUser } from './helpers'
+import {
+  homeserverUrl,
+  registerDevice,
+  captureMasterKey,
+  uniqueUser,
+  createWorkspace,
+  createTable,
+} from './helpers'
 
 /**
  * Two-user collaboration end to end (issue c3db652c) against a real **Synapse**
@@ -19,21 +26,6 @@ function gridRow(page: Page, text: string) {
   return page.locator('tbody tr', { hasText: text })
 }
 
-async function createWorkspace(page: Page, name: string) {
-  await page.locator('.workspace-card--new').click()
-  await page.getByPlaceholder('Workspace name').fill(name)
-  await page.getByRole('button', { name: 'Create workspace', exact: true }).click()
-  await expect(page).toHaveURL(/\/workspace\//, { timeout: 90_000 })
-  await expect(page.getByRole('button', { name: 'New table' })).toBeVisible({ timeout: 90_000 })
-}
-
-async function createTable(page: Page, name: string) {
-  await page.getByRole('button', { name: 'New table' }).click()
-  const input = page.getByPlaceholder('Table name...')
-  await input.fill(name)
-  await input.press('Enter')
-  await expect(page).toHaveURL(new RegExp(`/table/${name.toLowerCase()}`), { timeout: 90_000 })
-}
 
 /** Create a row via the entry view, filling only the default "Name" column. */
 async function newEntry(page: Page, name: string) {

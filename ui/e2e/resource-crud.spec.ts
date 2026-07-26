@@ -1,5 +1,12 @@
 import { test, expect, type Page } from '@playwright/test'
-import { homeserverUrl, registerDevice, captureMasterKey, uniqueUser } from './helpers'
+import {
+  homeserverUrl,
+  registerDevice,
+  captureMasterKey,
+  uniqueUser,
+  createWorkspace,
+  createTable,
+} from './helpers'
 
 /**
  * Every app resource can be updated in place and removed (issue
@@ -13,21 +20,7 @@ import { homeserverUrl, registerDevice, captureMasterKey, uniqueUser } from './h
  * you reload. That is the assertion this file exists for.
  */
 
-async function createWorkspace(page: Page, name: string) {
-  await page.locator('.workspace-card--new').click()
-  await page.getByPlaceholder('Workspace name').fill(name)
-  await page.getByRole('button', { name: 'Create workspace', exact: true }).click()
-  await expect(page).toHaveURL(/\/workspace\//, { timeout: 90_000 })
-  await expect(page.getByRole('button', { name: 'New table' })).toBeVisible({ timeout: 90_000 })
-}
 
-async function createTable(page: Page, name: string) {
-  await page.getByRole('button', { name: 'New table' }).click()
-  const input = page.getByPlaceholder('Table name...')
-  await input.fill(name)
-  await input.press('Enter')
-  await expect(page).toHaveURL(new RegExp(`/table/${name.toLowerCase()}`), { timeout: 90_000 })
-}
 
 /** The sidebar entry for a table or view — scoped, because the table name also
  *  appears in the grid toolbar and a bare text match would be ambiguous. */
