@@ -370,6 +370,21 @@ impl Workspace {
         column_id: &str,
         value: serde_json::Value,
     ) -> Result<()> {
+        self.update_cell_returning(table_id, row_id, column_id, value)
+            .map(|_| ())
+    }
+
+    /// Like [`update_cell`](Self::update_cell), but hands back the `CellUpdate`
+    /// so a caller with a timeline can send it. No compaction bump: this exists
+    /// for bulk writes (CSV import), which touch every cell anyway, so there is
+    /// nothing stale left to bump and a bump would only double the events.
+    pub fn update_cell_returning(
+        &mut self,
+        table_id: &str,
+        row_id: &str,
+        column_id: &str,
+        value: serde_json::Value,
+    ) -> Result<CellUpdate> {
         // Generate timestamp before borrowing table
         let user_timestamp = self.next_timestamp();
         let user_update = CellUpdate::new(table_id, row_id, column_id, value, user_timestamp);
@@ -377,8 +392,8 @@ impl Workspace {
         // Get mutable reference and apply
         match self.tables.get_mut(table_id) {
             Some(table) => {
-                table.apply_update(user_update);
-                Ok(())
+                table.apply_update(user_update.clone());
+                Ok(user_update)
             }
             None => Err(crate::Error::TableNotFound),
         }
