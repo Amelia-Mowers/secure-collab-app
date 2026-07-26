@@ -46,7 +46,7 @@ pub struct WorkspaceMarkerEventContent {
     pub workspace: bool,
 }
 
-use crate::snapshot::{WorkspaceSnapshot, SNAPSHOT_VERSION};
+use crate::snapshot::{backfill_caught_up, WorkspaceSnapshot, SNAPSHOT_VERSION};
 use crate::workspace::Workspace;
 use matrix_sdk::crypto::CollectStrategy;
 use tables_over_matrix::{default_encryption_settings, CellUpdate, MatrixClient};
@@ -1317,7 +1317,7 @@ impl ConnectedWorkspace {
         let stop_before = marker_ts;
         let mut undecryptable_count = 0u32;
         let mut from_token: Option<String> = None;
-        'outer: loop {
+        loop {
             let mut options = MessagesOptions::backward();
             if let Some(ref token) = from_token {
                 options = options.from(token.as_str());
@@ -1338,20 +1338,32 @@ impl ConnectedWorkspace {
                 break;
             }
 
+            // Incremental bound (issue 48f042ba). /messages walks the server's
+            // STREAM order, which — with Synapse workers / stream writers —
+            // can disagree with origin_server_ts by persister skew. The old
+            // rule ("break the whole walk at the FIRST event older than the
+            // snapshot marker") assumed the two orders agree; one reordered
+            // event then ended the walk early and every event deeper in the
+            // stream was skipped — and because the running marker had already
+            // advanced past them, no later incremental start would ever fetch
+            // them: a permanent, self-sealing hole. (Exactly what shipped 8
+            // missed events to prod on 2026-07-25; the single-process e2e
+            // Synapse can't reproduce it because there the orders agree.)
+            //
+            // So: always process every event of a fetched page (LWW makes
+            // re-applying pre-marker events idempotent), and stop paginating
+            // only when the OLDEST event of the page is older than the marker
+            // by more than a grace margin — a reordered event is lost only if
+            // stream order and ots disagree by over the margin, far beyond
+            // realistic worker skew.
+            let mut page_oldest: Option<u64> = None;
             for timeline_event in &response.chunk {
                 if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
-                    // Incremental bound: with a usable snapshot, stop once we
-                    // reach events older than its marker (newest-first
-                    // pagination + monotonic per-room origin_server_ts on our
-                    // single homeserver, so the first older event means we've
-                    // caught up; events at the marker are re-applied — LWW makes
-                    // that idempotent). Compared against the IMMUTABLE
-                    // `stop_before`, never the running `marker_ts`. An
-                    // unparseable ts is treated as "newer" (fail-safe: process
-                    // it, never skip) so it can't trigger a premature break.
+                    // An unparseable ts is treated as "newer" (fail-safe:
+                    // process it, never skip).
                     let ots = MatrixClient::extract_origin_server_ts(&json_str);
-                    if fast_path && ots.is_some_and(|t| t < stop_before) {
-                        break 'outer;
+                    if let Some(t) = ots {
+                        page_oldest = Some(page_oldest.map_or(t, |m| m.min(t)));
                     }
                     // One timeline event may carry many cells (a batch event).
                     let received = MatrixClient::extract_cell_updates(&json_str);
@@ -1367,12 +1379,21 @@ impl ConnectedWorkspace {
                             // origin_server_ts is the LWW tiebreaker.
                             let _ = workspace.apply_update(r.into_update());
                         }
-                    } else if MatrixClient::is_undecryptable_event(&json_str) {
+                    } else if MatrixClient::is_undecryptable_event(&json_str)
+                        && (!fast_path || ots.is_none_or(|t| t >= stop_before))
+                    {
                         // History we can't decrypt (no key) — count it so the UI
-                        // can warn instead of silently materializing partial state.
+                        // can warn instead of silently materializing partial
+                        // state. Pre-marker events are excluded on the fast
+                        // path: the snapshot already accounts for them, and the
+                        // grace-margin walk would otherwise recount them.
                         undecryptable_count += 1;
                     }
                 }
+            }
+
+            if backfill_caught_up(fast_path, page_oldest, stop_before) {
+                break;
             }
 
             match response.end {
