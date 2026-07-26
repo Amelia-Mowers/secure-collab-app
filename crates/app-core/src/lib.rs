@@ -37,9 +37,7 @@
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-#[cfg(feature = "wasm")]
 pub mod archive;
-pub mod bridge;
 pub mod filter_eval;
 pub mod fractional_index;
 pub mod history;
@@ -47,6 +45,9 @@ pub mod schema;
 pub mod snapshot;
 pub mod views;
 pub mod workspace;
+
+#[cfg(feature = "wasm")]
+pub mod bridge;
 
 #[cfg(all(feature = "wasm", feature = "matrix"))]
 pub mod bridge_matrix;
