@@ -828,7 +828,6 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       setToast(`Updated ${targets.length} cells`)
       setTimeout(() => setToast(null), 2500)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCells, selectionColumn, updateCell])
 
 
