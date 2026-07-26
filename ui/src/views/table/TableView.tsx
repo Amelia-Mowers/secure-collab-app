@@ -778,11 +778,16 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   }, [])
 
   /** Ctrl/⌘-click toggles; shift-click ranges from the anchor. A click in a
-   *  DIFFERENT column starts a fresh selection there rather than mixing
-   *  columns — cross-column propagation would be type-nonsense. */
+   *  DIFFERENT column never mixes columns (cross-column propagation would be
+   *  type-nonsense) — with a single cell selected it starts fresh there, but
+   *  with several it's IGNORED: a misclick one column over must not throw away
+   *  a selection that took many clicks to build. */
   const handleCellSelect = React.useCallback((rowId: string, colId: string, range: boolean) => {
     const key = `${rowId}:${colId}`
     if (selectionColumn !== null && selectionColumn !== colId) {
+      if (selectedCells.size > 1) {
+        return
+      }
       setSelectionColumn(colId)
       setSelectedCells(new Set([key]))
       selectionAnchorRef.current = rowId
@@ -807,7 +812,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       return next
     })
     if (!range) selectionAnchorRef.current = rowId
-  }, [selectionColumn])
+  }, [selectionColumn, selectedCells.size])
 
   /** Commit from a selected cell's editor: the value lands in EVERY selected
    *  cell. One column by construction, so the value is type-correct for all;

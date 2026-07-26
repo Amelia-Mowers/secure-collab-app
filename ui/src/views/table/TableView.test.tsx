@@ -380,15 +380,27 @@ describe('TableView', () => {
       expect(screen.getByText(/4 cells selected/)).toBeInTheDocument()
     })
 
-    it('ctrl-click in a DIFFERENT column starts a fresh selection there', async () => {
+    it('ctrl-click in a DIFFERENT column starts fresh only from a single cell', async () => {
       await renderSeeded()
       fireEvent.click(cellByText('Design homepage'), { ctrlKey: true }) // title col
       // Two seeded rows are assigned to Alice — either cell works; take the first.
       const alice = screen.getAllByText('Alice')[0].closest('.cell-click') as HTMLElement
       fireEvent.click(alice, { ctrlKey: true }) // assignee col
-      // Cross-column propagation would be type-nonsense, so the selection
-      // resets to the new column rather than mixing.
+      // One cell selected → the selection moves to the new column.
       expect(screen.getByText(/1 cell selected/)).toBeInTheDocument()
+      expect(document.querySelector('.cell-selected')?.textContent).toContain('Alice')
+    })
+
+    it('ctrl-click in a different column is IGNORED while several cells are selected', async () => {
+      await renderSeeded()
+      fireEvent.click(cellByText('Design homepage'), { ctrlKey: true })
+      fireEvent.click(cellByText('Set up CI/CD'), { ctrlKey: true })
+      expect(screen.getByText(/2 cells selected/)).toBeInTheDocument()
+      // A misclick one column over must not throw the selection away.
+      const alice = screen.getAllByText('Alice')[0].closest('.cell-click') as HTMLElement
+      fireEvent.click(alice, { ctrlKey: true })
+      expect(screen.getByText(/2 cells selected/)).toBeInTheDocument()
+      expect(document.querySelector('.cell-selected')?.textContent).toContain('Design homepage')
     })
 
     it('editing one selected cell fills every selected cell', async () => {
