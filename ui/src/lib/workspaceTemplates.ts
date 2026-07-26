@@ -47,9 +47,6 @@ function collect(): Map<string, Record<string, string>> {
   return bySlug
 }
 
-/** The template whose slug is `demo` backs the "Demo workspace" card. */
-export const DEMO_SLUG = 'demo'
-
 let cache: Promise<WorkspaceTemplate[]> | null = null
 
 /**
