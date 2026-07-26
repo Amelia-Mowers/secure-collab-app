@@ -22,7 +22,7 @@ function gridRow(page: Page, text: string) {
 async function createWorkspace(page: Page, name: string) {
   await page.locator('.workspace-card--new').click()
   await page.getByPlaceholder('Workspace name').fill(name)
-  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await page.getByRole('button', { name: 'Create workspace', exact: true }).click()
   await expect(page).toHaveURL(/\/workspace\//, { timeout: 90_000 })
   await expect(page.getByRole('button', { name: 'New table' })).toBeVisible({ timeout: 90_000 })
 }

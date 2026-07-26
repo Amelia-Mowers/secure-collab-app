@@ -7,9 +7,9 @@ import { getWasmModule } from '@/wasm/loader'
 import {
   loadWorkspaceTemplates,
   templateFiles,
-  DEMO_SLUG,
   type WorkspaceTemplate,
 } from '@/lib/workspaceTemplates'
+import { NewWorkspaceModal, ARCHIVE_OPTION } from '@/components/NewWorkspaceModal'
 import './WorkspacesPage.css'
 
 function formatDate(ts: number): string {
@@ -27,13 +27,10 @@ export function WorkspacesPage() {
   const [isCreating, setIsCreating] = useState(false)
   const [isJoining, setIsJoining] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [newName, setNewName] = useState('')
   const [joinRoomId, setJoinRoomId] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [demoLoading, setDemoLoading] = useState(false)
   const [templates, setTemplates] = useState<WorkspaceTemplate[]>([])
-  const [templateSlug, setTemplateSlug] = useState('')
 
   // Templates are inlined at build time, so this only awaits the wasm module.
   useEffect(() => {
@@ -70,27 +67,16 @@ export function WorkspacesPage() {
     await cws.importWorkspaceArchive(JSON.stringify(files))
   }
 
-  // Create a REAL, populated workspace (issue c0ace30a) — encrypted and synced
-  // like any other, unlike the old local-only demo. The seeding connection is
-  // short-lived; the workspace route opens its own on navigate, and the
-  // debounced cell sends complete in the background.
-  const handleCreateDemo = async () => {
-    if (demoLoading || actionLoading || !matrixSession) return
-    const demo = templates.find(t => t.slug === DEMO_SLUG)
-    if (!demo) {
-      setActionError('The demo template is unavailable in this build')
-      return
-    }
-    setDemoLoading(true)
-    setActionError(null)
-    try {
-      const ws = await createWorkspace(demo.name)
-      await applyTemplate(ws.id, demo)
-      navigate(`/workspace/${encodeURIComponent(ws.id)}`)
-    } catch (err: any) {
-      setActionError(err?.message ?? 'Failed to create the demo workspace')
-      setDemoLoading(false)
-    }
+  /** Seed a new workspace from an archive the user exported (theirs or
+   *  someone else's). Deliberately a CREATION path, not an action inside an
+   *  existing workspace: an archive describes a whole workspace — name,
+   *  tables, views — so merging one into a workspace that already has its own
+   *  is not a thing with an obvious right answer. */
+  const applyArchive = async (roomId: string, file: File) => {
+    const cws: any = await connect(roomId)
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const raw = await cws.importWorkspaceZip(bytes)
+    return JSON.parse(raw) as { rowsWritten: number; issues: unknown[] }
   }
 
   // ── Pending invitations ──────────────────────────────────────
@@ -151,17 +137,20 @@ export function WorkspacesPage() {
     }
   }
 
-  const handleCreate = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!newName.trim() || actionLoading) return
+  /** Create a workspace, optionally seeded. `slug` is a template slug, the
+   *  archive sentinel, or empty for a blank workspace. */
+  const handleCreate = async (name: string, slug: string, archive: File | null) => {
+    if (actionLoading) return
     setActionLoading(true)
     setActionError(null)
     try {
-      const ws = await createWorkspace(newName.trim())
-      const template = templates.find(t => t.slug === templateSlug)
-      if (template) await applyTemplate(ws.id, template)
-      setNewName('')
-      setTemplateSlug('')
+      const ws = await createWorkspace(name)
+      if (slug === ARCHIVE_OPTION && archive) {
+        await applyArchive(ws.id, archive)
+      } else {
+        const template = templates.find(t => t.slug === slug)
+        if (template) await applyTemplate(ws.id, template)
+      }
       setIsCreating(false)
       navigate(`/workspace/${encodeURIComponent(ws.id)}`)
     } catch (err: any) {
@@ -271,81 +260,19 @@ export function WorkspacesPage() {
             </div>
           ))}
 
-          {/* New workspace */}
-          {isCreating ? (
-            <div className="workspace-card">
-              <form className="workspace-new-form" onSubmit={handleCreate}>
-                <input
-                  type="text"
-                  placeholder="Workspace name"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  autoFocus
-                  disabled={actionLoading}
-                />
-                {templates.length > 0 && (
-                  <label className="workspace-new-form__template">
-                    <span>Start from</span>
-                    <select
-                      aria-label="Template"
-                      value={templateSlug}
-                      disabled={actionLoading}
-                      onChange={e => setTemplateSlug(e.target.value)}
-                    >
-                      <option value="">Empty workspace</option>
-                      {templates.map(t => (
-                        <option key={t.slug} value={t.slug}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    {templateSlug && (
-                      <span className="workspace-new-form__blurb">
-                        {templates.find(t => t.slug === templateSlug)?.description}
-                      </span>
-                    )}
-                  </label>
-                )}
-                <div className="workspace-new-form__actions">
-                  <button type="submit" className="primary" disabled={!newName.trim() || actionLoading}>
-                    {actionLoading ? 'Creating...' : 'Create'}
-                  </button>
-                  <button type="button" className="ghost" onClick={() => { setIsCreating(false); setNewName('') }}>
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </div>
-          ) : (
-            <div
-              className="workspace-card workspace-card--new"
-              onClick={() => setIsCreating(true)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => e.key === 'Enter' && setIsCreating(true)}
-            >
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M10 4v12M4 10h12" />
-              </svg>
-              New workspace
-            </div>
-          )}
-
-          {/* Demo workspace: a real, pre-populated workspace to explore. */}
+          {/* New workspace — the picker (templates, and archives) lives in the
+              dialogue, so this stays a single card. */}
           <div
-            className={`workspace-card workspace-card--demo${demoLoading ? ' workspace-card--busy' : ''}`}
-            onClick={handleCreateDemo}
+            className="workspace-card workspace-card--new"
+            onClick={() => setIsCreating(true)}
             role="button"
             tabIndex={0}
-            onKeyDown={e => e.key === 'Enter' && handleCreateDemo()}
-            aria-disabled={demoLoading}
+            onKeyDown={e => e.key === 'Enter' && setIsCreating(true)}
           >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="2.5" y="3.5" width="15" height="13" rx="2" />
-              <line x1="2.5" y1="7.5" x2="17.5" y2="7.5" />
-              <line x1="7.5" y1="7.5" x2="7.5" y2="16.5" />
+              <path d="M10 4v12M4 10h12" />
             </svg>
-            {demoLoading ? 'Setting up demo…' : 'Demo workspace'}
+            New workspace
           </div>
 
         </div>
@@ -433,6 +360,15 @@ export function WorkspacesPage() {
           )}
         </div>
       </div>
+
+      {isCreating && (
+        <NewWorkspaceModal
+          templates={templates}
+          creating={actionLoading}
+          onCreate={handleCreate}
+          onClose={() => setIsCreating(false)}
+        />
+      )}
     </div>
   )
 }

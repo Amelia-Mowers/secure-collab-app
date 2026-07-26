@@ -227,10 +227,9 @@
 }
 
 /* ── New workspace card ──────────────────────────────────── */
-/* --demo shares the dashed look but keeps its own class — the e2e's
-   .workspace-card--new locator must stay unique (strict mode). */
-.workspace-card--new,
-.workspace-card--demo {
+/* The picker (templates and archives) lives in NewWorkspaceModal now, so this
+   is a single dashed card rather than an inline form. */
+.workspace-card--new {
   border-style: dashed;
   align-items: center;
   justify-content: center;
@@ -240,67 +239,11 @@
   gap: 6px;
 }
 
-.workspace-card--new:hover,
-.workspace-card--demo:hover {
+.workspace-card--new:hover {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-muted);
   box-shadow: none;
-}
-
-.workspace-card--busy {
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-/* ── New workspace inline form ───────────────────────────── */
-.workspace-new-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-}
-
-.workspace-new-form input {
-  width: 100%;
-  box-sizing: border-box;
-  font-size: 13px;
-}
-
-.workspace-new-form__template {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-align: left;
-}
-
-.workspace-new-form__template select {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 8px;
-  font-size: 13px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-surface);
-  color: var(--text);
-}
-
-.workspace-new-form__blurb {
-  line-height: 1.4;
-  color: var(--text-secondary);
-}
-
-.workspace-new-form__actions {
-  display: flex;
-  gap: 6px;
-}
-
-.workspace-new-form__actions button {
-  flex: 1;
-  font-size: 12px;
-  padding: 6px 10px;
 }
 
 /* ── Pending invitations ─────────────────────────────────── */
