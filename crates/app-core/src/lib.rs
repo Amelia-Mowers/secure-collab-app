@@ -37,8 +37,7 @@
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-#[cfg(feature = "wasm")]
-pub mod bridge;
+pub mod archive;
 pub mod filter_eval;
 pub mod fractional_index;
 pub mod history;
@@ -47,10 +46,14 @@ pub mod snapshot;
 pub mod views;
 pub mod workspace;
 
+#[cfg(feature = "wasm")]
+pub mod bridge;
+
 #[cfg(all(feature = "wasm", feature = "matrix"))]
 pub mod bridge_matrix;
 
 // Re-export main types
+pub use archive::{Archive, ArchiveError, ArchiveTable, ImportIssue, FORMAT_VERSION};
 pub use history::{HistoryManager, RevertRecord, HISTORY_TABLE_ID};
 pub use schema::{ColumnDefinition, ColumnType, SchemaManager, TableDefinition};
 pub use snapshot::{WorkspaceSnapshot, SNAPSHOT_VERSION};
