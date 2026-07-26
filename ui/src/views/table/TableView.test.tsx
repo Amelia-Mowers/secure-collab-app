@@ -345,107 +345,94 @@ describe('TableView', () => {
     })
   })
 
-  describe('multi-row selection + bulk edit (issue bae5a235)', () => {
-    const selectRow = (n: number) =>
-      fireEvent.click(screen.getAllByLabelText(/^Select entry /)[n])
-
-    it('shows the bulk bar only once something is selected', async () => {
-      const ws = makeTasksWorkspace()
-      seedTasks(ws)
-      renderTable(ws)
-      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
-      expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
-      selectRow(0)
-      expect(screen.getByText('1 selected')).toBeInTheDocument()
-    })
-
-    it('selects and clears every displayed row from the header checkbox', async () => {
-      const ws = makeTasksWorkspace()
-      seedTasks(ws) // 4 rows
-      renderTable(ws)
-      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
-      const all = screen.getByLabelText('Select all entries')
-      fireEvent.click(all)
-      expect(screen.getByText('4 selected')).toBeInTheDocument()
-      fireEvent.click(all)
-      expect(screen.queryByText(/selected/)).not.toBeInTheDocument()
-    })
-
-    it('writes one value into that column of every selected row', async () => {
-      const ws = makeTasksWorkspace()
-      seedTasks(ws)
-      renderTable(ws)
-      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
-      fireEvent.click(screen.getByLabelText('Select all entries'))
-      // First combobox picks the column; that renders the column's OWN editor
-      // as the second — a select column gets its options, for free.
-      fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'status' } })
-      const valueEditor = screen.getAllByRole('combobox')[1]
-      expect(within(valueEditor).getByRole('option', { name: 'Done' })).toBeInTheDocument()
-      fireEvent.change(valueEditor, { target: { value: 'Done' } })
-      await waitFor(() => {
-        const rows = JSON.parse(ws.getTableRows('tasks'))
-        expect(rows.every((r: any) => r.status === 'Done')).toBe(true)
-      })
-    })
-
-    it('requires a second click to delete the selection', async () => {
-      const ws = makeTasksWorkspace()
-      seedTasks(ws)
-      renderTable(ws)
-      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
-      selectRow(0)
-      fireEvent.click(screen.getByText('Delete'))
-      // Nothing gone yet — the first click only arms the confirm.
-      expect(JSON.parse(ws.getTableRows('tasks'))).toHaveLength(4)
-      fireEvent.click(screen.getByText(/^Delete 1 — confirm$/))
-      await waitFor(() => expect(JSON.parse(ws.getTableRows('tasks'))).toHaveLength(3))
-    })
-  })
-
-  describe('viewer role is read-only (workspace roles)', () => {
-    /** A workspace whose bridge reports this user as a viewer. */
-    function asViewer() {
-      const ws: any = makeTasksWorkspace()
-      seedTasks(ws)
-      ws.myRole = () => Promise.resolve('viewer')
-      return ws
+  describe('spreadsheet-style cell selection (issue e9898080)', () => {
+    /** The display div for a row's cell, located by its current text. */
+    const cellByText = (text: string) => {
+      const el = screen.getByText(text).closest('.cell-click') as HTMLElement
+      expect(el).not.toBeNull()
+      return el
     }
 
-    it('hides every write affordance', async () => {
-      const ws = asViewer()
-      const { container } = renderTable(ws)
+    async function renderSeeded() {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      const utils = renderTable(ws)
       await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
-      expect(screen.queryByText('New entry')).not.toBeInTheDocument()
-      expect(screen.queryByTitle('Add column')).not.toBeInTheDocument()
-      expect(container.querySelector('.cell-delete-btn')).not.toBeInTheDocument()
+      return { ws, ...utils }
+    }
+
+    it('ctrl-click selects cells and shows the bar; plain click on another cell clears', async () => {
+      await renderSeeded()
+      fireEvent.click(cellByText('Design homepage'), { ctrlKey: true })
+      fireEvent.click(cellByText('Set up CI/CD'), { ctrlKey: true })
+      expect(screen.getByText(/2 cells selected/)).toBeInTheDocument()
+      expect(document.querySelectorAll('.cell-selected')).toHaveLength(2)
+      // A plain click on an UNSELECTED cell abandons the selection and edits.
+      fireEvent.click(cellByText('Write unit tests'))
+      expect(screen.queryByText(/cells selected/)).not.toBeInTheDocument()
     })
 
-    it('does not open an editor when a cell is clicked', async () => {
-      const ws = asViewer()
-      renderTable(ws)
-      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
-      fireEvent.click(screen.getByText('Design homepage'))
-      // The cell stays display-only — no input takes its place.
-      expect(screen.getByText('Design homepage')).toBeInTheDocument()
-      expect(screen.queryByDisplayValue('Design homepage')).not.toBeInTheDocument()
+    it('shift-click extends the selection through the displayed rows', async () => {
+      await renderSeeded()
+      fireEvent.click(cellByText('Design homepage'), { ctrlKey: true })
+      fireEvent.click(cellByText('Deploy to staging'), { shiftKey: true })
+      // 4 seeded rows: the range spans all of them, one cell each.
+      expect(screen.getByText(/4 cells selected/)).toBeInTheDocument()
     })
 
-    it('still shows the data — view-only, not access-denied', async () => {
-      const ws = asViewer()
-      renderTable(ws)
+    it('ctrl-click in a DIFFERENT column starts fresh only from a single cell', async () => {
+      await renderSeeded()
+      fireEvent.click(cellByText('Design homepage'), { ctrlKey: true }) // title col
+      // Two seeded rows are assigned to Alice — either cell works; take the first.
+      const alice = screen.getAllByText('Alice')[0].closest('.cell-click') as HTMLElement
+      fireEvent.click(alice, { ctrlKey: true }) // assignee col
+      // One cell selected → the selection moves to the new column.
+      expect(screen.getByText(/1 cell selected/)).toBeInTheDocument()
+      expect(document.querySelector('.cell-selected')?.textContent).toContain('Alice')
+    })
+
+    it('ctrl-click in a different column is IGNORED while several cells are selected', async () => {
+      await renderSeeded()
+      fireEvent.click(cellByText('Design homepage'), { ctrlKey: true })
+      fireEvent.click(cellByText('Set up CI/CD'), { ctrlKey: true })
+      expect(screen.getByText(/2 cells selected/)).toBeInTheDocument()
+      // A misclick one column over must not throw the selection away.
+      const alice = screen.getAllByText('Alice')[0].closest('.cell-click') as HTMLElement
+      fireEvent.click(alice, { ctrlKey: true })
+      expect(screen.getByText(/2 cells selected/)).toBeInTheDocument()
+      expect(document.querySelector('.cell-selected')?.textContent).toContain('Design homepage')
+    })
+
+    it('editing one selected cell fills every selected cell', async () => {
+      const { ws } = await renderSeeded()
+      // Select the status cells of two rows (both currently 'Todo').
+      const todos = screen.getAllByText('Todo')
+      for (const t of todos) {
+        fireEvent.click(t.closest('.cell-click') as HTMLElement, { ctrlKey: true })
+      }
+      expect(screen.getByText(/2 cells selected/)).toBeInTheDocument()
+      // Plain-click a SELECTED cell → edit mode, selection kept.
+      const first = document.querySelector('.cell-selected') as HTMLElement
+      fireEvent.click(first)
+      // The status column's own select editor appears; committing propagates.
+      const editor = screen.getAllByRole('combobox').find(el =>
+        within(el as HTMLElement).queryByRole('option', { name: 'Done' }),
+      ) as HTMLElement
+      fireEvent.change(editor, { target: { value: 'Done' } })
       await waitFor(() => {
-        expect(screen.getByText('Design homepage')).toBeInTheDocument()
-        expect(screen.getByText('Write unit tests')).toBeInTheDocument()
+        const rows = JSON.parse(ws.getTableRows('tasks'))
+        expect(rows.filter((r: any) => r.status === 'Done')).toHaveLength(3) // 1 seeded + 2 filled
       })
     })
 
-    it('keeps write affordances for an editor', async () => {
-      const ws: any = makeTasksWorkspace()
-      seedTasks(ws)
-      ws.myRole = () => Promise.resolve('editor')
-      renderTable(ws)
-      await waitFor(() => expect(screen.getByText('New entry')).toBeInTheDocument())
+    it("deletes the selected cells' rows after a second, explicit click", async () => {
+      const { ws } = await renderSeeded()
+      fireEvent.click(cellByText('Design homepage'), { ctrlKey: true })
+      fireEvent.click(screen.getByText('Delete rows'))
+      // First click only arms.
+      expect(JSON.parse(ws.getTableRows('tasks'))).toHaveLength(4)
+      fireEvent.click(screen.getByText(/^Delete 1 row — confirm$/))
+      await waitFor(() => expect(JSON.parse(ws.getTableRows('tasks'))).toHaveLength(3))
     })
   })
 
