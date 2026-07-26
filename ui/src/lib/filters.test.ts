@@ -58,6 +58,8 @@ describe('operatorsForType', () => {
       'greater_than',
       'greater_than_or_equal',
       'is_today',
+      'is_this_week',
+      'in_span',
       'is_empty',
       'is_not_empty',
     ])
@@ -65,6 +67,8 @@ describe('operatorsForType', () => {
     expect(byOp.get('less_than')).toBe('is before')
     expect(byOp.get('greater_than')).toBe('is after')
     expect(byOp.get('is_today')).toBe('is today')
+    expect(byOp.get('is_this_week')).toBe('is this week')
+    expect(byOp.get('in_span')).toBe('is within')
   })
 
   it('offers comparison ops for number and set ops for multiselect', () => {
@@ -295,5 +299,62 @@ describe('the injected today', () => {
       .toBe(true)
     expect(matchesCondition(todayLocal(), 'is_today', undefined, 'date', { today: '2020-01-01' }))
       .toBe(false)
+  })
+})
+
+describe('date spans (issue 5d2efeac)', () => {
+  // A Tuesday, so the ISO week runs Mon 20th – Sun 26th.
+  const TODAY = '2026-07-21'
+  const on = (cell: string, op: FilterOp, value?: unknown, today = TODAY) =>
+    matchesCondition(cell, op, value, 'date', { today })
+
+  it('is_this_week covers Monday through Sunday', () => {
+    for (const day of ['2026-07-20', '2026-07-21', '2026-07-26']) {
+      expect(on(day, 'is_this_week')).toBe(true)
+    }
+    for (const day of ['2026-07-19', '2026-07-27']) {
+      expect(on(day, 'is_this_week')).toBe(false)
+    }
+    expect(matchesCondition(null, 'is_this_week', undefined, 'date', { today: TODAY })).toBe(false)
+  })
+
+  it('a fixed span includes both ends, in either order', () => {
+    const span = { moving: false, from: '2026-03-01', to: '2026-03-31' }
+    expect(on('2026-03-01', 'in_span', span)).toBe(true)
+    expect(on('2026-03-31', 'in_span', span)).toBe(true)
+    expect(on('2026-02-28', 'in_span', span)).toBe(false)
+    expect(on('2026-04-01', 'in_span', span)).toBe(false)
+    expect(on('2026-03-15', 'in_span', { from: '2026-03-31', to: '2026-03-01' })).toBe(true)
+  })
+
+  it('a moving span rolls with today', () => {
+    const lastWeek = { moving: true, fromDays: -7, toDays: 0 }
+    expect(on('2026-07-21', 'in_span', lastWeek)).toBe(true)
+    expect(on('2026-07-14', 'in_span', lastWeek)).toBe(true)
+    expect(on('2026-07-13', 'in_span', lastWeek)).toBe(false)
+    // Tomorrow is outside a window ending today...
+    expect(on('2026-07-22', 'in_span', lastWeek)).toBe(false)
+    // ...and the SAME filter a day later includes it. That is the point of it.
+    expect(on('2026-07-22', 'in_span', lastWeek, '2026-07-22')).toBe(true)
+  })
+
+  it('span arithmetic survives month, leap-year and new-year boundaries', () => {
+    expect(on('2026-02-26', 'in_span', { moving: true, fromDays: -3, toDays: 0 }, '2026-03-01'))
+      .toBe(true)
+    expect(on('2024-02-29', 'in_span', { moving: true, fromDays: -1, toDays: 0 }, '2024-03-01'))
+      .toBe(true)
+    expect(on('2025-12-31', 'in_span', { moving: true, fromDays: -2, toDays: 0 }, '2026-01-02'))
+      .toBe(true)
+  })
+
+  it('a malformed span matches nothing', () => {
+    for (const bad of [{}, '2026-01-01', { from: '2026-01-01' }, null]) {
+      expect(on('2026-01-01', 'in_span', bad)).toBe(false)
+    }
+  })
+
+  it('the span operators need no value input except in_span', () => {
+    expect(operatorNeedsValue('is_this_week')).toBe(false)
+    expect(operatorNeedsValue('in_span')).toBe(true)
   })
 })
