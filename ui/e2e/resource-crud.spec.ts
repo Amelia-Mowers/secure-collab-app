@@ -99,18 +99,13 @@ test('resource CRUD: rename a table, rename and delete a view, all surviving rel
 })
 
 /**
- * KNOWN BUG (issue 980ac596): a view rename is intermittently lost across a
- * reload — the view comes back under its old name, roughly 1 run in 4–6. The
- * table rename in the test above never is, so it's specific to `_views`
- * writes. Awaiting the write and surfacing errors (which this branch also
- * fixes) did NOT close it, so the write completes and is then dropped, rather
- * than never being sent.
- *
- * Marked fixme rather than deleted: the expectation is correct and should be
- * un-fixme'd the moment the underlying bug is fixed. Leaving it live would
- * make CI randomly red for everyone and train people to re-run on failure.
+ * Regression test for issue 980ac596: discrete operations (view/table/schema
+ * writes) used to have NO durability between local apply and server ack — a
+ * reload in that window silently discarded the operation, even though the UI
+ * had already shown it (any sync-triggered refresh re-reads local state). They
+ * now ride the same durable queue + encrypted outbox as cell edits.
  */
-test.fixme('a view rename survives a reload', async ({ page }) => {
+test('a view rename survives a reload', async ({ page }) => {
   test.setTimeout(420_000)
 
   const url = homeserverUrl()

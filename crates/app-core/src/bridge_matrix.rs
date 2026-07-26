@@ -1243,6 +1243,11 @@ pub struct ConnectedWorkspace {
     rejected_writes: Rc<Cell<u32>>,
     /// Human-readable reason for the most recent permanent rejection.
     last_reject_reason: Rc<RefCell<Option<String>>>,
+    /// JS callback invoked whenever the pending queue changes, so the UI can
+    /// mirror it to the persistent outbox AT THE MOMENT of the change — while
+    /// the page is demonstrably alive — rather than at pagehide, where an
+    /// async IndexedDB write can be aborted by the unload (issue 980ac596).
+    queue_listener: Rc<RefCell<Option<js_sys::Function>>>,
 }
 
 #[wasm_bindgen]
@@ -1389,6 +1394,7 @@ impl ConnectedWorkspace {
             last_sync_ok_ms: Rc::new(Cell::new(js_sys::Date::now())),
             rejected_writes: Rc::new(Cell::new(0)),
             last_reject_reason: Rc::new(RefCell::new(None)),
+            queue_listener: Rc::new(RefCell::new(None)),
         })
     }
 
@@ -2289,6 +2295,16 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Register a callback invoked whenever the pending send queue changes.
+    /// The UI uses this to mirror the queue into the encrypted outbox at the
+    /// moment of the change, while the page is alive — a pagehide-time
+    /// IndexedDB write can be aborted by the unload and silently lose the
+    /// mirror (issue 980ac596). Replaces any previously registered callback.
+    #[wasm_bindgen(js_name = onQueueChanged)]
+    pub fn on_queue_changed(&self, callback: js_sys::Function) {
+        *self.queue_listener.borrow_mut() = Some(callback);
+    }
+
     /// Apply a cell update from the network (manual).
     #[wasm_bindgen(js_name = applyUpdate)]
     pub fn apply_update(&self, update_json: &str) -> Result<(), JsValue> {
@@ -2312,6 +2328,7 @@ impl ConnectedWorkspace {
                 merge_pending(&mut pending, update);
             }
         }
+        notify_queue_changed(&self.queue_listener);
         self.schedule_flush();
     }
 
@@ -2322,6 +2339,12 @@ impl ConnectedWorkspace {
     /// any [`enqueue_updates`](Self::enqueue_updates) after the task ends sees
     /// `flushing == false` and schedules a fresh task.
     fn schedule_flush(&self) {
+        self.schedule_flush_with_delay(300);
+    }
+
+    /// As [`schedule_flush`](Self::schedule_flush), with an explicit first
+    /// delay — 0 for discrete operations, the debounce for coalescing edits.
+    fn schedule_flush_with_delay(&self, first_delay_ms: u64) {
         if self.flushing.get() {
             return;
         }
@@ -2336,6 +2359,7 @@ impl ConnectedWorkspace {
         let inner = Rc::clone(&self.inner);
         let rejected_writes = Rc::clone(&self.rejected_writes);
         let last_reject_reason = Rc::clone(&self.last_reject_reason);
+        let queue_listener = Rc::clone(&self.queue_listener);
 
         spawn_local(async move {
             flush_pending(
@@ -2348,12 +2372,30 @@ impl ConnectedWorkspace {
                 inner,
                 rejected_writes,
                 last_reject_reason,
+                queue_listener,
+                first_delay_ms,
             )
             .await;
         });
     }
 
     /// Send a batch of CellUpdates to the Matrix room.
+    /// Route a discrete operation's updates into the SAME durable pipeline as
+    /// cell edits (issue 980ac596). Previously these were sent directly with
+    /// their own retry loop — applied locally, shown by any sync-triggered
+    /// refresh, but with NO durability between local apply and server ack. A
+    /// reload in that window silently discarded the operation (a server-acked
+    /// rename could still be shown from local state before its send finished).
+    ///
+    /// Enqueued updates are covered by `pendingUpdates()` → the encrypted
+    /// outbox mirror → `restorePendingUpdates()` on the next cold start, and
+    /// inherit the queue's rate-limit backoff and permanent-rejection
+    /// classification (ADR 0003). One delivery path, one durability guarantee,
+    /// for data and metadata alike.
+    ///
+    /// The fail-closed encryption guard stays HERE as well as in `send_batch`:
+    /// erroring at the call site tells the user their operation won't sync,
+    /// instead of quietly parking it in a queue that can never drain.
     async fn send_updates(&self, updates: &[CellUpdate]) -> Result<(), JsValue> {
         let room = self
             .client
@@ -2374,39 +2416,48 @@ impl ConnectedWorkspace {
             return Ok(());
         }
 
-        // These discrete schema/delete writes are sent here (not via the
-        // coalescing edit queue). Sending one event per cell bursts past the
-        // homeserver's `rc_message` limit — a template create (~30 cells)
-        // throttles to ~1 event/5s on production Synapse (~120s; a mid-flush
-        // reload then loses the rest). So send the whole operation as ONE batch
-        // event when it's more than a single cell. A single retry-with-backoff
-        // still covers a transient 429 on that one send.
-        const MAX_BACKOFF_MS: u64 = 8_000;
-        const MAX_ATTEMPTS: u32 = 8;
-        let mut backoff_ms = 300u64;
-        let mut attempts = 0u32;
-        loop {
-            let result = if updates.len() == 1 {
-                let content: tables_over_matrix::CellUpdateEventContent = updates[0].clone().into();
-                room.send(content).await.map(|_| ())
-            } else {
-                let content = tables_over_matrix::CellBatchEventContent::from_updates(updates);
-                room.send(content).await.map(|_| ())
-            };
-            match result {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    attempts += 1;
-                    if attempts >= MAX_ATTEMPTS {
-                        return Err(JsValue::from_str(&format!(
-                            "Failed to send updates after retries: {e}"
-                        )));
-                    }
-                    matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
-                    backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
-                }
+        // Discrete ops flush immediately (no debounce): they are one-shot user
+        // actions, not keystroke bursts, and the sooner the send starts the
+        // smaller the window in which only the outbox protects them.
+        let my_cells: Vec<(CellKey, u64)> = updates
+            .iter()
+            .map(|u| {
+                (
+                    (u.table_id.clone(), u.row_id.clone(), u.column_id.clone()),
+                    u.timestamp,
+                )
+            })
+            .collect();
+        {
+            let mut pending = self.pending.borrow_mut();
+            for update in updates {
+                merge_pending(&mut pending, update.clone());
             }
         }
+        notify_queue_changed(&self.queue_listener);
+        self.schedule_flush_with_delay(0);
+
+        // Belt AND suspenders: the queue+outbox make the operation durable
+        // against a crash or an ill-timed reload, but callers still deserve
+        // "resolved ⇒ off this device" — the UI shows the result on resolve,
+        // and an instantly-resolving rename invites the user to close the tab
+        // ahead of the send. So wait (bounded) until our cells have left the
+        // queue: sent, superseded by a newer write, or dropped as permanently
+        // rejected (surfaced via rejectedWrites, like any cell edit). On
+        // timeout resolve anyway — durability is the outbox's job from there.
+        for _ in 0..200u32 {
+            let still_queued = {
+                let p = self.pending.borrow();
+                my_cells
+                    .iter()
+                    .any(|(k, ts)| p.get(k).is_some_and(|cur| cur.timestamp == *ts))
+            };
+            if !still_queued {
+                break;
+            }
+            matrix_sdk::sleep::sleep(Duration::from_millis(50)).await;
+        }
+        Ok(())
     }
 }
 
@@ -2414,6 +2465,16 @@ impl ConnectedWorkspace {
 /// timestamp per cell. Values are last-writer-wins, so only the latest write to
 /// a cell needs to reach the server — superseded intermediate writes (and stale
 /// compaction bumps) are dropped.
+/// Invoke the queue-change listener, if one is registered. The Function is
+/// cloned out of the RefCell before the call so the callback may re-register
+/// (or read `pendingUpdates()`) without hitting a live borrow.
+fn notify_queue_changed(listener: &Rc<RefCell<Option<js_sys::Function>>>) {
+    let cb = listener.borrow().clone();
+    if let Some(cb) = cb {
+        let _ = cb.call0(&JsValue::NULL);
+    }
+}
+
 fn merge_pending(pending: &mut HashMap<CellKey, CellUpdate>, update: CellUpdate) {
     let key = (
         update.table_id.clone(),
@@ -2446,17 +2507,25 @@ async fn flush_pending(
     inner: Rc<RefCell<Workspace>>,
     rejected_writes: Rc<Cell<u32>>,
     last_reject_reason: Rc<RefCell<Option<String>>>,
+    queue_listener: Rc<RefCell<Option<js_sys::Function>>>,
+    first_delay_ms: u64,
 ) {
     const DEBOUNCE_MS: u64 = 300;
     const MAX_BACKOFF_MS: u64 = 8_000;
-    let mut backoff_ms = DEBOUNCE_MS;
+    let mut backoff_ms = first_delay_ms;
 
     loop {
         matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
 
+        // Snapshot WITHOUT draining (issue 980ac596): while the send is in
+        // flight the entries stay in `pending`, so `pendingUpdates()` — and
+        // therefore the outbox mirror — still covers them. Draining first
+        // opened a window where a reload mid-send lost the batch: gone from
+        // the queue, never reached the server. Entries are removed only on
+        // confirmed outcomes below.
         let batch: Vec<CellUpdate> = {
-            let mut p = pending.borrow_mut();
-            p.drain().map(|(_, v)| v).collect()
+            let p = pending.borrow();
+            p.values().cloned().collect()
         };
 
         if batch.is_empty() {
@@ -2464,19 +2533,32 @@ async fn flush_pending(
             return;
         }
 
-        match send_batch(&client, &room_id, batch).await {
+        match send_batch(&client, &room_id, batch.clone()).await {
             SendOutcome::Sent => {
+                // Remove exactly what was sent — an edit that arrived during
+                // the flight has a higher timestamp and must survive for the
+                // next pass.
+                let mut p = pending.borrow_mut();
+                for u in &batch {
+                    let key = (u.table_id.clone(), u.row_id.clone(), u.column_id.clone());
+                    if p.get(&key).is_some_and(|cur| cur.timestamp <= u.timestamp) {
+                        p.remove(&key);
+                    }
+                }
+                notify_queue_changed(&queue_listener);
                 backoff_ms = DEBOUNCE_MS;
                 send_failures.set(0);
                 last_send_ok_ms.set(js_sys::Date::now());
             }
-            SendOutcome::Retryable(failed) => {
-                let mut p = pending.borrow_mut();
-                for update in failed {
-                    merge_pending(&mut p, update);
-                }
+            SendOutcome::Retryable(_) => {
+                // Still in `pending` (nothing was drained) — just back off.
+                // Floor at the debounce: an immediate-flush task starts from 0,
+                // and 0 × 2 = 0 would spin hot against a rate limit.
                 send_failures.set(send_failures.get().saturating_add(1));
-                backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
+                backoff_ms = backoff_ms
+                    .max(DEBOUNCE_MS)
+                    .saturating_mul(2)
+                    .min(MAX_BACKOFF_MS);
             }
             SendOutcome::Rejected { updates, reason } => {
                 // Permanent (ADR 0003 phase 3): retrying can never succeed, so
@@ -2505,6 +2587,18 @@ async fn flush_pending(
                         ));
                     }
                 }
+                {
+                    // Drop the rejected writes from the queue — retrying can
+                    // never succeed, and leaving them would wedge the flush.
+                    let mut p = pending.borrow_mut();
+                    for u in &updates {
+                        let key = (u.table_id.clone(), u.row_id.clone(), u.column_id.clone());
+                        if p.get(&key).is_some_and(|cur| cur.timestamp <= u.timestamp) {
+                            p.remove(&key);
+                        }
+                    }
+                }
+                notify_queue_changed(&queue_listener);
                 rejected_writes.set(rejected_writes.get().saturating_add(updates.len() as u32));
                 *last_reject_reason.borrow_mut() = Some(reason);
                 backoff_ms = DEBOUNCE_MS;
