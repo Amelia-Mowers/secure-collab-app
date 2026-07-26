@@ -5,7 +5,6 @@ function makeCws() {
   return {
     createTable: vi.fn().mockResolvedValue('[]'),
     createView: vi.fn().mockResolvedValue('ok'),
-    addColumn: vi.fn().mockResolvedValue(undefined),
     updateCell: vi.fn().mockResolvedValue(undefined),
   }
 }
@@ -41,25 +40,38 @@ describe('seedDemoWorkspace', () => {
     ])
   })
 
-  it('links tasks to contacts with an explicit display column', async () => {
+  it('links tasks to contacts in both arities, defined in the table itself', async () => {
     const cws = makeCws()
     await seedDemoWorkspace(cws, '@me:tidework.io')
 
-    expect(cws.addColumn).toHaveBeenCalledTimes(1)
-    const [tableId, json] = cws.addColumn.mock.calls[0]
-    expect(tableId).toBe('tasks')
-    const col = JSON.parse(json)
-    expect(col.column_type).toBe('reference')
-    expect(col.reference_table).toBe('contacts')
+    // The reference columns are part of the CREATE definition (template
+    // format), not patched on afterwards (issue 341282fe).
+    const tasksDef = JSON.parse(cws.createTable.mock.calls[0][0])
+    const client = tasksDef.columns.client
+    expect(client.column_type).toBe('reference')
+    expect(client.reference_table).toBe('contacts')
     // Which contact column labels a linked row is stored, not inferred.
-    expect(col.reference_display_column).toBe('name')
+    expect(client.reference_display_column).toBe('name')
+    const stakeholders = tasksDef.columns.stakeholders
+    expect(stakeholders.column_type).toBe('multireference')
+    expect(stakeholders.reference_table).toBe('contacts')
+    expect(stakeholders.reference_display_column).toBe('name')
 
-    // Every seeded client value points at a contacts row that actually exists.
+    // Every seeded link points at a contacts row that actually exists —
+    // single ids and multi-id arrays alike. A demo with dangling references
+    // would showcase the broken-link style instead of the feature.
     const writes = cws.updateCell.mock.calls
     const contactIds = new Set(writes.filter(w => w[0] === 'contacts').map(w => w[1]))
     const clients = writes.filter(w => w[0] === 'tasks' && w[2] === 'client').map(w => JSON.parse(w[3]))
     expect(clients.length).toBeGreaterThan(0)
     for (const c of clients) expect(contactIds.has(c)).toBe(true)
+    const multi = writes.filter(w => w[0] === 'tasks' && w[2] === 'stakeholders').map(w => JSON.parse(w[3]))
+    expect(multi.length).toBeGreaterThan(0)
+    for (const arr of multi) {
+      expect(Array.isArray(arr)).toBe(true)
+      expect(arr.length).toBeGreaterThan(0) // empty arrays are skipped at seed
+      for (const id of arr) expect(contactIds.has(id)).toBe(true)
+    }
   })
 
   it('seeds rows into both tables, skipping empty values', async () => {
