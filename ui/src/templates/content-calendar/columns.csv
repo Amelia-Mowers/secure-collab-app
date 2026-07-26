@@ -1,0 +1,6 @@
+table,column,name,type,options,reference_table,reference_display_column,width,required,default,order
+content,title,Title,text,,,,,,,0
+content,status,Status,select,"Idea, Draft, Scheduled, Published",,,,,Idea,1
+content,channel,Channel,select,"Blog, Social, Email, Video",,,,,,2
+content,publish_date,Publish date,date,,,,,,,3
+content,owner,Owner,member,,,,,,,4

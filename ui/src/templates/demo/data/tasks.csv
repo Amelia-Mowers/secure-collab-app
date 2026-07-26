@@ -1,0 +1,9 @@
+Title,Status,Assignee,Due date,Priority,Client,Stakeholders
+Sketch landing page hero,Done,@@self,2026-07-10,High,Dana Whitfield,"Dana Whitfield, Marcus Lee"
+Wire up sign-up flow,Done,,2026-07-14,High,Dana Whitfield,
+Draft pricing copy,In Progress,@@self,2026-07-24,Medium,Priya Nair,Priya Nair
+Instrument onboarding funnel,In Progress,,2026-07-28,Medium,Marcus Lee,"Dana Whitfield, Jo Salter"
+Fix mobile nav overlap,In Progress,@@self,2026-07-22,High,,
+Choose launch date,Todo,@@self,2026-08-04,High,Marcus Lee,"Marcus Lee, Priya Nair"
+Write changelog post,Todo,,2026-08-06,Low,,
+QA pass on dark mode,Todo,,,Low,Jo Salter,Jo Salter

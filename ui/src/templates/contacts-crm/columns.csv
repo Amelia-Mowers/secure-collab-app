@@ -1,0 +1,6 @@
+table,column,name,type,options,reference_table,reference_display_column,width,required,default,order
+contacts,name,Name,text,,,,,,,0
+contacts,email,Email,text,,,,,,,1
+contacts,company,Company,text,,,,,,,2
+contacts,status,Status,select,"Lead, Active, Closed",,,,,Lead,3
+contacts,notes,Notes,document,,,,,,,4

@@ -64,6 +64,10 @@ pub type Files = BTreeMap<String, String>;
 #[derive(Debug, Clone, Default)]
 pub struct Archive {
     pub name: String,
+    /// One line describing the archive, for a template gallery. Lives in
+    /// `workspace.csv` as another key/value row — a template's blurb is part
+    /// of the template, not something the app has to hold separately.
+    pub description: String,
     pub tables: Vec<ArchiveTable>,
     pub views: Vec<ViewConfig>,
 }
@@ -454,6 +458,7 @@ impl Archive {
             write_csv(&[
                 vec!["key".into(), "value".into()],
                 vec!["name".into(), self.name.clone()],
+                vec!["description".into(), self.description.clone()],
                 vec!["format_version".into(), FORMAT_VERSION.into()],
             ]),
         );
@@ -608,10 +613,12 @@ impl Archive {
             .get("workspace.csv")
             .ok_or(ArchiveError::Missing("workspace.csv"))?;
         let mut name = String::new();
+        let mut description = String::new();
         let mut version = FORMAT_VERSION.to_string();
         for rec in parse_csv(meta).into_iter().skip(1) {
             match (rec.first().map(String::as_str), rec.get(1)) {
                 (Some("name"), Some(v)) => name = v.clone(),
+                (Some("description"), Some(v)) => description = v.clone(),
                 (Some("format_version"), Some(v)) => version = v.trim().to_string(),
                 _ => {}
             }
@@ -759,6 +766,7 @@ impl Archive {
         let views = read_views(files)?;
         Ok(Archive {
             name,
+            description,
             tables,
             views,
         })
@@ -1022,6 +1030,7 @@ impl Archive {
 
         Archive {
             name: name.into(),
+            description: String::new(),
             tables,
             views,
         }
@@ -1516,6 +1525,7 @@ mod tests {
         };
         Archive {
             name: "Demo".into(),
+            description: "A sample".into(),
             tables: vec![people, tasks],
             views: Vec::new(),
         }
@@ -1639,6 +1649,7 @@ mod tests {
         let csv = "Title,Status,Notes\nSecond,Done,hello\n";
         let archive = Archive {
             name: String::new(),
+            description: String::new(),
             tables: vec![table_from_csv("tasks", "Tasks", csv)],
             views: Vec::new(),
         };
@@ -1672,6 +1683,7 @@ mod tests {
         table.columns.clear();
         let result = Archive {
             name: String::new(),
+            description: String::new(),
             tables: vec![table],
             views: Vec::new(),
         }

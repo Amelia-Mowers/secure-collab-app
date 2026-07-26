@@ -1,0 +1,6 @@
+table,column,name,type,options,reference_table,reference_display_column,width,required,default,order
+tasks,title,Title,text,,,,,,,0
+tasks,status,Status,select,"Todo, In Progress, Done",,,,,Todo,1
+tasks,assignee,Assignee,member,,,,,,,2
+tasks,due_date,Due date,date,,,,,,,3
+tasks,priority,Priority,select,"Low, Medium, High",,,,,,4

@@ -1,0 +1,2 @@
+view,column,operator,value
+tasks-mine,assignee,equals,@me

@@ -1261,6 +1261,7 @@ fn read_archive(
         let id = slug(&name);
         return Ok(app_core::archive::Archive {
             name: name.clone(),
+            description: String::new(),
             tables: vec![app_core::archive::table_from_csv(&id, &name, &csv)],
             views: Vec::new(),
         });

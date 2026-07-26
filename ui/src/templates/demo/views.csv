@@ -1,0 +1,3 @@
+id,name,table,type,settings
+tasks-board,Board,tasks,kanban,"{""kanban"":{""group_by_column"":""status"",""title_column"":""title"",""display_columns"":[],""column_options"":[""Todo"",""In Progress"",""Done""],""assignee_column"":""assignee""}}"
+tasks-mine,My Board,tasks,kanban,"{""kanban"":{""group_by_column"":""status"",""title_column"":""title"",""display_columns"":[],""column_options"":[""Todo"",""In Progress"",""Done""],""assignee_column"":""assignee""}}"
