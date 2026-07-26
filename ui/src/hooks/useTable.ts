@@ -89,6 +89,10 @@ export interface WorkspaceHandle {
   exportTableCsv?(tableId: string): string
   /** The whole workspace as a zip — the same container the CLI reads. */
   exportWorkspaceZip?(name: string): Uint8Array
+  /** Audit local state against a full re-gather and repair any difference
+   *  (issue 48f042ba). Expensive — user-initiated, never scheduled. */
+  checkIntegrity?(): Promise<string>
+
   importWorkspaceZip?(bytes: Uint8Array): Promise<string> | string
   previewCsvImport?(tableId: string, csv: string, sample: number, overridesJson: string): string
   importCsv?(

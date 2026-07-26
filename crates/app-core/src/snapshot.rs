@@ -26,8 +26,10 @@
 //! small; encrypting local stores at rest holistically is tracked separately
 //! (issue c72ec5df) and would wrap this blob too.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
-use tables_over_matrix::Cell;
+use tables_over_matrix::{Cell, CellId};
 
 /// Snapshot schema version. Bump on an incompatible shape change; the loader
 /// ignores a non-matching version and falls back to a full history gather.
@@ -95,6 +97,58 @@ pub const REORDER_GRACE_MS: u64 = 30_000;
 /// parseable timestamps cannot justify stopping.
 pub fn backfill_caught_up(fast_path: bool, page_oldest: Option<u64>, stop_before: u64) -> bool {
     fast_path && page_oldest.is_some_and(|t| t.saturating_add(REORDER_GRACE_MS) < stop_before)
+}
+
+/// What an integrity check found (issue 48f042ba).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct IntegrityReport {
+    /// Cells the server holds.
+    pub checked: usize,
+    /// Server cells we hold no version of at all — the shape of the 2026-07-25
+    /// incident, where a truncated walk dropped 8 row-add events.
+    pub missing: usize,
+    /// Server cells we hold an OLDER version of.
+    pub stale: usize,
+}
+
+/// Compare a full re-gather of the server's history against the local
+/// materialization, and return both the report and the cells to re-apply.
+///
+/// Lives here, not in the wasm bridge, for the same reason
+/// [`backfill_caught_up`] does: the bug this whole issue is about shipped
+/// because the rule that governed it could not be unit-tested natively.
+///
+/// Deliberately one-directional. A cell we hold that the server does not is
+/// **not** a fault — unsent local writes sit in the outbox and legitimately
+/// lead the server, and treating that as corruption would make the check cry
+/// wolf on every pending edit.
+pub fn integrity_diff(local: &[Cell], server: &[Cell]) -> (IntegrityReport, Vec<Cell>) {
+    let mine: HashMap<&CellId, &Cell> = local.iter().map(|c| (&c.id, c)).collect();
+    let mut report = IntegrityReport {
+        checked: server.len(),
+        ..Default::default()
+    };
+    let mut repairs = Vec::new();
+    for cell in server {
+        match mine.get(&cell.id) {
+            None => {
+                report.missing += 1;
+                repairs.push(cell.clone());
+            }
+            Some(ours) if lww_key(cell) > lww_key(ours) => {
+                report.stale += 1;
+                repairs.push(cell.clone());
+            }
+            Some(_) => {}
+        }
+    }
+    (report, repairs)
+}
+
+/// LWW ordering key: the hybrid logical clock, then `origin_server_ts` as the
+/// tiebreaker — the same precedence the merge itself uses.
+fn lww_key(cell: &Cell) -> (u64, u64) {
+    (cell.timestamp, cell.server_timestamp.unwrap_or(0))
 }
 
 #[cfg(test)]
@@ -333,6 +387,70 @@ mod tests {
             Some(marker - REORDER_GRACE_MS - 1),
             marker
         ));
+    }
+
+    fn cell(table: &str, row: &str, col: &str, ts: u64) -> Cell {
+        Cell::new(CellId::new(table, row, col), serde_json::json!("v"), ts)
+    }
+
+    #[test]
+    fn integrity_diff_reports_the_incident_shape() {
+        // The 2026-07-25 incident: rows the server has that we never applied.
+        let server = vec![
+            cell("issues", "r1", "name", 10),
+            cell("issues", "r2", "name", 11),
+        ];
+        let local = vec![cell("issues", "r1", "name", 10)];
+        let (report, repairs) = integrity_diff(&local, &server);
+        assert_eq!(report.checked, 2);
+        assert_eq!(report.missing, 1);
+        assert_eq!(report.stale, 0);
+        assert_eq!(repairs.len(), 1);
+        assert_eq!(repairs[0].id.row_id, "r2");
+    }
+
+    #[test]
+    fn integrity_diff_flags_an_older_local_cell() {
+        let server = vec![cell("t", "r", "c", 20)];
+        let local = vec![cell("t", "r", "c", 10)];
+        let (report, repairs) = integrity_diff(&local, &server);
+        assert_eq!((report.missing, report.stale), (0, 1));
+        assert_eq!(repairs.len(), 1);
+    }
+
+    #[test]
+    fn a_pending_local_write_is_not_a_fault() {
+        // Unsent edits legitimately lead the server. Reporting them as
+        // corruption would make the check cry wolf on every pending edit.
+        let server = vec![cell("t", "r", "c", 10)];
+        let local = vec![cell("t", "r", "c", 20), cell("t", "r2", "c", 5)];
+        let (report, repairs) = integrity_diff(&local, &server);
+        assert_eq!((report.missing, report.stale), (0, 0));
+        assert!(repairs.is_empty());
+    }
+
+    #[test]
+    fn equal_cells_need_no_repair() {
+        let both = vec![cell("t", "r", "c", 10)];
+        let (report, repairs) = integrity_diff(&both, &both);
+        assert_eq!(
+            report,
+            IntegrityReport {
+                checked: 1,
+                missing: 0,
+                stale: 0
+            }
+        );
+        assert!(repairs.is_empty());
+    }
+
+    #[test]
+    fn server_timestamp_breaks_a_logical_clock_tie() {
+        let mut newer = cell("t", "r", "c", 10);
+        newer.server_timestamp = Some(200);
+        let mut older = cell("t", "r", "c", 10);
+        older.server_timestamp = Some(100);
+        assert_eq!(integrity_diff(&[older], &[newer]).0.stale, 1);
     }
 
     #[test]

@@ -254,6 +254,13 @@ const UploadIcon = () => (
   </svg>
 )
 
+const ShieldIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+    <path d="M6 1 2 2.5v3.2C2 8.2 3.7 10.3 6 11c2.3-.7 4-2.8 4-5.3V2.5z" />
+    <path d="M4.3 6 5.6 7.3 7.9 4.7" />
+  </svg>
+)
+
 const TrashIcon = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
     <line x1="2" y1="3" x2="10" y2="3" />
@@ -387,6 +394,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   /** Preselects the destination when import is opened from a table's own row;
    *  the workspace-level button leaves it unset so the user picks. */
   const [importTarget, setImportTarget] = useState<string | undefined>(undefined)
+  const [checkingIntegrity, setCheckingIntegrity] = useState(false)
   const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
@@ -700,6 +708,50 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   )
 
   const canExportWorkspace = !!workspace && typeof workspace.exportWorkspaceZip === 'function'
+  const canCheckIntegrity = !!workspace && typeof workspace.checkIntegrity === 'function'
+
+  /** Audit this workspace against a full re-gather of the room's history and
+   *  repair any difference (issue 48f042ba).
+   *
+   *  Deliberately manual. It re-paginates the entire history — precisely what
+   *  the snapshot exists to avoid — so running it on a schedule would undo the
+   *  incremental cold start. Repair is local-only: the server already holds
+   *  anything we are missing. */
+  const handleCheckIntegrity = async () => {
+    if (!workspace || typeof workspace.checkIntegrity !== 'function' || checkingIntegrity) return
+    setCheckingIntegrity(true)
+    try {
+      const r = JSON.parse(await workspace.checkIntegrity()) as {
+        checked: number
+        missing: number
+        stale: number
+        repaired: number
+        undecryptable: number
+      }
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+      refreshData()
+      const problems = r.missing + r.stale
+      alert(
+        problems === 0
+          ? `No problems found. ${r.checked} cells checked against the server.` +
+              (r.undecryptable > 0
+                ? `
+
+${r.undecryptable} event(s) could not be decrypted — those are a key problem, not a sync gap.`
+                : '')
+          : `Repaired ${r.repaired} of ${r.checked} cells.
+
+` +
+              `${r.missing} were missing locally, ${r.stale} were out of date. ` +
+              'They are now restored from the server.',
+      )
+    } catch (err: unknown) {
+      console.error('Integrity check failed:', err)
+      alert('Integrity check failed: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setCheckingIntegrity(false)
+    }
+  }
 
   /** Download the whole workspace as one zip (ADR 0004) — the same container
    *  `tidework import` reads, so an export is portable between the app and the
@@ -883,6 +935,18 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
               <button className="sidebar__item sidebar__item--add" onClick={handleExportWorkspace}>
                 <DownloadIcon />
                 <span>Export workspace</span>
+              </button>
+            )}
+
+            {canCheckIntegrity && (
+              <button
+                className="sidebar__item sidebar__item--add"
+                onClick={() => void handleCheckIntegrity()}
+                disabled={checkingIntegrity}
+                title="Compare this workspace against the server and repair anything missing"
+              >
+                <ShieldIcon />
+                <span>{checkingIntegrity ? 'Checking…' : 'Check integrity'}</span>
               </button>
             )}
 
