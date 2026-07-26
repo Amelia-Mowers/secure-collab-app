@@ -245,6 +245,15 @@ const DownloadIcon = () => (
   </svg>
 )
 
+/** The download arrow, reversed — import into this table. */
+const UploadIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+    <path d="M6 8V1.5" />
+    <path d="M3.5 4 6 1.5 8.5 4" />
+    <path d="M2 9.5v1h8v-1" />
+  </svg>
+)
+
 const TrashIcon = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
     <line x1="2" y1="3" x2="10" y2="3" />
@@ -262,20 +271,24 @@ function SortableTableItem({
   canDelete,
   canRename,
   canExport,
+  canImport,
   onOpen,
   onDelete,
   onRename,
   onExport,
+  onImport,
 }: {
   table: TableInfo
   active: boolean
   canDelete: boolean
   canRename: boolean
   canExport: boolean
+  canImport: boolean
   onOpen: () => void
   onDelete: () => void
   onRename: () => void
   onExport: () => void
+  onImport: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: table.id,
@@ -317,6 +330,21 @@ function SortableTableItem({
           <PencilIcon />
         </button>
       )}
+      {canImport && (
+        <button
+          className="sidebar__item-delete ghost"
+          title={`Import a CSV into ${table.name}`}
+          aria-label="Import CSV into table"
+          onClick={e => {
+            e.stopPropagation()
+            onImport()
+          }}
+          onPointerDown={e => e.stopPropagation()}
+          onKeyDown={e => e.stopPropagation()}
+        >
+          <UploadIcon />
+        </button>
+      )}
       {canExport && (
         <button
           className="sidebar__item-delete ghost"
@@ -356,6 +384,9 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
   const [importing, setImporting] = useState(false)
+  /** Preselects the destination when import is opened from a table's own row;
+   *  the workspace-level button leaves it unset so the user picks. */
+  const [importTarget, setImportTarget] = useState<string | undefined>(undefined)
   const archiveInput = useRef<HTMLInputElement>(null)
   const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -849,10 +880,15 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                     canDelete={canMutateTables}
                     canRename={canRenameTables}
                     canExport={canExportCsv}
+                    canImport={canImportCsv}
                     onOpen={() => navigate(`/workspace/${workspaceId}/table/${table.id}`)}
                     onDelete={() => handleDeleteTable(table)}
                     onRename={() => void handleRenameTable(table)}
                     onExport={() => handleExportCsv(table)}
+                    onImport={() => {
+                      setImportTarget(table.id)
+                      setImporting(true)
+                    }}
                   />
                 ))}
               </SortableContext>
@@ -867,8 +903,14 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
             </button>
 
             {canImportCsv && (
-              <button className="sidebar__item sidebar__item--add" onClick={() => setImporting(true)}>
-                <DownloadIcon />
+              <button
+                className="sidebar__item sidebar__item--add"
+                onClick={() => {
+                  setImportTarget(undefined)
+                  setImporting(true)
+                }}
+              >
+                <UploadIcon />
                 <span>Import CSV</span>
               </button>
             )}
@@ -1100,6 +1142,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
       {importing && (
         <CsvImportModal
           tables={tables.map(t => ({ id: t.id, name: t.name }))}
+          defaultTableId={importTarget}
           preview={previewCsv}
           onImport={importCsv}
           onClose={() => setImporting(false)}
