@@ -70,6 +70,33 @@ impl WorkspaceSnapshot {
     }
 }
 
+/// Skew tolerance for the incremental cold-start walk (issue 48f042ba).
+/// `/messages` follows the server's STREAM order, which can disagree with
+/// `origin_server_ts` by persister skew when Synapse runs workers / stream
+/// writers. The margin bounds how much disagreement the walk tolerates before
+/// concluding it has really passed the snapshot marker.
+pub const REORDER_GRACE_MS: u64 = 30_000;
+
+/// Whether the incremental cold-start walk has convincingly passed the
+/// snapshot marker and may stop paginating (issue 48f042ba).
+///
+/// `page_oldest` is the oldest parseable `origin_server_ts` on the page just
+/// processed; `stop_before` is the snapshot marker. The old rule — abandon the
+/// entire walk at the FIRST event nominally older than the marker — assumed
+/// stream order and `origin_server_ts` agree. Under workers they need not: one
+/// reordered event then truncated the walk, every event deeper in the stream
+/// was skipped, and because the running marker had already advanced past them,
+/// no later incremental start would ever fetch them — a permanent,
+/// self-sealing hole (8 events lost in prod on 2026-07-25). Now a page must
+/// trail the marker by more than [`REORDER_GRACE_MS`] before the walk stops:
+/// an event is lost only if the two orders disagree by over the margin.
+///
+/// A full gather (`fast_path == false`) never stops early, and a page with no
+/// parseable timestamps cannot justify stopping.
+pub fn backfill_caught_up(fast_path: bool, page_oldest: Option<u64>, stop_before: u64) -> bool {
+    fast_path && page_oldest.is_some_and(|t| t.saturating_add(REORDER_GRACE_MS) < stop_before)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +306,41 @@ mod tests {
             loaded.get_view("tasks-board").is_some(),
             "get_view returned None after reload"
         );
+    }
+
+    #[test]
+    fn backfill_never_stops_a_full_gather() {
+        // No snapshot -> the walk must reach the beginning of history.
+        assert!(!backfill_caught_up(false, Some(0), u64::MAX));
+    }
+
+    #[test]
+    fn backfill_requires_clearing_the_marker_by_the_grace_margin() {
+        let marker = 1_000_000;
+        // A page whose oldest event nominally trails the marker — but within
+        // the skew margin — must NOT stop the walk. This is the exact shape of
+        // the prod incident: one worker-reordered event just below the marker
+        // used to truncate the walk and permanently skip the deeper tail.
+        assert!(!backfill_caught_up(true, Some(marker - 1), marker));
+        assert!(!backfill_caught_up(
+            true,
+            Some(marker - REORDER_GRACE_MS),
+            marker
+        ));
+        // Convincingly past the marker: stop.
+        assert!(backfill_caught_up(
+            true,
+            Some(marker - REORDER_GRACE_MS - 1),
+            marker
+        ));
+    }
+
+    #[test]
+    fn backfill_is_fail_safe_on_missing_timestamps() {
+        // A page with no parseable origin_server_ts can't justify stopping —
+        // keep walking rather than risk skipping.
+        assert!(!backfill_caught_up(true, None, 1_000_000));
+        // Overflow-safe near u64::MAX.
+        assert!(!backfill_caught_up(true, Some(u64::MAX), u64::MAX));
     }
 }
