@@ -49,27 +49,45 @@ export function SignInPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(isAddAccount || accounts.length === 0)
-  /** True when the selected homeserver delegates auth to OAuth/MAS (MSC3861):
-   *  password login doesn't exist there, so the credentials form is replaced
-   *  by the secure sign-in (popup) flow. */
-  const [oauthServer, setOauthServer] = useState(false)
+  /** What kind of auth the selected homeserver offers (MSC3861 next-gen auth
+   *  vs. password). `probing` is a real state, not a synonym for "password" —
+   *  treating "not yet known" as "password" is what made the page render the
+   *  credentials form and then swap it for the SSO button a moment later. */
+  const [authKind, setAuthKind] = useState<'probing' | 'oauth' | 'password'>('probing')
 
-  // Probe the selected homeserver for next-gen auth, debounced so typing a
-  // custom URL doesn't spam requests. Unknown/unreachable ⇒ password form.
+  /** A suggested (hosted) server, as opposed to a URL the user typed. We KNOW
+   *  the hosted server delegates to MAS, so it never shows a password form:
+   *  password login does not exist there, and offering it during a MAS outage
+   *  would just fail confusingly. It gets a warning instead. */
+  const isSuggestedServer =
+    !showCustomServer && SUGGESTED_SERVERS.some(srv => srv.url === homeserver.trim())
+
+  // Probe the selected homeserver, debounced so typing a custom URL doesn't
+  // spam requests.
   useEffect(() => {
     const hs = homeserver.trim()
-    setOauthServer(false)
-    if (!hs || !/^https?:\/\//.test(hs)) return
+    setAuthKind('probing')
+    if (!hs || !/^https?:\/\//.test(hs)) {
+      setAuthKind('password')
+      return
+    }
     let cancelled = false
     const timer = setTimeout(async () => {
       const supported = await checkOauthSupport(hs)
-      if (!cancelled) setOauthServer(supported)
+      if (!cancelled) setAuthKind(supported ? 'oauth' : 'password')
     }, 400)
     return () => {
       cancelled = true
       clearTimeout(timer)
     }
   }, [homeserver, checkOauthSupport])
+
+  // Show the SSO flow whenever the server does next-gen auth — and, for the
+  // hosted server, while we are still asking and even if the probe failed.
+  const showOauth = authKind === 'oauth' || isSuggestedServer
+  /** The hosted server should do SSO but the probe says otherwise: MAS is
+   *  unreachable. Say so rather than silently offering a button that fails. */
+  const ssoUnavailable = isSuggestedServer && authKind === 'password'
 
   const handleOauthSignIn = async () => {
     setLocalError(null)
@@ -240,7 +258,7 @@ export function SignInPage() {
             servers like the hosted TideWork one own their own combined
             sign-in/registration flow on their page, so the toggle is hidden
             there to avoid implying a separate local choice. */}
-        {!oauthServer && (
+        {!showOauth && (
           <div className="signin__tabs">
             <button
               className={`signin__tab ${mode === 'signin' ? 'signin__tab--active' : ''}`}
@@ -295,13 +313,19 @@ export function SignInPage() {
           )}
         </fieldset>
 
-        {oauthServer ? (
+        {showOauth ? (
           /* ── Next-gen auth: the server owns sign-in/registration ────── */
           <div className="signin__form" data-testid="oauth-signin">
             <p className="signin__hint">
               This server uses secure single sign-on. You&apos;ll sign in in a popup on
               your server&apos;s own page.
             </p>
+            {ssoUnavailable && (
+              <div className="signin__warning" role="alert">
+                Can&apos;t reach the sign-in service right now. It may be briefly
+                unavailable — try again in a moment.
+              </div>
+            )}
             {displayError && (
               <div className="signin__error" role="alert">
                 {displayError}

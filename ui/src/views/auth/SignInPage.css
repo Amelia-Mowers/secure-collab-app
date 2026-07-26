@@ -181,6 +181,17 @@
   line-height: 1.5;
 }
 
+.signin__warning {
+  padding: 10px 14px;
+  background: var(--amber-muted);
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
 .signin__back {
   display: flex;
   align-items: center;
