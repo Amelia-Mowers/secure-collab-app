@@ -128,6 +128,21 @@ impl Workspace {
         self.timestamp_counter = self.timestamp_counter.max(ts);
     }
 
+    /// Advance the clock past every timestamp a multi-cell operation just
+    /// hand-assigned (issue 25e40496). The schema/view managers fan one
+    /// `next_timestamp()` out to `timestamp + N` per cell without telling the
+    /// clock, so the NEXT operation could draw a timestamp the previous one
+    /// already spent on a different cell of the same row — and two multi-cell
+    /// writes inside the same millisecond could interleave, pushing same-cell
+    /// conflicts onto the origin_server_ts tiebreak. Reserving the range keeps
+    /// the HLC invariant every caller assumes: timestamps drawn later are
+    /// strictly greater than any already written.
+    fn observe_updates(&mut self, updates: &[CellUpdate]) {
+        for u in updates {
+            self.observe_timestamp(u.timestamp);
+        }
+    }
+
     /// Test support: draw a workspace-consistent HLC timestamp.
     ///
     /// Not used by the bridges (they go through `update_cell_with_bump` /
@@ -183,6 +198,7 @@ impl Workspace {
 
         // Create the schema updates - this now applies them internally!
         let updates = self.schema_manager.create_table(definition, timestamp);
+        self.observe_updates(&updates);
 
         // Create the actual table
         self.tables.insert(table_id.clone(), Table::new(&table_id));
@@ -203,6 +219,7 @@ impl Workspace {
         }
         let timestamp = self.next_timestamp();
         let updates = self.schema_manager.add_column(table_id, column, timestamp);
+        self.observe_updates(&updates);
         Ok(updates)
     }
 
@@ -277,6 +294,7 @@ impl Workspace {
             self.schema_manager
                 .update_column(table_id, column_id, patch, timestamp),
         );
+        self.observe_updates(&updates);
         Ok(updates)
     }
 
@@ -287,7 +305,9 @@ impl Workspace {
             return Err(crate::Error::TableNotFound);
         }
         let timestamp = self.next_timestamp();
-        Ok(self.schema_manager.rename_table(table_id, name, timestamp))
+        let updates = self.schema_manager.rename_table(table_id, name, timestamp);
+        self.observe_updates(&updates);
+        Ok(updates)
     }
 
     /// Delete a column (decay model): marks it deleted in the schema. Returns the
@@ -312,6 +332,7 @@ impl Workspace {
 
         let timestamp = self.next_timestamp();
         let updates = self.view_manager.create_view(config.clone(), timestamp);
+        self.observe_updates(&updates);
 
         // Apply the updates immediately so the view is persisted
         self.view_manager.apply_updates(updates.clone());
@@ -326,6 +347,7 @@ impl Workspace {
     pub fn delete_view(&mut self, view_id: &str) -> Result<Vec<CellUpdate>> {
         let timestamp = self.next_timestamp();
         let updates = self.view_manager.delete_view(view_id, timestamp);
+        self.observe_updates(&updates);
         self.view_manager.apply_updates(updates.clone());
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -766,6 +788,7 @@ impl Workspace {
         }
         let timestamp = self.next_timestamp();
         let updates = self.schema_manager.delete_table(table_id, timestamp);
+        self.observe_updates(&updates);
 
         #[cfg(not(target_arch = "wasm32"))]
         info!("Tombstoned table: {}", table_id);
@@ -2306,5 +2329,36 @@ mod tests {
     fn renaming_an_unknown_table_is_an_error() {
         let mut ws = Workspace::new("w");
         assert!(ws.rename_table("ghost", "Nope").is_err());
+    }
+
+    #[test]
+    fn multi_cell_fanouts_reserve_their_timestamp_range() {
+        // Issue 25e40496: create_table / create_view hand out timestamp+N per
+        // cell; the clock must advance past ALL of them, or the next operation
+        // can re-draw a spent timestamp and interleave with the previous op.
+        let mut ws = Workspace::new("w");
+        let def = TableDefinition::new("tasks", "Tasks")
+            .with_column(ColumnDefinition::new("title", "Title", ColumnType::Text))
+            .with_column(ColumnDefinition::new(
+                "status",
+                "Status",
+                ColumnType::Select,
+            ));
+        let updates = ws.create_table(def).unwrap();
+        let max_used = updates.iter().map(|u| u.timestamp).max().unwrap();
+        assert!(
+            ws.timestamp_counter() >= max_used,
+            "clock {} must not trail the fan-out max {max_used}",
+            ws.timestamp_counter()
+        );
+
+        let view = ViewConfig::new("board", "Board", "tasks", ViewType::Table);
+        let updates = ws.create_view(view).unwrap();
+        let max_used = updates.iter().map(|u| u.timestamp).max().unwrap();
+        assert!(ws.timestamp_counter() >= max_used);
+
+        // And the next draw is strictly past everything already written.
+        let next = ws.next_timestamp_pub();
+        assert!(next > max_used);
     }
 }
