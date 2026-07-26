@@ -19,17 +19,18 @@ type Row = Record<string, unknown>
  *  creating user's MXID at seed time — the only member of a fresh demo room. */
 const SELF = '@@self'
 
-/** `client` holds a CONTACTS row id — the reference column below renders it
- *  through the contact's `name`. */
+/** `client` holds a CONTACTS row id (reference, labelled by the contact's
+ *  `name`); `stakeholders` holds several (multireference) — the demo shows both
+ *  arities of cross-table links on real data (issue 341282fe). */
 const TASKS: Row[] = [
-  { title: 'Sketch landing page hero', status: 'Done', assignee: SELF, due_date: '2026-07-10', priority: 'High', client: 'demo_contacts_1' },
-  { title: 'Wire up sign-up flow', status: 'Done', assignee: '', due_date: '2026-07-14', priority: 'High', client: 'demo_contacts_1' },
-  { title: 'Draft pricing copy', status: 'In Progress', assignee: SELF, due_date: '2026-07-24', priority: 'Medium', client: 'demo_contacts_3' },
-  { title: 'Instrument onboarding funnel', status: 'In Progress', assignee: '', due_date: '2026-07-28', priority: 'Medium', client: 'demo_contacts_2' },
-  { title: 'Fix mobile nav overlap', status: 'In Progress', assignee: SELF, due_date: '2026-07-22', priority: 'High', client: '' },
-  { title: 'Choose launch date', status: 'Todo', assignee: SELF, due_date: '2026-08-04', priority: 'High', client: 'demo_contacts_2' },
-  { title: 'Write changelog post', status: 'Todo', assignee: '', due_date: '2026-08-06', priority: 'Low', client: '' },
-  { title: 'QA pass on dark mode', status: 'Todo', assignee: '', due_date: '', priority: 'Low', client: 'demo_contacts_4' },
+  { title: 'Sketch landing page hero', status: 'Done', assignee: SELF, due_date: '2026-07-10', priority: 'High', client: 'demo_contacts_1', stakeholders: ['demo_contacts_1', 'demo_contacts_2'] },
+  { title: 'Wire up sign-up flow', status: 'Done', assignee: '', due_date: '2026-07-14', priority: 'High', client: 'demo_contacts_1', stakeholders: [] },
+  { title: 'Draft pricing copy', status: 'In Progress', assignee: SELF, due_date: '2026-07-24', priority: 'Medium', client: 'demo_contacts_3', stakeholders: ['demo_contacts_3'] },
+  { title: 'Instrument onboarding funnel', status: 'In Progress', assignee: '', due_date: '2026-07-28', priority: 'Medium', client: 'demo_contacts_2', stakeholders: ['demo_contacts_1', 'demo_contacts_4'] },
+  { title: 'Fix mobile nav overlap', status: 'In Progress', assignee: SELF, due_date: '2026-07-22', priority: 'High', client: '', stakeholders: [] },
+  { title: 'Choose launch date', status: 'Todo', assignee: SELF, due_date: '2026-08-04', priority: 'High', client: 'demo_contacts_2', stakeholders: ['demo_contacts_2', 'demo_contacts_3'] },
+  { title: 'Write changelog post', status: 'Todo', assignee: '', due_date: '2026-08-06', priority: 'Low', client: '', stakeholders: [] },
+  { title: 'QA pass on dark mode', status: 'Todo', assignee: '', due_date: '', priority: 'Low', client: 'demo_contacts_4', stakeholders: ['demo_contacts_4'] },
 ]
 
 const CONTACTS: Row[] = [
@@ -52,7 +53,6 @@ export async function seedDemoWorkspace(
   cws: {
     createTable(json: string): Promise<string>
     createView(json: string): Promise<string>
-    addColumn(tableId: string, columnJson: string): Promise<void>
     updateCell(tableId: string, rowId: string, colId: string, valueJson: string): Promise<void>
   },
   /** The creating user's MXID — the demo's member-column assignee. */
@@ -61,24 +61,33 @@ export async function seedDemoWorkspace(
   const project = TABLE_TEMPLATES.find(t => t.id === 'project')!
   const contacts = TABLE_TEMPLATES.find(t => t.id === 'contacts')!
 
-  await cws.createTable(JSON.stringify(buildTableDefinition('tasks', 'Projects', project)))
-  await cws.createTable(JSON.stringify(buildTableDefinition('contacts', 'Contacts', contacts)))
-
-  // The cross-table link, added after both tables exist. Which contact column
-  // labels a linked row is stored explicitly (`reference_display_column`), not
+  // The demo's tasks table is the project template PLUS both arities of
+  // cross-table reference, expressed in the same template column format
+  // (issue 341282fe) — not patched on afterwards. Which contact column labels
+  // a linked row is stored explicitly (`reference_display_column`), never
   // guessed at read time.
-  await cws.addColumn(
-    'tasks',
-    JSON.stringify({
-      id: 'client',
-      name: 'Client',
-      column_type: 'reference',
-      required: false,
-      order: 5,
-      reference_table: 'contacts',
-      reference_display_column: 'name',
-    }),
-  )
+  const projectWithRefs = {
+    ...project,
+    columns: [
+      ...project.columns,
+      {
+        id: 'client',
+        name: 'Client',
+        column_type: 'reference',
+        reference_table: 'contacts',
+        reference_display_column: 'name',
+      },
+      {
+        id: 'stakeholders',
+        name: 'Stakeholders',
+        column_type: 'multireference',
+        reference_table: 'contacts',
+        reference_display_column: 'name',
+      },
+    ],
+  }
+  await cws.createTable(JSON.stringify(buildTableDefinition('tasks', 'Projects', projectWithRefs)))
+  await cws.createTable(JSON.stringify(buildTableDefinition('contacts', 'Contacts', contacts)))
 
   await cws.createView(
     JSON.stringify({
@@ -124,6 +133,7 @@ export async function seedDemoWorkspace(
     for (const [i, row] of rows.entries()) {
       for (const [col, value] of Object.entries(row)) {
         if (value === '' || value == null) continue
+        if (Array.isArray(value) && value.length === 0) continue
         const resolved = value === SELF ? selfUserId : value
         if (resolved === '' || resolved == null) continue
         await cws.updateCell(tableId, rowId(tableId, i), col, JSON.stringify(resolved))
