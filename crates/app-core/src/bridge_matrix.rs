@@ -2134,6 +2134,166 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    /// Export one table as a standalone CSV (ADR 0004): headers are column
+    /// names and references render as labels, so the file opens as an ordinary
+    /// spreadsheet rather than a page of row ids.
+    #[wasm_bindgen(js_name = exportTableCsv)]
+    pub fn export_table_csv(&self, table_id: String) -> Result<String, JsValue> {
+        let ws = self.inner.borrow();
+        crate::archive::table_to_csv(&ws, &table_id)
+            .ok_or_else(|| JsValue::from_str("Table not found"))
+    }
+
+    /// Export the whole workspace as an archive: a JSON object of
+    /// `relative path -> file contents`, which the UI zips.
+    #[wasm_bindgen(js_name = exportWorkspaceArchive)]
+    pub fn export_workspace_archive(&self, name: String) -> String {
+        let ws = self.inner.borrow();
+        let files = crate::archive::Archive::from_workspace(&ws, name).to_files();
+        serde_json::to_string(&files).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Inspect a CSV without importing it — the data behind the preview step.
+    /// Returns `{columns:[{id,name,type,options,existing}], rows, totalRows,
+    /// issues}`, where `rows` is capped at `sample` records and `issues` is the
+    /// full dry-run result so the user sees the failure count before
+    /// committing, not after.
+    ///
+    /// When `table_id` names a table that already exists, its live columns win
+    /// on type and are flagged `existing`, so the preview shows what will
+    /// actually happen rather than what the CSV alone suggests.
+    ///
+    /// `overrides_json` is the column list as the user has edited it so far
+    /// (empty on first open) — re-previewing after a type change re-validates
+    /// against the new types.
+    #[wasm_bindgen(js_name = previewCsvImport)]
+    pub fn preview_csv_import(
+        &self,
+        table_id: String,
+        csv: &str,
+        sample: usize,
+        overrides_json: &str,
+    ) -> String {
+        let table = crate::archive::table_from_csv(&table_id, &table_id, csv);
+        let ws = self.inner.borrow();
+        let existing = ws.get_table_schema(&table_id);
+        let overrides: Vec<crate::schema::ColumnDefinition> =
+            serde_json::from_str(overrides_json).unwrap_or_default();
+
+        // Precedence, weakest first: inferred from the CSV, the live column if
+        // the destination already has one by that name, then the user's own
+        // choice — which always wins, because inference is a starting point.
+        let effective: Vec<crate::schema::ColumnDefinition> = table
+            .columns
+            .iter()
+            .map(|c| {
+                let live = existing
+                    .as_ref()
+                    .and_then(|s| s.columns.values().find(|e| e.name == c.name));
+                let chosen = overrides.iter().find(|o| o.name == c.name);
+                chosen.or(live).unwrap_or(c).clone()
+            })
+            .collect();
+
+        let columns: Vec<serde_json::Value> = table
+            .columns
+            .iter()
+            .zip(&effective)
+            .map(|(c, e)| {
+                serde_json::json!({
+                    "id": e.id,
+                    "name": c.name,
+                    "type": crate::archive::column_type_name(&e.column_type),
+                    "options": e.options,
+                    "existing": existing
+                        .as_ref()
+                        .is_some_and(|s| s.columns.values().any(|x| x.name == c.name)),
+                })
+            })
+            .collect();
+
+        let header: Vec<&String> = table.columns.iter().map(|c| &c.name).collect();
+        let rows: Vec<Vec<String>> = table
+            .rows
+            .iter()
+            .take(sample)
+            .map(|r| {
+                header
+                    .iter()
+                    .map(|h| r.get(*h).cloned().unwrap_or_default())
+                    .collect()
+            })
+            .collect();
+
+        let issues = crate::archive::validate_table(&ws, &table, &effective);
+
+        serde_json::json!({
+            "columns": columns,
+            "rows": rows,
+            "totalRows": table.rows.len(),
+            "issues": issues.iter().map(|i| serde_json::json!({
+                "row": i.row,
+                "column": i.column,
+                "message": i.message,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string()
+    }
+
+    /// Import a CSV into `table_id`, creating it as `table_name` if absent and
+    /// appending to it if not. `columns_json` is the preview's column list
+    /// after any user overrides — the types the user actually confirmed.
+    ///
+    /// Returns `{rowsWritten, issues:[{row,column,message}]}`. Writes go
+    /// through the durable queue, like every other write.
+    #[wasm_bindgen(js_name = importCsv)]
+    pub async fn import_csv(
+        &self,
+        table_id: String,
+        table_name: String,
+        csv: String,
+        columns_json: String,
+    ) -> Result<String, JsValue> {
+        let mut table = crate::archive::table_from_csv(&table_id, &table_name, &csv);
+
+        // Apply the confirmed column list, matched to the CSV's headers by
+        // name. Anything the user didn't mention keeps its inferred type.
+        let confirmed: Vec<crate::schema::ColumnDefinition> =
+            serde_json::from_str(&columns_json).unwrap_or_default();
+        for c in confirmed {
+            if let Some(target) = table.columns.iter_mut().find(|t| t.name == c.name) {
+                *target = c;
+            }
+        }
+
+        let stamp = js_sys::Date::now() as u64;
+        let result = {
+            let mut ws = self.inner.borrow_mut();
+            crate::archive::Archive {
+                name: table_name,
+                tables: vec![table],
+                views: Vec::new(),
+            }
+            .apply_to_workspace(&mut ws, &mut |_, row| format!("row_{stamp}_{row}"))
+        };
+
+        // Enqueue rather than send inline: a large import would otherwise fire
+        // one request per cell and trip the homeserver rate limit. The flush
+        // task coalesces and paces them, and the encrypted outbox makes the
+        // import durable across a reload before it lands.
+        self.enqueue_updates(result.updates);
+
+        Ok(serde_json::json!({
+            "rowsWritten": result.rows_written,
+            "issues": result.issues.iter().map(|i| serde_json::json!({
+                "row": i.row,
+                "column": i.column,
+                "message": i.message,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string())
+    }
+
     /// Map of `table_id -> manual-ordering key` as a JSON object, for the UI's
     /// drag-to-reorder of the table list.
     #[wasm_bindgen(js_name = getTableOrderKeys)]

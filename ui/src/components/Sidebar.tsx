@@ -19,6 +19,11 @@ import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
 import { NewTableModal } from '@/components/NewTableModal'
+import {
+  CsvImportModal,
+  type CsvIssue,
+  type CsvPreviewColumn,
+} from '@/components/CsvImportModal'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { notifyWorkspaceChanged, useCurrentUserId } from '@/hooks/useTable'
 import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
@@ -232,6 +237,14 @@ const PencilIcon = () => (
   </svg>
 )
 
+const DownloadIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+    <path d="M6 1v6.5" />
+    <path d="M3.5 5.5 6 8l2.5-2.5" />
+    <path d="M2 9.5v1h8v-1" />
+  </svg>
+)
+
 const TrashIcon = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
     <line x1="2" y1="3" x2="10" y2="3" />
@@ -248,17 +261,21 @@ function SortableTableItem({
   active,
   canDelete,
   canRename,
+  canExport,
   onOpen,
   onDelete,
   onRename,
+  onExport,
 }: {
   table: TableInfo
   active: boolean
   canDelete: boolean
   canRename: boolean
+  canExport: boolean
   onOpen: () => void
   onDelete: () => void
   onRename: () => void
+  onExport: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: table.id,
@@ -300,6 +317,21 @@ function SortableTableItem({
           <PencilIcon />
         </button>
       )}
+      {canExport && (
+        <button
+          className="sidebar__item-delete ghost"
+          title={`Export ${table.name} as CSV`}
+          aria-label="Export table as CSV"
+          onClick={e => {
+            e.stopPropagation()
+            onExport()
+          }}
+          onPointerDown={e => e.stopPropagation()}
+          onKeyDown={e => e.stopPropagation()}
+        >
+          <DownloadIcon />
+        </button>
+      )}
       {canDelete && (
         <button
           className="sidebar__item-delete ghost"
@@ -323,6 +355,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [tables, setTables] = useState<TableInfo[]>([])
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
@@ -590,6 +623,79 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
       })
   }
 
+  const canExportCsv = !!workspace && typeof workspace.exportTableCsv === 'function'
+  const canImportCsv =
+    !!workspace &&
+    typeof workspace.previewCsvImport === 'function' &&
+    typeof workspace.importCsv === 'function'
+
+  /** Download one table as a standalone CSV (ADR 0004) — column names as
+   *  headers, references as labels, so it opens as an ordinary spreadsheet. */
+  const handleExportCsv = (table: TableInfo) => {
+    if (!workspace || typeof workspace.exportTableCsv !== 'function') return
+    try {
+      const csv = workspace.exportTableCsv(table.id)
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${table.name}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err: unknown) {
+      console.error('Failed to export table:', err)
+      alert('Failed to export table: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
+  const previewCsv = useCallback(
+    (tableId: string, csv: string, overrides: CsvPreviewColumn[]) => {
+      if (!workspace || typeof workspace.previewCsvImport !== 'function') {
+        throw new Error('Import is not available on this workspace')
+      }
+      // The bridge takes the column list in its own schema shape, so map the
+      // preview's `type` back onto `column_type` before handing it over.
+      const asColumns = overrides.map(c => ({
+        id: c.id,
+        name: c.name,
+        column_type: c.type,
+        required: false,
+        default_value: null,
+        options: c.options ?? null,
+        reference_table: null,
+      }))
+      return JSON.parse(workspace.previewCsvImport(tableId, csv, 8, JSON.stringify(asColumns)))
+    },
+    [workspace],
+  )
+
+  /** Not memoized, unlike `previewCsv`: this one fires on a click rather than
+   *  feeding the modal's effect deps, so a stable identity buys nothing. */
+  const importCsv = async (
+    tableId: string,
+    tableName: string,
+    csv: string,
+    columns: CsvPreviewColumn[],
+  ) => {
+    if (!workspace || typeof workspace.importCsv !== 'function') {
+      throw new Error('Import is not available on this workspace')
+    }
+    const asColumns = columns.map((c, i) => ({
+      id: c.id,
+      name: c.name,
+      column_type: c.type,
+      required: false,
+      default_value: null,
+      options: c.options ?? null,
+      reference_table: null,
+      order: i,
+    }))
+    const raw = await workspace.importCsv(tableId, tableName, csv, JSON.stringify(asColumns))
+    const result = JSON.parse(raw) as { rowsWritten: number; issues: CsvIssue[] }
+    if (workspaceId) notifyWorkspaceChanged(workspaceId)
+    refreshData()
+    return result
+  }
+
   const handleDeleteTable = (table: TableInfo) => {
     if (!workspace || typeof workspace.deleteTable !== 'function') return
     if (!window.confirm(`Delete table "${table.name}"? All of its rows will be removed.`)) return
@@ -684,9 +790,11 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                     active={isActive(`/workspace/${workspaceId}/table/${table.id}`)}
                     canDelete={canMutateTables}
                     canRename={canRenameTables}
+                    canExport={canExportCsv}
                     onOpen={() => navigate(`/workspace/${workspaceId}/table/${table.id}`)}
                     onDelete={() => handleDeleteTable(table)}
                     onRename={() => void handleRenameTable(table)}
+                    onExport={() => handleExportCsv(table)}
                   />
                 ))}
               </SortableContext>
@@ -699,6 +807,13 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
               <PlusIcon />
               <span>New table</span>
             </button>
+
+            {canImportCsv && (
+              <button className="sidebar__item sidebar__item--add" onClick={() => setImporting(true)}>
+                <DownloadIcon />
+                <span>Import CSV</span>
+              </button>
+            )}
 
             {tables.length === 0 && !isCreatingTable && (
               <p className="sidebar__empty">No tables yet</p>
@@ -892,6 +1007,15 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
           onCreate={handleCreateTable}
           onClose={() => setIsCreatingTable(false)}
           creating={creatingTable}
+        />
+      )}
+
+      {importing && (
+        <CsvImportModal
+          tables={tables.map(t => ({ id: t.id, name: t.name }))}
+          preview={previewCsv}
+          onImport={importCsv}
+          onClose={() => setImporting(false)}
         />
       )}
     </aside>

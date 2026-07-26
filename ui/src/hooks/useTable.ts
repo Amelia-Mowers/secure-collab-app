@@ -83,6 +83,17 @@ export interface WorkspaceHandle {
   deleteView?(viewId: string): void | Promise<void>
   setTableOrder?(tableId: string, orderKey: string): void | Promise<void>
   getTableOrderKeys?(): string
+  /** CSV interchange (ADR 0004). Export renders one table with column names as
+   *  headers and references as labels; preview is a dry run that reports what
+   *  wouldn't apply *before* the import commits. */
+  exportTableCsv?(tableId: string): string
+  previewCsvImport?(tableId: string, csv: string, sample: number, overridesJson: string): string
+  importCsv?(
+    tableId: string,
+    tableName: string,
+    csv: string,
+    columnsJson: string,
+  ): Promise<string> | string
   // ConnectedWorkspace-only methods (optional)
   startSync?(onChange: () => void): void
   inviteUser?(userId: string): Promise<void>
