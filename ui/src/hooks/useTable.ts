@@ -76,6 +76,9 @@ export interface WorkspaceHandle {
   deleteTable?(tableId: string): void | Promise<void>
   /** Rename a table in place — id, columns, rows, and views all survive. */
   renameTable?(tableId: string, name: string): void | Promise<void>
+  /** Persist a column's display width — column metadata, so collaborators
+   *  see the same layout. */
+  setColumnWidth?(tableId: string, columnId: string, width: number): void | Promise<void>
   /** Delete a saved view (tombstone). The table and its data are untouched. */
   deleteView?(viewId: string): void | Promise<void>
   setTableOrder?(tableId: string, orderKey: string): void | Promise<void>
