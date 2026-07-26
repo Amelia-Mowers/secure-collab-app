@@ -112,6 +112,25 @@ describe('CsvImportModal', () => {
     expect(screen.getByText(/could not be applied/)).toBeInTheDocument()
   })
 
+  it('opens straight into a table when launched from that table', () => {
+    // The per-table entry point (a table's own import button) preselects the
+    // destination; the workspace-level button leaves it to the user.
+    render(
+      <CsvImportModal
+        tables={[
+          { id: 'tasks', name: 'Tasks' },
+          { id: 'notes', name: 'Notes' },
+        ]}
+        defaultTableId="notes"
+        preview={fakePreview}
+        onImport={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+    expect((screen.getByLabelText('Destination table') as HTMLSelectElement).value).toBe('notes')
+    expect(screen.getByLabelText('New table name')).toBeDisabled()
+  })
+
   it('cannot import before a file is chosen', () => {
     render(
       <CsvImportModal tables={[]} preview={fakePreview} onImport={vi.fn()} onClose={vi.fn()} />,
