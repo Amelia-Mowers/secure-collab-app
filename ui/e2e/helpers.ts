@@ -79,3 +79,44 @@ export async function addPrfAuthenticator(page: Page) {
   })
   return { client, authenticatorId }
 }
+
+// ── Flow helpers ────────────────────────────────────────────────────────────
+//
+// Shared because they were duplicated across core / collaboration /
+// resource-crud, and a UI rename then had to be applied in three places (the
+// "Create" → "Create workspace" button, when the picker moved into a dialogue).
+// One copy means one edit.
+
+/** Create a workspace through the New Workspace dialogue and wait for the room
+ *  to exist (creation + encryption enablement + initial sync). */
+export async function createWorkspace(page: Page, name: string) {
+  await page.locator('.workspace-card--new').click()
+  await page.getByPlaceholder('Workspace name').fill(name)
+  await page.getByRole('button', { name: 'Create workspace', exact: true }).click()
+  await expect(page).toHaveURL(/\/workspace\//, { timeout: 90_000 })
+  await expect(page.getByRole('button', { name: 'New table' })).toBeVisible({ timeout: 90_000 })
+}
+
+/** Create a table; resolves once the grid for it is routed to. */
+export async function createTable(page: Page, name: string) {
+  await page.getByRole('button', { name: 'New table' }).click()
+  const input = page.getByPlaceholder('Table name...')
+  await input.fill(name)
+  await input.press('Enter')
+  await expect(page).toHaveURL(new RegExp(`/table/${name.toLowerCase()}`), { timeout: 90_000 })
+}
+
+/** Add a column via the toolbar "Add column" button + modal. */
+export async function addColumn(page: Page, name: string, typeLabel: string, options?: string) {
+  await page.getByRole('button', { name: 'Add column' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByPlaceholder('e.g. Priority').fill(name)
+  // Anchored: a plain "Select" substring would also match the "Multi-select" row.
+  await dialog.locator('.acm__type-row', { hasText: new RegExp(`^${typeLabel}`) }).click()
+  if (options !== undefined) {
+    await dialog.getByPlaceholder('Todo, In Progress, Done').fill(options)
+  }
+  await dialog.getByRole('button', { name: 'Add column' }).click()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
+  await expect(page.locator('th', { hasText: name })).toBeVisible({ timeout: 30_000 })
+}
