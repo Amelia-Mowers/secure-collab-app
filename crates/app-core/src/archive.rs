@@ -1027,9 +1027,14 @@ impl Archive {
         }
     }
 
-    /// Materialize this archive into a workspace: create the tables, then the
-    /// rows, then resolve references by label. Returns the rows that could not
-    /// be fully applied — the caller shows them before committing.
+    /// Materialize this archive into a workspace: reconcile the tables, then
+    /// write the rows, then resolve references by label.
+    ///
+    /// A table that already exists is **appended to**, not recreated: its
+    /// columns are matched by name, the existing definition wins on type and
+    /// id, and only genuinely new headers are added as columns. That is what
+    /// makes "import this CSV into my table" and "import this workspace" the
+    /// same code path.
     ///
     /// Row ids are minted fresh (`mint_row_id(table_index, row_index)`), which
     /// is safe precisely because nothing in an archive names a row id.
@@ -1037,47 +1042,110 @@ impl Archive {
         &self,
         workspace: &mut Workspace,
         mint_row_id: &mut dyn FnMut(usize, usize) -> String,
-    ) -> Vec<ImportIssue> {
-        let mut issues = Vec::new();
+    ) -> ImportResult {
+        let mut result = ImportResult::default();
 
+        // Reconcile schemas first, and keep the columns that actually govern
+        // each table — for an existing table those are the destination's, not
+        // the archive's, so a CSV can't retype a live column out from under it.
+        let mut effective: Vec<Vec<ColumnDefinition>> = Vec::new();
         for t in &self.tables {
-            let mut def = TableDefinition::new(&t.id, &t.name);
-            for (i, c) in t.columns.iter().enumerate() {
-                let mut c = c.clone();
-                if c.order.is_none() {
-                    c.order = Some(i as i64);
+            match workspace.get_table_schema(&t.id) {
+                Some(existing) => {
+                    let mut columns = ordered_columns(&existing);
+                    let mut next_order = columns.len() as i64;
+                    for c in &t.columns {
+                        if columns.iter().any(|e| e.name == c.name) {
+                            continue;
+                        }
+                        let mut c = c.clone();
+                        c.order = Some(next_order);
+                        next_order += 1;
+                        if let Ok(updates) = workspace.add_column(&t.id, c.clone()) {
+                            result.updates.extend(updates);
+                            columns.push(c);
+                        }
+                    }
+                    effective.push(columns);
                 }
-                def.columns.insert(c.id.clone(), c);
+                None => {
+                    let mut def = TableDefinition::new(&t.id, &t.name);
+                    let mut columns = Vec::new();
+                    for (i, c) in t.columns.iter().enumerate() {
+                        let mut c = c.clone();
+                        if c.order.is_none() {
+                            c.order = Some(i as i64);
+                        }
+                        def.columns.insert(c.id.clone(), c.clone());
+                        columns.push(c);
+                    }
+                    match workspace.create_table(def) {
+                        Ok(updates) => result.updates.extend(updates),
+                        Err(e) => result.issues.push(ImportIssue {
+                            table: t.id.clone(),
+                            row: 0,
+                            column: String::new(),
+                            message: format!("table could not be created: {e}"),
+                        }),
+                    }
+                    effective.push(columns);
+                }
             }
-            if workspace.create_table(def).is_err() {
-                issues.push(ImportIssue {
-                    table: t.id.clone(),
-                    row: 0,
-                    column: String::new(),
-                    message: "table could not be created".into(),
-                });
-            }
+        }
+
+        let mut refs = RefResolver::default();
+
+        // Rows already in the workspace are valid reference targets — an
+        // appended CSV routinely points at a table it does not itself carry.
+        // Seed from every table any reference column names, plus the tables
+        // being written (whose existing rows must stay addressable).
+        let mut targets: Vec<String> = effective
+            .iter()
+            .flatten()
+            .filter_map(|c| c.reference_table.clone())
+            .chain(self.tables.iter().map(|t| t.id.clone()))
+            .collect();
+        targets.sort();
+        targets.dedup();
+        for target in targets {
+            let Some(schema) = workspace.get_table_schema(&target) else {
+                continue;
+            };
+            let columns = ordered_columns(&schema);
+            let Some(display) = display_column(&columns, None) else {
+                continue;
+            };
+            let map: HashMap<String, String> = workspace
+                .get_table_rows(&target)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|r| {
+                    let rid = r.get("_row_id")?.as_str()?.to_string();
+                    let label = r.get(&display)?.as_str()?.trim().to_string();
+                    (!label.is_empty()).then_some((label, rid))
+                })
+                .collect();
+            refs.by_table.insert(target, map);
         }
 
         // Mint the row ids up front, so references can resolve against rows
         // that haven't been written yet (forward references, and cycles).
         let mut row_ids: Vec<Vec<String>> = Vec::new();
-        let mut refs = RefResolver::default();
         for (ti, t) in self.tables.iter().enumerate() {
             let ids: Vec<String> = (0..t.rows.len()).map(|ri| mint_row_id(ti, ri)).collect();
-            let display = display_column(&t.columns, None)
-                .and_then(|id| t.columns.iter().find(|c| c.id == id).cloned());
+            let columns = &effective[ti];
+            let display = display_column(columns, None)
+                .and_then(|id| columns.iter().find(|c| c.id == id).cloned());
             if let Some(display) = display {
-                let map = t
-                    .rows
-                    .iter()
-                    .zip(&ids)
-                    .filter_map(|(row, rid)| {
-                        let label = row.get(&display.name)?.trim();
-                        (!label.is_empty()).then(|| (label.to_string(), rid.clone()))
-                    })
-                    .collect();
-                refs.by_table.insert(t.id.clone(), map);
+                let map = refs.by_table.entry(t.id.clone()).or_default();
+                for (row, rid) in t.rows.iter().zip(&ids) {
+                    let Some(label) = row.get(&display.name).map(|s| s.trim()) else {
+                        continue;
+                    };
+                    if !label.is_empty() {
+                        map.insert(label.to_string(), rid.clone());
+                    }
+                }
             }
             row_ids.push(ids);
         }
@@ -1085,16 +1153,20 @@ impl Archive {
         for (ti, t) in self.tables.iter().enumerate() {
             for (ri, row) in t.rows.iter().enumerate() {
                 let row_id = &row_ids[ti][ri];
-                for c in &t.columns {
+                for c in &effective[ti] {
                     let Some(text) = row.get(&c.name) else {
                         continue;
                     };
                     match text_to_value(text, c, &refs) {
                         Ok(Value::Null) => {}
                         Ok(value) => {
-                            let _ = workspace.update_cell(&t.id, row_id, &c.id, value);
+                            if let Ok(update) =
+                                workspace.update_cell_returning(&t.id, row_id, &c.id, value)
+                            {
+                                result.updates.push(update);
+                            }
                         }
-                        Err(message) => issues.push(ImportIssue {
+                        Err(message) => result.issues.push(ImportIssue {
                             table: t.id.clone(),
                             row: ri,
                             column: c.name.clone(),
@@ -1102,15 +1174,71 @@ impl Archive {
                         }),
                     }
                 }
+                result.rows_written += 1;
             }
         }
 
         for v in &self.views {
-            let _ = workspace.create_view(v.clone());
+            if let Ok(updates) = workspace.create_view(v.clone()) {
+                result.updates.extend(updates);
+            }
         }
 
-        issues
+        result
     }
+}
+
+/// What an import did: the updates a Matrix-connected caller must send, the
+/// rows written, and anything that could not be applied.
+#[derive(Debug, Default)]
+pub struct ImportResult {
+    pub updates: Vec<tables_over_matrix::CellUpdate>,
+    pub issues: Vec<ImportIssue>,
+    pub rows_written: usize,
+}
+
+/// Read a standalone CSV as one table, inferring column types from the data —
+/// the single-table import path. `id`/`name` name the destination; when it
+/// already exists, [`Archive::apply_to_workspace`] matches these columns to it
+/// by name and the destination's types win.
+pub fn table_from_csv(id: &str, name: &str, csv: &str) -> ArchiveTable {
+    let mut files = Files::new();
+    files.insert(
+        "workspace.csv".into(),
+        write_csv(&[
+            vec!["key".into(), "value".into()],
+            vec!["name".into(), name.to_string()],
+        ]),
+    );
+    files.insert(format!("data/{id}.csv"), csv.to_string());
+    let mut archive = Archive::from_files(&files).unwrap_or_default();
+    let mut table = archive.tables.pop().unwrap_or(ArchiveTable {
+        id: id.to_string(),
+        name: name.to_string(),
+        order: None,
+        columns: Vec::new(),
+        rows: Vec::new(),
+    });
+    table.name = name.to_string();
+    table
+}
+
+/// Render one table as a standalone CSV — headers are column names, references
+/// are labels, so the file opens as an ordinary spreadsheet.
+pub fn table_to_csv(workspace: &Workspace, table_id: &str) -> Option<String> {
+    let archive = Archive::from_workspace(workspace, "");
+    let table = archive.tables.iter().find(|t| t.id == table_id)?;
+    let header: Vec<String> = table.columns.iter().map(|c| c.name.clone()).collect();
+    let mut rows = vec![header.clone()];
+    for row in &table.rows {
+        rows.push(
+            header
+                .iter()
+                .map(|h| row.get(h).cloned().unwrap_or_default())
+                .collect(),
+        );
+    }
+    Some(write_csv(&rows))
 }
 
 fn ordered_columns(def: &TableDefinition) -> Vec<ColumnDefinition> {
@@ -1291,9 +1419,13 @@ mod tests {
     #[test]
     fn applies_to_a_workspace_resolving_references_by_label() {
         let mut ws = Workspace::new("ws");
-        let issues =
+        let result =
             sample_archive().apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
-        assert_eq!(issues, Vec::new());
+        assert_eq!(result.issues, Vec::new());
+        assert_eq!(result.rows_written, 3);
+        // Every write is handed back for the caller to send — an import that
+        // only applied locally would vanish on reload (cf. issue 980ac596).
+        assert!(!result.updates.is_empty());
 
         let tasks = ws.get_table_rows("tasks").unwrap();
         assert_eq!(tasks.len(), 1);
@@ -1307,10 +1439,10 @@ mod tests {
         let mut archive = sample_archive();
         archive.tables[1].rows[0].insert("Owner".into(), "Nobody".into());
         let mut ws = Workspace::new("ws");
-        let issues = archive.apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].column, "Owner");
-        assert!(issues[0].message.contains("Nobody"));
+        let result = archive.apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
+        assert_eq!(result.issues.len(), 1);
+        assert_eq!(result.issues[0].column, "Owner");
+        assert!(result.issues[0].message.contains("Nobody"));
         // The rest of the row still landed.
         assert_eq!(ws.get_table_rows("tasks").unwrap()[0]["title"], "Ship it");
     }
@@ -1327,13 +1459,79 @@ mod tests {
 
         // And it survives a second lap through a fresh workspace.
         let mut ws2 = Workspace::new("ws2");
-        let issues = Archive::from_files(&exported.to_files())
+        let result = Archive::from_files(&exported.to_files())
             .unwrap()
             .apply_to_workspace(&mut ws2, &mut |t, r| format!("r{t}_{r}"));
-        assert_eq!(issues, Vec::new());
+        assert_eq!(result.issues, Vec::new());
         assert_eq!(
             ws2.get_table_rows("tasks").unwrap()[0]["owner"],
             Value::String("r0_0".into())
         );
+    }
+
+    #[test]
+    fn importing_into_an_existing_table_appends_and_keeps_its_types() {
+        let mut ws = Workspace::new("ws");
+        sample_archive().apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
+
+        // The CSV's Status column looks like free text on its own, but the
+        // destination already types it as a select — the live column wins.
+        let csv = "Title,Status,Notes\nSecond,Done,hello\n";
+        let archive = Archive {
+            name: String::new(),
+            tables: vec![table_from_csv("tasks", "Tasks", csv)],
+            views: Vec::new(),
+        };
+        let result = archive.apply_to_workspace(&mut ws, &mut |_, r| format!("new_{r}"));
+        assert_eq!(result.issues, Vec::new());
+
+        let rows = ws.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 2, "appended rather than replaced");
+        let added = rows.iter().find(|r| r["title"] == "Second").unwrap();
+        assert_eq!(added["status"], Value::String("Done".into()));
+        // The genuinely new header became a column; the matched ones did not
+        // duplicate.
+        let schema = ws.get_table_schema("tasks").unwrap();
+        assert_eq!(schema.columns.len(), 4);
+        assert!(schema.columns.values().any(|c| c.name == "Notes"));
+        assert_eq!(
+            schema.columns.get("status").unwrap().column_type,
+            ColumnType::Select
+        );
+    }
+
+    #[test]
+    fn an_appended_csv_can_reference_rows_already_in_the_workspace() {
+        let mut ws = Workspace::new("ws");
+        sample_archive().apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
+
+        // "Grace" exists only in the workspace, not in this CSV.
+        let csv = "Title,Owner\nSecond,Grace\n";
+        let mut table = table_from_csv("tasks", "Tasks", csv);
+        // Header→column matching by name gives it the live reference column.
+        table.columns.clear();
+        let result = Archive {
+            name: String::new(),
+            tables: vec![table],
+            views: Vec::new(),
+        }
+        .apply_to_workspace(&mut ws, &mut |_, r| format!("new_{r}"));
+
+        assert_eq!(result.issues, Vec::new());
+        let rows = ws.get_table_rows("tasks").unwrap();
+        let added = rows.iter().find(|r| r["title"] == "Second").unwrap();
+        assert_eq!(added["owner"], Value::String("row_0_1".into()));
+    }
+
+    #[test]
+    fn single_table_csv_export_uses_names_and_labels() {
+        let mut ws = Workspace::new("ws");
+        sample_archive().apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
+
+        let csv = table_to_csv(&ws, "tasks").unwrap();
+        let rows = parse_csv(&csv);
+        assert_eq!(rows[0], vec!["Title", "Status", "Owner"]);
+        assert_eq!(rows[1], vec!["Ship it", "Todo", "Ada"]);
+        assert!(table_to_csv(&ws, "nope").is_none());
     }
 }
