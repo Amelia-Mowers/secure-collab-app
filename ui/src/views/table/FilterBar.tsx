@@ -1,4 +1,11 @@
-import { operatorsForType, operatorNeedsValue, ME, type FilterCondition, type FilterOp } from '@/lib/filters'
+import {
+  operatorsForType,
+  operatorNeedsValue,
+  ME,
+  type FilterCondition,
+  type FilterOp,
+  type SpanValue,
+} from '@/lib/filters'
 import type { ReferenceLookup } from '@/lib/referenceLookup'
 import './FilterBar.css'
 
@@ -209,6 +216,63 @@ function ValueEditor({
         <option value="true">Checked</option>
         <option value="false">Unchecked</option>
       </select>
+    )
+  }
+
+  // A span: either two calendar dates, or — with "moving" on — a window
+  // measured in days either side of today, so it rolls forward on its own.
+  if (operator === 'in_span') {
+    const span = (value ?? {}) as SpanValue
+    const moving = !!span.moving
+    return (
+      <span className="filter-span">
+        <label className="filter-span__toggle" title="Roll the window forward with today">
+          <input
+            type="checkbox"
+            checked={moving}
+            onChange={e => onChange({ ...span, moving: e.target.checked })}
+          />
+          moving
+        </label>
+        {moving ? (
+          <>
+            <input
+              type="number"
+              className="filter-condition__value filter-span__days"
+              aria-label="Days from"
+              value={span.fromDays ?? -7}
+              onChange={e => onChange({ ...span, moving: true, fromDays: Number(e.target.value) })}
+            />
+            <span className="filter-span__sep">to</span>
+            <input
+              type="number"
+              className="filter-condition__value filter-span__days"
+              aria-label="Days to"
+              value={span.toDays ?? 0}
+              onChange={e => onChange({ ...span, moving: true, toDays: Number(e.target.value) })}
+            />
+            <span className="filter-span__sep">days from today</span>
+          </>
+        ) : (
+          <>
+            <input
+              type="date"
+              className="filter-condition__value"
+              aria-label="Span start"
+              value={span.from ?? ''}
+              onChange={e => onChange({ ...span, moving: false, from: e.target.value })}
+            />
+            <span className="filter-span__sep">to</span>
+            <input
+              type="date"
+              className="filter-condition__value"
+              aria-label="Span end"
+              value={span.to ?? ''}
+              onChange={e => onChange({ ...span, moving: false, to: e.target.value })}
+            />
+          </>
+        )}
+      </span>
     )
   }
 

@@ -77,6 +77,94 @@ fn resolve_me(filter: Option<&Value>, ctype: &ColumnType, ctx: &FilterContext) -
     }
 }
 
+// ── Calendar arithmetic ─────────────────────────────────────────────────────
+//
+// Done by hand rather than with chrono so this module stays dependency-light
+// and, more importantly, clock-free: every date it works with arrives from the
+// caller's `FilterContext`. Howard Hinnant's civil-date algorithms, which are
+// exact for the proleptic Gregorian calendar.
+
+/// Days since 1970-01-01 for a civil date.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// The civil date `z` days after 1970-01-01.
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// Parse the `YYYY-MM-DD` prefix of a date string into days since epoch.
+fn date_to_days(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() < 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let y: i64 = s.get(0..4)?.parse().ok()?;
+    let m: i64 = s.get(5..7)?.parse().ok()?;
+    let d: i64 = s.get(8..10)?.parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    Some(days_from_civil(y, m, d))
+}
+
+/// Render days-since-epoch back as `YYYY-MM-DD`.
+fn days_to_date(days: i64) -> String {
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The Monday..Sunday span containing `today` (ISO 8601 weeks). 1970-01-01 was
+/// a Thursday, which anchors the weekday arithmetic.
+fn week_bounds(today: &str) -> Option<(String, String)> {
+    let days = date_to_days(today)?;
+    let weekday_from_monday = (days + 3).rem_euclid(7);
+    let monday = days - weekday_from_monday;
+    Some((days_to_date(monday), days_to_date(monday + 6)))
+}
+
+/// The span an `InSpan` filter selects, resolved against today.
+///
+/// Fixed spans carry two calendar dates. MOVING spans carry day offsets either
+/// side of today, so "the last week" keeps meaning the last week tomorrow —
+/// the distinction the `moving` toggle expresses.
+fn resolve_span(filter: Option<&Value>, today: &str) -> Option<(String, String)> {
+    let v = filter?;
+    let moving = v.get("moving").and_then(|m| m.as_bool()).unwrap_or(false);
+    if moving {
+        let base = date_to_days(today)?;
+        let from = v.get("fromDays").and_then(|d| d.as_i64()).unwrap_or(0);
+        let to = v.get("toDays").and_then(|d| d.as_i64()).unwrap_or(0);
+        let (lo, hi) = if from <= to { (from, to) } else { (to, from) };
+        Some((days_to_date(base + lo), days_to_date(base + hi)))
+    } else {
+        let from = v.get("from").and_then(|d| d.as_str())?;
+        let to = v.get("to").and_then(|d| d.as_str())?;
+        let (from, to) = (from.get(0..10)?.to_string(), to.get(0..10)?.to_string());
+        if from <= to {
+            Some((from, to))
+        } else {
+            Some((to, from))
+        }
+    }
+}
+
 /// Empty = missing cell, `null`, `""`, or an empty array (mirrors the TS
 /// `isEmpty`).
 fn is_empty(v: Option<&Value>) -> bool {
@@ -199,6 +287,22 @@ pub fn matches_condition(
         IsEmpty => is_empty(cell),
         IsNotEmpty => !is_empty(cell),
         IsToday => !is_empty(cell) && cell.map(day_prefix).as_deref() == Some(ctx.today.as_str()),
+        IsThisWeek => match (is_empty(cell), week_bounds(&ctx.today)) {
+            (false, Some((start, end))) => {
+                let day = cell.map(day_prefix).unwrap_or_default();
+                day >= start && day <= end
+            }
+            _ => false,
+        },
+        InSpan => match (is_empty(cell), resolve_span(filter, &ctx.today)) {
+            // Inclusive at both ends: a span the user typed as 1st–7th should
+            // contain the 7th.
+            (false, Some((start, end))) => {
+                let day = cell.map(day_prefix).unwrap_or_default();
+                day >= start && day <= end
+            }
+            _ => false,
+        },
         Equals => equals_match(cell, filter, ctype),
         NotEquals => is_empty(cell) || !equals_match(cell, filter, ctype),
         Contains => contains_match(cell, filter),
@@ -619,6 +723,147 @@ mod tests {
             ColumnType::Date
         ));
         assert!(!cond(None, IsToday, None, ColumnType::Date));
+    }
+
+    #[test]
+    fn this_week_spans_monday_to_sunday() {
+        use FilterOperator::*;
+        // TODO is Tuesday 2026-07-21, so the week runs 20th (Mon) to 26th (Sun).
+        for day in ["2026-07-20", "2026-07-21", "2026-07-26"] {
+            assert!(
+                cond(Some(json!(day)), IsThisWeek, None, ColumnType::Date),
+                "{day} should be in this week"
+            );
+        }
+        for day in ["2026-07-19", "2026-07-27"] {
+            assert!(
+                !cond(Some(json!(day)), IsThisWeek, None, ColumnType::Date),
+                "{day} should be outside this week"
+            );
+        }
+        assert!(!cond(None, IsThisWeek, None, ColumnType::Date));
+    }
+
+    #[test]
+    fn fixed_span_is_inclusive_at_both_ends() {
+        use FilterOperator::*;
+        let span = json!({ "moving": false, "from": "2026-03-01", "to": "2026-03-31" });
+        for day in ["2026-03-01", "2026-03-15", "2026-03-31"] {
+            assert!(cond(
+                Some(json!(day)),
+                InSpan,
+                Some(span.clone()),
+                ColumnType::Date
+            ));
+        }
+        for day in ["2026-02-28", "2026-04-01"] {
+            assert!(!cond(
+                Some(json!(day)),
+                InSpan,
+                Some(span.clone()),
+                ColumnType::Date
+            ));
+        }
+        // Reversed bounds still describe the same span.
+        let backwards = json!({ "from": "2026-03-31", "to": "2026-03-01" });
+        assert!(cond(
+            Some(json!("2026-03-15")),
+            InSpan,
+            Some(backwards),
+            ColumnType::Date
+        ));
+    }
+
+    #[test]
+    fn moving_span_rolls_with_today() {
+        use FilterOperator::*;
+        // "The last 7 days", relative to TODAY = 2026-07-21.
+        let last_week = json!({ "moving": true, "fromDays": -7, "toDays": 0 });
+        assert!(cond(
+            Some(json!("2026-07-21")),
+            InSpan,
+            Some(last_week.clone()),
+            ColumnType::Date
+        ));
+        assert!(cond(
+            Some(json!("2026-07-14")),
+            InSpan,
+            Some(last_week.clone()),
+            ColumnType::Date
+        ));
+        assert!(!cond(
+            Some(json!("2026-07-13")),
+            InSpan,
+            Some(last_week.clone()),
+            ColumnType::Date
+        ));
+        // Tomorrow is outside a window that ends today...
+        assert!(!cond(
+            Some(json!("2026-07-22")),
+            InSpan,
+            Some(last_week),
+            ColumnType::Date
+        ));
+        // ...and the SAME filter, evaluated a day later, includes it. That's
+        // what makes the span "moving".
+        let ctx = FilterContext::new("2026-07-22");
+        assert!(matches_condition(
+            Some(&json!("2026-07-22")),
+            &InSpan,
+            Some(&json!({ "moving": true, "fromDays": -7, "toDays": 0 })),
+            &ColumnType::Date,
+            &ctx
+        ));
+    }
+
+    #[test]
+    fn span_arithmetic_crosses_month_and_year_boundaries() {
+        use FilterOperator::*;
+        let ctx = FilterContext::new("2026-03-01");
+        // Three days back from 1 March 2026 reaches 26 February (2026 is not a
+        // leap year, so February has 28 days).
+        assert!(matches_condition(
+            Some(&json!("2026-02-26")),
+            &InSpan,
+            Some(&json!({ "moving": true, "fromDays": -3, "toDays": 0 })),
+            &ColumnType::Date,
+            &ctx
+        ));
+        // A leap year: 1 March 2024 minus 1 day is 29 February.
+        let leap = FilterContext::new("2024-03-01");
+        assert!(matches_condition(
+            Some(&json!("2024-02-29")),
+            &InSpan,
+            Some(&json!({ "moving": true, "fromDays": -1, "toDays": 0 })),
+            &ColumnType::Date,
+            &leap
+        ));
+        // Across new year.
+        let ny = FilterContext::new("2026-01-02");
+        assert!(matches_condition(
+            Some(&json!("2025-12-31")),
+            &InSpan,
+            Some(&json!({ "moving": true, "fromDays": -2, "toDays": 0 })),
+            &ColumnType::Date,
+            &ny
+        ));
+    }
+
+    #[test]
+    fn a_malformed_span_matches_nothing() {
+        use FilterOperator::*;
+        for bad in [
+            json!({}),
+            json!("2026-01-01"),
+            json!({ "from": "2026-01-01" }),
+        ] {
+            assert!(!cond(
+                Some(json!("2026-01-01")),
+                InSpan,
+                Some(bad),
+                ColumnType::Date
+            ));
+        }
     }
 
     #[test]

@@ -60,6 +60,13 @@ pub enum FilterOperator {
     HasNoneOf,
     /// Date cell equals the current date at evaluation time (client-side).
     IsToday,
+    /// Date cell falls in the calendar week containing today (Monday-start,
+    /// ISO 8601). Resolved at evaluation time, like `IsToday`.
+    IsThisWeek,
+    /// Date cell falls within a span. The value carries the span, and whether
+    /// it is fixed (two calendar dates) or MOVING — offsets in days either side
+    /// of today, so the window rolls forward on its own. See `SpanValue`.
+    InSpan,
     IsEmpty,
     IsNotEmpty,
 }
@@ -688,6 +695,8 @@ mod tests {
             FilterOperator::HasAllOf,
             FilterOperator::HasNoneOf,
             FilterOperator::IsToday,
+            FilterOperator::IsThisWeek,
+            FilterOperator::InSpan,
             FilterOperator::IsEmpty,
             FilterOperator::IsNotEmpty,
         ];

@@ -32,6 +32,8 @@ export type FilterOp =
   | 'has_all_of'
   | 'has_none_of'
   | 'is_today'
+  | 'is_this_week'
+  | 'in_span'
   | 'is_empty'
   | 'is_not_empty'
 
@@ -79,7 +81,26 @@ const NO_VALUE_OPS: ReadonlySet<FilterOp> = new Set<FilterOp>([
   'is_empty',
   'is_not_empty',
   'is_today',
+  'is_this_week',
 ])
+
+/**
+ * The value an `in_span` filter carries.
+ *
+ * A fixed span is two calendar dates. A MOVING span is day offsets either side
+ * of today, so "the last 7 days" still means the last 7 days tomorrow — that's
+ * the distinction the moving toggle expresses, and why the offsets are stored
+ * rather than the dates they currently resolve to.
+ */
+export interface SpanValue {
+  moving?: boolean
+  /** moving: false */
+  from?: string
+  to?: string
+  /** moving: true — days relative to today, negative for the past. */
+  fromDays?: number
+  toDays?: number
+}
 
 /** Operators offered for a column type, with UI labels, in display order. */
 export function operatorsForType(columnType: string): OperatorOption[] {
@@ -112,6 +133,8 @@ export function operatorsForType(columnType: string): OperatorOption[] {
         { op: 'greater_than', label: 'is after' },
         { op: 'greater_than_or_equal', label: 'is on or after' },
         { op: 'is_today', label: 'is today' },
+        { op: 'is_this_week', label: 'is this week' },
+        { op: 'in_span', label: 'is within' },
         ...EMPTY_OPS,
       ]
     case 'boolean':
@@ -167,6 +190,45 @@ function todayLocal(): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
+}
+
+/** `YYYY-MM-DD` → days since epoch, via UTC so no DST shift can move a date. */
+function dateToDays(day: string): number | null {
+  const ms = Date.parse(`${day.slice(0, 10)}T00:00:00Z`)
+  return Number.isNaN(ms) ? null : Math.round(ms / 86_400_000)
+}
+
+/** Days since epoch → `YYYY-MM-DD`. */
+function daysToDate(days: number): string {
+  return new Date(days * 86_400_000).toISOString().slice(0, 10)
+}
+
+/** The Monday–Sunday span containing `today` (ISO 8601 weeks). */
+function weekBounds(today: string): [string, string] | null {
+  const days = dateToDays(today)
+  if (days === null) return null
+  // 1970-01-01 was a Thursday, which anchors the weekday arithmetic.
+  const fromMonday = (((days + 3) % 7) + 7) % 7
+  const monday = days - fromMonday
+  return [daysToDate(monday), daysToDate(monday + 6)]
+}
+
+/** Resolve an `in_span` value to concrete bounds, against today. */
+function resolveSpan(value: unknown, today: string): [string, string] | null {
+  if (value === null || typeof value !== 'object') return null
+  const v = value as SpanValue
+  if (v.moving) {
+    const base = dateToDays(today)
+    if (base === null) return null
+    const from = typeof v.fromDays === 'number' ? v.fromDays : 0
+    const to = typeof v.toDays === 'number' ? v.toDays : 0
+    const [lo, hi] = from <= to ? [from, to] : [to, from]
+    return [daysToDate(base + lo), daysToDate(base + hi)]
+  }
+  if (typeof v.from !== 'string' || typeof v.to !== 'string') return null
+  const from = v.from.slice(0, 10)
+  const to = v.to.slice(0, 10)
+  return from <= to ? [from, to] : [to, from]
 }
 
 /** The `YYYY-MM-DD` calendar-day prefix of an ISO-ish date string. */
@@ -243,6 +305,21 @@ export function matchesCondition(
     case 'is_today':
       if (isEmpty(cellValue)) return false
       return dayPrefix(cellValue) === (ctx?.today ?? todayLocal())
+    case 'is_this_week': {
+      if (isEmpty(cellValue)) return false
+      const bounds = weekBounds(ctx?.today ?? todayLocal())
+      if (!bounds) return false
+      const day = dayPrefix(cellValue)
+      return day >= bounds[0] && day <= bounds[1]
+    }
+    case 'in_span': {
+      if (isEmpty(cellValue)) return false
+      const bounds = resolveSpan(filterValue, ctx?.today ?? todayLocal())
+      if (!bounds) return false
+      // Inclusive at both ends: a span typed as 1st–7th contains the 7th.
+      const day = dayPrefix(cellValue)
+      return day >= bounds[0] && day <= bounds[1]
+    }
     case 'equals':
       return equalsMatch(cellValue, filterValue, columnType)
     case 'not_equals':
