@@ -78,3 +78,30 @@
 .filter-condition__add:hover {
   text-decoration: underline;
 }
+
+/* Date span editor (issue 5d2efeac) — fixed dates, or a window that moves with
+   today. */
+.filter-span {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-span__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.filter-span__days {
+  width: 64px;
+}
+
+.filter-span__sep {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}

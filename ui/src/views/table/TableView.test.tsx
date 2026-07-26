@@ -299,13 +299,29 @@ describe('TableView', () => {
       expect(container.querySelectorAll('colgroup col').length).toBeGreaterThan(2)
     })
 
-    it("applies a saved view's column widths", async () => {
-      const ws = viewWithLayout({ column_widths: { title: 420 } })
-      const { container } = renderView(ws)
+    it("applies a column's saved width, wherever it's viewed (issue a96dfc71)", async () => {
+      // Width is COLUMN metadata, not a view setting — so it applies on the raw
+      // table too, and every collaborator sees the same layout.
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      ws.setColumnWidth('tasks', 'title', 420)
+      const { container } = renderTable(ws)
       await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
       const cols = Array.from(container.querySelectorAll('colgroup col')) as HTMLElement[]
-      // The leading open-entry col is first; the title column follows.
       expect(cols.some(c => c.style.width === '420px')).toBe(true)
+    })
+
+    it('derives a sensible default width from the column type (issue 93ffe164)', async () => {
+      const ws = makeTasksWorkspace()
+      seedTasks(ws)
+      const { container } = renderTable(ws)
+      await waitFor(() => expect(screen.getByText('Design homepage')).toBeInTheDocument())
+      const widths = (Array.from(container.querySelectorAll('colgroup col')) as HTMLElement[])
+        .map(c => parseInt(c.style.width, 10))
+        .filter(Number.isFinite)
+      // A checkbox column must not get the same room as a text column.
+      expect(Math.min(...widths)).toBeLessThan(Math.max(...widths))
+      expect(Math.min(...widths)).toBeLessThanOrEqual(80)
     })
 
     it("hides the columns a view hides, without touching their data", async () => {

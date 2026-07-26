@@ -525,43 +525,45 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const canRenameTables = !!workspace && typeof workspace.renameTable === 'function'
   const canDeleteViews = !!workspace && typeof workspace.deleteView === 'function'
 
-  /** Rename in place — the table keeps its id, columns, rows, and views. */
-  const handleRenameTable = (table: TableInfo) => {
+  /** Rename in place — the table keeps its id, columns, rows, and views.
+   *
+   *  Deliberately NOT optimistic. A rename is one small write, so optimism buys
+   *  no perceptible speed; what it does buy is a window where the new name is
+   *  on screen but not yet persisted — reload inside it and the rename is gone
+   *  with no error shown. Showing the name only once the write lands makes the
+   *  UI mean what it says. */
+  const handleRenameTable = async (table: TableInfo) => {
     if (!workspace || typeof workspace.renameTable !== 'function') return
     const name = window.prompt('Rename table', table.name)?.trim()
     if (!name || name === table.name) return
-    setTables(prev => prev.map(t => (t.id === table.id ? { ...t, name } : t)))
-    Promise.resolve(workspace.renameTable(table.id, name))
-      .then(() => {
-        if (workspaceId) notifyWorkspaceChanged(workspaceId)
-        refreshData()
-      })
-      .catch((err: unknown) => {
-        console.error('Failed to rename table:', err)
-        alert('Failed to rename table: ' + (err instanceof Error ? err.message : String(err)))
-        refreshData()
-      })
+    try {
+      await workspace.renameTable(table.id, name)
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+      refreshData()
+    } catch (err: unknown) {
+      console.error('Failed to rename table:', err)
+      alert('Failed to rename table: ' + (err instanceof Error ? err.message : String(err)))
+      refreshData()
+    }
   }
 
-  /** Rename a view by rewriting its config under the same id (LWW). */
-  const handleRenameView = (view: ViewInfo) => {
+  /** Rename a view by rewriting its config under the same id (LWW). Same
+   *  reasoning as `handleRenameTable`: await the write, then show the result,
+   *  and never swallow a failure — the old version reported success by
+   *  updating local state and logged the error to the console, so a failed
+   *  rename looked identical to a successful one until the next reload. */
+  const handleRenameView = async (view: ViewInfo) => {
     if (!workspace) return
     const name = window.prompt('Rename view', view.name)?.trim()
     if (!name || name === view.name) return
-    setViews(prev => prev.map(v => (v.id === view.id ? { ...v, name } : v)))
     try {
       const cfg = JSON.parse(workspace.getView(view.id))
-      Promise.resolve(workspace.createView(JSON.stringify({ ...cfg, name })))
-        .then(() => {
-          if (workspaceId) notifyWorkspaceChanged(workspaceId)
-          refreshData()
-        })
-        .catch((err: unknown) => {
-          console.error('Failed to rename view:', err)
-          refreshData()
-        })
-    } catch (err) {
-      console.error('Failed to read view config:', err)
+      await workspace.createView(JSON.stringify({ ...cfg, name }))
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+      refreshData()
+    } catch (err: unknown) {
+      console.error('Failed to rename view:', err)
+      alert('Failed to rename view: ' + (err instanceof Error ? err.message : String(err)))
       refreshData()
     }
   }
@@ -684,7 +686,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                     canRename={canRenameTables}
                     onOpen={() => navigate(`/workspace/${workspaceId}/table/${table.id}`)}
                     onDelete={() => handleDeleteTable(table)}
-                    onRename={() => handleRenameTable(table)}
+                    onRename={() => void handleRenameTable(table)}
                   />
                 ))}
               </SortableContext>
@@ -741,7 +743,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                     className="sidebar__item-delete ghost"
                     title={`Rename view ${view.name}`}
                     aria-label="Rename view"
-                    onClick={e => { e.stopPropagation(); handleRenameView(view) }}
+                    onClick={e => { e.stopPropagation(); void handleRenameView(view) }}
                   >
                     <PencilIcon />
                   </button>

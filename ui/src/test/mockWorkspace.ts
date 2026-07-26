@@ -17,6 +17,9 @@ export interface ColumnDef {
   required: boolean
   options?: string[]
   reference_table?: string
+  reference_display_column?: string
+  /** Persisted display width (column metadata, shared with collaborators). */
+  width?: number
   order?: number
   deleted?: boolean
 }
@@ -80,6 +83,13 @@ export class MockWorkspace {
       return a.localeCompare(b)
     })
     return JSON.stringify(ids)
+  }
+
+  /** Persist a column's display width (column metadata). */
+  setColumnWidth(tableId: string, columnId: string, width: number): void {
+    const schema = this.schemas.get(tableId)
+    const col = schema?.columns?.[columnId]
+    if (col) col.width = width
   }
 
   /** Rename in place: the table keeps its id, columns, rows, and views. */

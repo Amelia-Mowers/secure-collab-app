@@ -54,6 +54,12 @@ pub struct ColumnDefinition {
     /// leave it `None`, which falls back to the first text column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_display_column: Option<String>,
+    /// Display width in pixels. Column METADATA rather than a view setting, so
+    /// a resize is shared with collaborators and applies on the raw table too —
+    /// not just inside whichever view happened to be open (issue a96dfc71).
+    /// Unset means "derive one from the column type".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
     /// Display position. Lower sorts first; `None` (legacy columns created before
     /// ordering existed) sorts after ordered columns. Reordering rewrites these.
     #[serde(default)]
@@ -71,6 +77,7 @@ impl ColumnDefinition {
             options: None,
             reference_table: None,
             reference_display_column: None,
+            width: None,
             order: None,
         }
     }
@@ -97,6 +104,12 @@ impl ColumnDefinition {
 
     pub fn with_reference(mut self, table_id: String) -> Self {
         self.reference_table = Some(table_id);
+        self
+    }
+
+    /// Set the column's display width in pixels.
+    pub fn with_width(mut self, width: f64) -> Self {
+        self.width = Some(width);
         self
     }
 
@@ -312,6 +325,18 @@ impl SchemaManager {
                 updates.push(display_update);
             }
 
+            if let Some(width) = column.width {
+                let width_update = CellUpdate::new(
+                    SCHEMA_TABLE_ID,
+                    &row_id,
+                    "width",
+                    serde_json::json!(width),
+                    ts + 9,
+                );
+                self.schema_table.apply_update(width_update.clone());
+                updates.push(width_update);
+            }
+
             let order_update = CellUpdate::new(
                 SCHEMA_TABLE_ID,
                 &row_id,
@@ -402,6 +427,10 @@ impl SchemaManager {
             .get_value(row_id, "reference_display_column")
         {
             column.reference_display_column = display.as_str().map(String::from);
+        }
+
+        if let Some(width) = self.schema_table.get_value(row_id, "width") {
+            column.width = width.as_f64();
         }
 
         if let Some(order) = self.schema_table.get_value(row_id, "order") {
@@ -599,6 +628,7 @@ impl SchemaManager {
             ("default_value", "default"),
             ("reference_table", "reference_table"),
             ("reference_display_column", "reference_display_column"),
+            ("width", "width"),
         ];
         for (patch_key, cell) in mappings {
             if let Some(value) = patch.get(patch_key) {

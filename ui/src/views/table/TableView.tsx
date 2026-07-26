@@ -46,6 +46,8 @@ interface ColumnMeta {
   name: string
   column_type: string
   options?: string[]
+  /** Persisted display width (column metadata, shared with collaborators). */
+  width?: number
   reference_table?: string
   reference_display_column?: string
   order?: number | null
@@ -63,6 +65,37 @@ const ROW_HEIGHT = 40
  *  `max-width` on a cell constrains nothing. */
 const DEFAULT_COL_WIDTH = 180
 const MIN_COL_WIDTH = 72
+
+/** Sensible starting width per column type (issue 93ffe164). A checkbox needs
+ *  a checkbox's worth of space, not a paragraph's — one flat default made
+ *  narrow columns waste half the viewport. Select columns size to their
+ *  longest option, since that's the widest value they can ever hold. */
+function defaultWidthFor(col: { column_type: string; options?: string[] }): number {
+  switch (col.column_type) {
+    case 'boolean':
+      return 80
+    case 'number':
+      return 110
+    case 'date':
+      return 130
+    case 'select':
+    case 'multiselect': {
+      const longest = (col.options ?? []).reduce((n, o) => Math.max(n, o.length), 0)
+      // ~7px per character plus the pill's padding, clamped to something sane.
+      return Math.min(240, Math.max(110, longest * 7 + 44))
+    }
+    case 'member':
+    case 'multimember':
+    case 'reference':
+    case 'multireference':
+      return 160
+    case 'document':
+    case 'json':
+      return 240
+    default:
+      return DEFAULT_COL_WIDTH
+  }
+}
 
 /**
  * Global filter that searches every column's value as text — including select
@@ -379,7 +412,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   // Grid layout, per view (issue 848dcbf7): pixel widths by column id, and the
   // columns hidden from this view. Both are presentation — the column and its
   // data are untouched — and both save with the view like filters and sort.
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
+  /** Live widths during a drag; the committed value lives on the column
+   *  itself, so it reaches collaborators and applies outside any view. */
+  const [draftWidths, setDraftWidths] = useState<Record<string, number>>({})
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([])
   const [showColumnMenu, setShowColumnMenu] = useState(false)
   // Multi-row selection + bulk edit (issue bae5a235). Selection is ephemeral:
@@ -414,6 +449,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           name: def?.name || colId.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
           column_type: def?.column_type || 'text',
           options: def?.options,
+          width: typeof def?.width === 'number' ? def.width : undefined,
           reference_table: def?.reference_table,
           reference_display_column: def?.reference_display_column,
           order: typeof def?.order === 'number' ? def.order : null,
@@ -428,6 +464,23 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         return a.id.localeCompare(b.id)
       })
   }, [rows, schema])
+
+  /** Effective width: the live drag value, else the column's saved width, else
+   *  one derived from its type. */
+  const widthFor = (col: ColumnMeta) =>
+    draftWidths[col.id] ?? col.width ?? defaultWidthFor(col)
+
+  /** Write a resize to the column definition so every collaborator gets it. */
+  const persistWidth = async (columnId: string, width: number) => {
+    const ws = workspace as any
+    if (!tableId || !ws || typeof ws.setColumnWidth !== 'function') return
+    try {
+      await ws.setColumnWidth(tableId, columnId, width)
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+    } catch (err) {
+      console.error('Failed to save column width:', err)
+    }
+  }
 
   const visibleColumns = React.useMemo(
     () => columnsMeta.filter(c => !hiddenColumns.includes(c.id)),
@@ -472,7 +525,6 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       const { conditions: c, sorting: s } = mapViewFilters(cfg)
       setConditions(c)
       setSorting(s)
-      setColumnWidths(cfg?.table_config?.column_widths ?? {})
       setHiddenColumns(cfg?.table_config?.hidden_columns ?? [])
       if (c.length > 0) setShowFilter(true)
     } catch (err) {
@@ -950,7 +1002,6 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         value: c.value ?? null,
       })),
       table_config: {
-        column_widths: columnWidths,
         hidden_columns: hiddenColumns,
       },
     })
@@ -1130,7 +1181,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             <colgroup>
               <col className="col-open" />
               {visibleColumns.map(c => (
-                <col key={c.id} style={{ width: columnWidths[c.id] ?? DEFAULT_COL_WIDTH }} />
+                <col key={c.id} style={{ width: widthFor(c) }} />
               ))}
               <col className="col-actions" />
             </colgroup>
@@ -1176,9 +1227,13 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                         onEdit={() => openEditColumn(header.column.id)}
                         onDelete={() => handleDeleteColumn(header.column.id, label)}
                         onHide={() => setHiddenColumns(prev => [...prev, header.column.id])}
-                        onResize={(w) =>
-                          setColumnWidths(prev => ({ ...prev, [header.column.id]: Math.round(w) }))
-                        }
+                        onResize={(w, done) => {
+                          const width = Math.round(w)
+                          setDraftWidths(prev => ({ ...prev, [header.column.id]: width }))
+                          // Persist once, on release — a write per pixel would
+                          // flood the send queue.
+                          if (done) void persistWidth(header.column.id, width)
+                        }}
                       />
                     )
                   })}

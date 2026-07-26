@@ -147,7 +147,11 @@ describe('Sidebar', () => {
       renderSidebar(ws)
 
       fireEvent.click(screen.getByLabelText('Rename table'))
-      await waitFor(() => expect(screen.getByText('Projects')).toBeInTheDocument())
+      // The new name lands on the table item AND the view's parent badge, so
+      // scope to the item label rather than matching bare text.
+      await waitFor(() =>
+        expect(screen.getAllByText('Projects').length).toBeGreaterThan(0),
+      )
       // Same table: its rows and its view are still there.
       expect(JSON.parse(ws.getTableRows('tasks')).length).toBeGreaterThan(0)
       expect(screen.getByText('Task Board')).toBeInTheDocument()
