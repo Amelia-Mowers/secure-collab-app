@@ -103,6 +103,9 @@ export interface WorkspaceHandle {
   /** The unsent send queue as a JSON CellUpdate array — mirrored to the
    *  persistent outbox (ADR 0003). ConnectedWorkspace only. */
   pendingUpdates?(): string
+  /** Register a callback fired whenever the pending queue changes, so the
+   *  outbox mirror can run while the page is alive (issue 980ac596). */
+  onQueueChanged?(callback: () => void): void
   /** Replay a persisted outbox after cold start: re-applies under LWW and
    *  re-enqueues for send; returns how many were replayed. */
   restorePendingUpdates?(json: string): number
@@ -673,6 +676,14 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
     const interval = setInterval(mirror, 3_000)
     const onHide = () => {
       if (document.hidden) mirror()
+    }
+    // Event-driven mirror (issue 980ac596): the bridge calls back the moment
+    // the queue changes, so the outbox is written while the page is alive.
+    // pagehide alone is not enough — an async IndexedDB write started during
+    // unload can be aborted, silently losing the only durable copy of an
+    // unsent operation.
+    if (typeof (workspace as any).onQueueChanged === 'function') {
+      (workspace as any).onQueueChanged(mirror)
     }
     document.addEventListener('visibilitychange', onHide)
     window.addEventListener('pagehide', mirror)
