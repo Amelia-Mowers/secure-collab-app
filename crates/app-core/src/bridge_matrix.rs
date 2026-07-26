@@ -1557,6 +1557,33 @@ impl ConnectedWorkspace {
             .client
             .get_room(&self.room_id)
             .ok_or_else(|| JsValue::from_str("Room not found"))?;
+
+        // Don't let the last admin demote themselves — the workspace would be
+        // left with nobody able to manage members or roles, and no way back:
+        // raising a power level requires a power level. Matrix itself permits
+        // this, so the guard has to live here. Mirrors the same rule in
+        // `leave_workspace`.
+        if role != "admin" {
+            let me = self
+                .client
+                .user_id()
+                .ok_or_else(|| JsValue::from_str("Not signed in"))?;
+            if user_id == me {
+                let members = room
+                    .members(RoomMemberships::ACTIVE)
+                    .await
+                    .map_err(|e| JsValue::from_str(&format!("Failed to list members: {e}")))?;
+                let other_admins = members.iter().any(|m| {
+                    m.user_id() != me && role_name(power_level_value(m.power_level())) == "admin"
+                });
+                if !other_admins {
+                    return Err(JsValue::from_str(
+                        "You're the only admin. Make someone else an admin first.",
+                    ));
+                }
+            }
+        }
+
         let level = matrix_sdk::ruma::Int::try_from(level)
             .map_err(|_| JsValue::from_str("Power level out of range"))?;
         room.update_power_levels(vec![(&user_id, level)])
