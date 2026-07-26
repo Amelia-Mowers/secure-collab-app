@@ -1250,6 +1250,113 @@ pub struct ConnectedWorkspace {
     queue_listener: Rc<RefCell<Option<js_sys::Function>>>,
 }
 
+/// Paginate a room's history backwards and replay every cell event into
+/// `workspace`, returning `(marker_ts, undecryptable_count)`.
+///
+/// Shared by cold start and the integrity check (issue 48f042ba) so there is
+/// exactly ONE walk: a second implementation is how a re-gather ends up
+/// disagreeing with the gather it is meant to audit.
+///
+/// `fast_path` + `marker_ts` bound the walk to a snapshot's resume point; pass
+/// `false` / `0` for an unbounded full gather.
+async fn gather_history(
+    room: &matrix_sdk::room::Room,
+    workspace: &mut Workspace,
+    fast_path: bool,
+    marker_ts: u64,
+) -> Result<(u64, u32), JsValue> {
+    let mut marker_ts = marker_ts;
+    let stop_before = marker_ts;
+    let mut undecryptable_count = 0u32;
+    let mut from_token: Option<String> = None;
+    loop {
+        let mut options = MessagesOptions::backward();
+        if let Some(ref token) = from_token {
+            options = options.from(token.as_str());
+        }
+        // Fetch large pages so cold start makes ~history/1000 round-trips
+        // instead of ~history/10 (ruma's default limit). The homeserver caps
+        // this to its own max and returns fewer if needed; the loop still
+        // paginates the rest. Sharply cuts the network-round-trip component
+        // of cold start.
+        options.limit = matrix_sdk::ruma::UInt::from(1000u32);
+
+        let response = room
+            .messages(options)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to fetch room history: {e}")))?;
+
+        if response.chunk.is_empty() {
+            break;
+        }
+
+        // Incremental bound (issue 48f042ba). /messages walks the server's
+        // STREAM order, which — with Synapse workers / stream writers —
+        // can disagree with origin_server_ts by persister skew. The old
+        // rule ("break the whole walk at the FIRST event older than the
+        // snapshot marker") assumed the two orders agree; one reordered
+        // event then ended the walk early and every event deeper in the
+        // stream was skipped — and because the running marker had already
+        // advanced past them, no later incremental start would ever fetch
+        // them: a permanent, self-sealing hole. (Exactly what shipped 8
+        // missed events to prod on 2026-07-25; the single-process e2e
+        // Synapse can't reproduce it because there the orders agree.)
+        //
+        // So: always process every event of a fetched page (LWW makes
+        // re-applying pre-marker events idempotent), and stop paginating
+        // only when the OLDEST event of the page is older than the marker
+        // by more than a grace margin — a reordered event is lost only if
+        // stream order and ots disagree by over the margin, far beyond
+        // realistic worker skew.
+        let mut page_oldest: Option<u64> = None;
+        for timeline_event in &response.chunk {
+            if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
+                // An unparseable ts is treated as "newer" (fail-safe:
+                // process it, never skip).
+                let ots = MatrixClient::extract_origin_server_ts(&json_str);
+                if let Some(t) = ots {
+                    page_oldest = Some(page_oldest.map_or(t, |m| m.min(t)));
+                }
+                // One timeline event may carry many cells (a batch event).
+                let received = MatrixClient::extract_cell_updates(&json_str);
+                if !received.is_empty() {
+                    for r in received {
+                        // Advance the snapshot marker from the cell event's
+                        // envelope (same source as start_sync) so it never
+                        // sits ahead of the cell state it represents.
+                        let event_ts: u64 = r.origin_server_ts.0.into();
+                        if event_ts > marker_ts {
+                            marker_ts = event_ts;
+                        }
+                        // origin_server_ts is the LWW tiebreaker.
+                        let _ = workspace.apply_update(r.into_update());
+                    }
+                } else if MatrixClient::is_undecryptable_event(&json_str)
+                    && (!fast_path || ots.is_none_or(|t| t >= stop_before))
+                {
+                    // History we can't decrypt (no key) — count it so the UI
+                    // can warn instead of silently materializing partial
+                    // state. Pre-marker events are excluded on the fast
+                    // path: the snapshot already accounts for them, and the
+                    // grace-margin walk would otherwise recount them.
+                    undecryptable_count += 1;
+                }
+            }
+        }
+
+        if backfill_caught_up(fast_path, page_oldest, stop_before) {
+            break;
+        }
+
+        match response.end {
+            Some(token) => from_token = Some(token),
+            None => break, // No more pages
+        }
+    }
+
+    Ok((marker_ts, undecryptable_count))
+}
+
 #[wasm_bindgen]
 impl ConnectedWorkspace {
     /// Create a connected workspace from a session and room ID.
@@ -1314,93 +1421,8 @@ impl ConnectedWorkspace {
         // advancing the threshold inside the loop would raise it to the newest
         // event and skip every event between the marker and now (data loss on a
         // snapshot that lags the latest writes).
-        let stop_before = marker_ts;
-        let mut undecryptable_count = 0u32;
-        let mut from_token: Option<String> = None;
-        loop {
-            let mut options = MessagesOptions::backward();
-            if let Some(ref token) = from_token {
-                options = options.from(token.as_str());
-            }
-            // Fetch large pages so cold start makes ~history/1000 round-trips
-            // instead of ~history/10 (ruma's default limit). The homeserver caps
-            // this to its own max and returns fewer if needed; the loop still
-            // paginates the rest. Sharply cuts the network-round-trip component
-            // of cold start.
-            options.limit = matrix_sdk::ruma::UInt::from(1000u32);
-
-            let response = room
-                .messages(options)
-                .await
-                .map_err(|e| JsValue::from_str(&format!("Failed to fetch room history: {e}")))?;
-
-            if response.chunk.is_empty() {
-                break;
-            }
-
-            // Incremental bound (issue 48f042ba). /messages walks the server's
-            // STREAM order, which — with Synapse workers / stream writers —
-            // can disagree with origin_server_ts by persister skew. The old
-            // rule ("break the whole walk at the FIRST event older than the
-            // snapshot marker") assumed the two orders agree; one reordered
-            // event then ended the walk early and every event deeper in the
-            // stream was skipped — and because the running marker had already
-            // advanced past them, no later incremental start would ever fetch
-            // them: a permanent, self-sealing hole. (Exactly what shipped 8
-            // missed events to prod on 2026-07-25; the single-process e2e
-            // Synapse can't reproduce it because there the orders agree.)
-            //
-            // So: always process every event of a fetched page (LWW makes
-            // re-applying pre-marker events idempotent), and stop paginating
-            // only when the OLDEST event of the page is older than the marker
-            // by more than a grace margin — a reordered event is lost only if
-            // stream order and ots disagree by over the margin, far beyond
-            // realistic worker skew.
-            let mut page_oldest: Option<u64> = None;
-            for timeline_event in &response.chunk {
-                if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
-                    // An unparseable ts is treated as "newer" (fail-safe:
-                    // process it, never skip).
-                    let ots = MatrixClient::extract_origin_server_ts(&json_str);
-                    if let Some(t) = ots {
-                        page_oldest = Some(page_oldest.map_or(t, |m| m.min(t)));
-                    }
-                    // One timeline event may carry many cells (a batch event).
-                    let received = MatrixClient::extract_cell_updates(&json_str);
-                    if !received.is_empty() {
-                        for r in received {
-                            // Advance the snapshot marker from the cell event's
-                            // envelope (same source as start_sync) so it never
-                            // sits ahead of the cell state it represents.
-                            let event_ts: u64 = r.origin_server_ts.0.into();
-                            if event_ts > marker_ts {
-                                marker_ts = event_ts;
-                            }
-                            // origin_server_ts is the LWW tiebreaker.
-                            let _ = workspace.apply_update(r.into_update());
-                        }
-                    } else if MatrixClient::is_undecryptable_event(&json_str)
-                        && (!fast_path || ots.is_none_or(|t| t >= stop_before))
-                    {
-                        // History we can't decrypt (no key) — count it so the UI
-                        // can warn instead of silently materializing partial
-                        // state. Pre-marker events are excluded on the fast
-                        // path: the snapshot already accounts for them, and the
-                        // grace-margin walk would otherwise recount them.
-                        undecryptable_count += 1;
-                    }
-                }
-            }
-
-            if backfill_caught_up(fast_path, page_oldest, stop_before) {
-                break;
-            }
-
-            match response.end {
-                Some(token) => from_token = Some(token),
-                None => break, // No more pages
-            }
-        }
+        let (marker_ts, undecryptable_count) =
+            gather_history(&room, &mut workspace, fast_path, marker_ts).await?;
 
         Ok(ConnectedWorkspace {
             inner: Rc::new(RefCell::new(workspace)),
@@ -2142,6 +2164,71 @@ impl ConnectedWorkspace {
         let ws = self.inner.borrow();
         crate::archive::table_to_csv(&ws, &table_id)
             .ok_or_else(|| JsValue::from_str("Table not found"))
+    }
+
+    /// Audit the local materialization against a full re-gather of the room's
+    /// history, and repair any difference (issue 48f042ba).
+    ///
+    /// The incremental cold start is bounded by a snapshot marker, and a
+    /// bounded walk can in principle miss an event permanently: the marker
+    /// advances past it, so no later start re-fetches it — the gap seals
+    /// itself. The 30s reorder margin makes that vanishingly unlikely, but
+    /// "unlikely" is not "detectable", and the single-process e2e Synapse
+    /// cannot reproduce the class at all. This is the check that does not rely
+    /// on the margin being right.
+    ///
+    /// Repair is purely LOCAL: the server already holds every cell we might be
+    /// missing, so a fix is `apply_update`, not a re-send. That makes running
+    /// it safe — it cannot originate data or race another writer.
+    ///
+    /// Expensive by construction (a full backward pagination — exactly what
+    /// the snapshot exists to avoid), so it is user-initiated rather than
+    /// scheduled. Returns
+    /// `{checked, missing, stale, repaired, undecryptable}`.
+    #[wasm_bindgen(js_name = checkIntegrity)]
+    pub async fn check_integrity(&self) -> Result<String, JsValue> {
+        let room = self
+            .client
+            .get_room(&self.room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+
+        // Full walk into a SEPARATE workspace: unbounded, no snapshot, so it
+        // shares none of the assumptions being audited.
+        let mut truth = Workspace::new(self.room_id.to_string());
+        let (_, undecryptable) = gather_history(&room, &mut truth, false, 0).await?;
+
+        let local = { self.inner.borrow().export_cells() };
+        // The comparison itself lives in snapshot.rs, unit-tested natively —
+        // this whole issue exists because the last rule that governed the
+        // cold-start walk could only be exercised through wasm.
+        let (report, repairs) = crate::snapshot::integrity_diff(&local, &truth.export_cells());
+
+        let repaired = repairs.len();
+        if repaired > 0 {
+            let mut ws = self.inner.borrow_mut();
+            for cell in repairs {
+                // LWW: re-applying a cell we already hold at an equal-or-newer
+                // version is a no-op, so this cannot regress local state.
+                let mut update = CellUpdate::new(
+                    cell.id.table_id,
+                    cell.id.row_id,
+                    cell.id.column_id,
+                    cell.value,
+                    cell.timestamp,
+                );
+                update.server_timestamp = cell.server_timestamp;
+                let _ = ws.apply_update(update);
+            }
+        }
+
+        Ok(serde_json::json!({
+            "checked": report.checked,
+            "missing": report.missing,
+            "stale": report.stale,
+            "repaired": repaired,
+            "undecryptable": undecryptable,
+        })
+        .to_string())
     }
 
     /// Export the whole workspace as an archive: a JSON object of
