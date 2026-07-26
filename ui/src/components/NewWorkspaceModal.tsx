@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { WorkspaceTemplate } from '@/lib/workspaceTemplates'
 import './AddColumnModal.css'
+import './NewWorkspaceModal.css'
 
 /**
  * Create-a-workspace dialogue with a starter picker (issue row_1785004738121).
@@ -36,7 +37,6 @@ export function NewWorkspaceModal({
 
   const needsArchive = choice === ARCHIVE_OPTION
   const canSubmit = name.trim().length > 0 && (!needsArchive || !!archive)
-  const selected = templates.find(t => t.slug === choice)
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -77,81 +77,57 @@ export function NewWorkspaceModal({
 
           <div className="acm__form-group">
             <label className="acm__label">Start from</label>
-            <div className="acm__type-list">
-              <label
-                className={`acm__type-row ${choice === EMPTY_OPTION ? 'acm__type-row--active' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="workspace-template"
-                  value={EMPTY_OPTION}
-                  checked={choice === EMPTY_OPTION}
-                  onChange={() => setChoice(EMPTY_OPTION)}
-                  className="acm__type-radio"
-                />
-                <span className="acm__type-label">Empty</span>
-                <span className="acm__type-desc">Start with nothing and add your own tables.</span>
-              </label>
+            <div className="nwm__list">
+              <Tile
+                value={EMPTY_OPTION}
+                checked={choice === EMPTY_OPTION}
+                onSelect={setChoice}
+                name="Empty"
+                description="Start with nothing and add your own tables."
+              />
 
               {templates.map(t => (
-                <label
+                <Tile
                   key={t.slug}
-                  className={`acm__type-row ${choice === t.slug ? 'acm__type-row--active' : ''}`}
+                  value={t.slug}
+                  checked={choice === t.slug}
+                  onSelect={setChoice}
+                  name={t.name}
+                  description={t.description}
                 >
-                  <input
-                    type="radio"
-                    name="workspace-template"
-                    value={t.slug}
-                    checked={choice === t.slug}
-                    onChange={() => setChoice(t.slug)}
-                    className="acm__type-radio"
-                  />
-                  <span className="acm__type-label">{t.name}</span>
-                  <span className="acm__type-desc">{t.description}</span>
-                </label>
+                  {choice === t.slug && t.tables.length > 0 && (
+                    <div className="nwm__detail">
+                      {t.tables.map(tbl => (
+                        <span key={tbl.id} className="nwm__chip">
+                          {tbl.name}
+                          {tbl.rows > 0 ? ` · ${tbl.rows} rows` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </Tile>
               ))}
 
-              <label
-                className={`acm__type-row ${needsArchive ? 'acm__type-row--active' : ''}`}
+              <Tile
+                value={ARCHIVE_OPTION}
+                checked={needsArchive}
+                onSelect={setChoice}
+                name="From an archive"
+                description="A .zip exported from TideWork or written by the CLI. Ids are re-minted, so this makes a copy rather than restoring the original."
               >
-                <input
-                  type="radio"
-                  name="workspace-template"
-                  value={ARCHIVE_OPTION}
-                  checked={needsArchive}
-                  onChange={() => setChoice(ARCHIVE_OPTION)}
-                  className="acm__type-radio"
-                />
-                <span className="acm__type-label">From an archive</span>
-                <span className="acm__type-desc">
-                  A .zip exported from TideWork or written by the CLI. Ids are re-minted, so this
-                  makes a copy rather than restoring the original.
-                </span>
-              </label>
+                {needsArchive && (
+                  <div className="nwm__file">
+                    <input
+                      type="file"
+                      accept=".zip,application/zip"
+                      aria-label="Workspace archive"
+                      disabled={creating}
+                      onChange={e => pickArchive(e.target.files?.[0] ?? null)}
+                    />
+                  </div>
+                )}
+              </Tile>
             </div>
-
-            {needsArchive && (
-              <div className="acm__option-preview">
-                <input
-                  type="file"
-                  accept=".zip,application/zip"
-                  aria-label="Workspace archive"
-                  disabled={creating}
-                  onChange={e => pickArchive(e.target.files?.[0] ?? null)}
-                />
-              </div>
-            )}
-
-            {selected && selected.tables.length > 0 && (
-              <div className="acm__option-preview">
-                {selected.tables.map(t => (
-                  <span key={t.id} className="acm__option-chip">
-                    {t.name}
-                    {t.rows > 0 ? ` · ${t.rows} rows` : ''}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
 
           <div className="modal-actions">
@@ -165,5 +141,39 @@ export function NewWorkspaceModal({
         </form>
       </div>
     </div>
+  )
+}
+
+/** One choice in the picker: a large clickable tile with its description, not
+ *  a bare radio — the description is what makes the choice meaningful. */
+function Tile({
+  value,
+  checked,
+  onSelect,
+  name,
+  description,
+  children,
+}: {
+  value: string
+  checked: boolean
+  onSelect: (value: string) => void
+  name: string
+  description: string
+  children?: React.ReactNode
+}) {
+  return (
+    <label className={`nwm__tile ${checked ? 'nwm__tile--active' : ''}`}>
+      <input
+        type="radio"
+        name="workspace-template"
+        className="nwm__radio"
+        value={value}
+        checked={checked}
+        onChange={() => onSelect(value)}
+      />
+      <span className="nwm__name">{name}</span>
+      <span className="nwm__desc">{description}</span>
+      {children}
+    </label>
   )
 }
