@@ -87,6 +87,9 @@ export interface WorkspaceHandle {
    *  headers and references as labels; preview is a dry run that reports what
    *  wouldn't apply *before* the import commits. */
   exportTableCsv?(tableId: string): string
+  /** The whole workspace as a zip — the same container the CLI reads. */
+  exportWorkspaceZip?(name: string): Uint8Array
+  importWorkspaceZip?(bytes: Uint8Array): Promise<string> | string
   previewCsvImport?(tableId: string, csv: string, sample: number, overridesJson: string): string
   importCsv?(
     tableId: string,

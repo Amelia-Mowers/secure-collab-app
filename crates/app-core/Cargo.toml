@@ -45,6 +45,9 @@ wee_alloc = { version = "0.4.5", optional = true }
 
 # Additional dependencies
 indexmap = { version = "2.1", features = ["serde"] }
+# Zip container for workspace archives (ADR 0004). Deflate only — no bzip2/zstd
+# backends, which drag in C and would not build for wasm.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 url = "2"
 
 [dev-dependencies]

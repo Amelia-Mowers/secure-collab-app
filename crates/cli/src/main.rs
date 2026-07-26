@@ -87,6 +87,38 @@ enum Command {
         #[command(subcommand)]
         command: ViewCmd,
     },
+    /// Export a workspace as a CSV archive (ADR 0004): a directory of CSVs, a
+    /// `.zip` of the same, or one table as a standalone `.csv`.
+    ///
+    /// Note that ids are not preserved across an export/import round trip —
+    /// this is a portability format, not a backup format.
+    Export {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Destination. A `.zip` or `.csv` path writes that file; anything
+        /// else is treated as a directory.
+        dest: String,
+        /// Export only this table (requires a `.csv` destination).
+        #[arg(long)]
+        table: Option<String>,
+    },
+    /// Import a CSV archive into a workspace: a directory, a `.zip`, or a
+    /// single `.csv` (with --table naming the destination).
+    ///
+    /// Tables that already exist are APPENDED to, matching columns by name;
+    /// the live schema wins on type.
+    Import {
+        /// Workspace (room id or name).
+        workspace: String,
+        /// Source directory, `.zip`, or `.csv`.
+        src: String,
+        /// Destination table for a single `.csv` (defaults to the file name).
+        #[arg(long)]
+        table: Option<String>,
+        /// Report what would be written, then stop.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// A workspace argument is either a room id (starts with `!`) or a workspace
@@ -424,6 +456,17 @@ async fn run() -> Result<()> {
         Command::View { command } => match command {
             ViewCmd::List { workspace, table } => crud::view_list(workspace, table).await,
         },
+        Command::Export {
+            workspace,
+            dest,
+            table,
+        } => crud::export(workspace, dest, table).await,
+        Command::Import {
+            workspace,
+            src,
+            table,
+            dry_run,
+        } => crud::import(workspace, src, table, dry_run).await,
     }
 }
 

@@ -1277,6 +1277,112 @@ pub fn table_from_csv(id: &str, name: &str, csv: &str) -> ArchiveTable {
     table
 }
 
+// ───────────────────────────── zip container ────────────────────────────────
+//
+// The format is a set of files; a zip is just the one-file way to hand that
+// set to somebody. In-tree templates stay plain directories (diffable, and
+// reviewable in a PR) — this is for export and for import of what someone
+// else exported.
+//
+// One implementation, in Rust, rather than a Rust one for the CLI and a
+// JavaScript one for the browser. Measured cost: +213 KB on an 11 MB wasm
+// bundle already dominated by matrix-sdk (~2%). A container implemented twice
+// is a container that eventually disagrees with itself.
+
+impl Archive {
+    /// Pack this archive into a zip.
+    pub fn to_zip(&self) -> Result<Vec<u8>> {
+        use zip::write::SimpleFileOptions;
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut buf);
+            // Fixed timestamp: the archive's bytes should depend on its
+            // contents alone, so re-exporting unchanged data doesn't produce a
+            // different file (and templates diff cleanly).
+            let options = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .last_modified_time(
+                    zip::DateTime::from_date_and_time(1980, 1, 1, 0, 0, 0).unwrap_or_default(),
+                );
+            for (path, contents) in self.to_files() {
+                zip.start_file(&path, options)
+                    .map_err(|e| zip_err(&path, e))?;
+                std::io::Write::write_all(&mut zip, contents.as_bytes()).map_err(|e| {
+                    ArchiveError::Malformed {
+                        file: path.clone(),
+                        message: e.to_string(),
+                    }
+                })?;
+            }
+            zip.finish().map_err(|e| zip_err("archive", e))?;
+        }
+        Ok(buf.into_inner())
+    }
+
+    /// Read an archive out of a zip. Directory entries and anything that isn't
+    /// valid UTF-8 text are skipped rather than failing the whole import — a
+    /// zip made by a file manager routinely carries `__MACOSX` noise.
+    pub fn from_zip(bytes: &[u8]) -> Result<Archive> {
+        let mut zip =
+            zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| zip_err("archive", e))?;
+        let mut files = Files::new();
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(|e| zip_err("archive", e))?;
+            if entry.is_dir() {
+                continue;
+            }
+            let Some(path) = entry.enclosed_name() else {
+                continue; // path traversal attempt, or an unrepresentable name
+            };
+            let path = normalize_entry_path(&path.to_string_lossy());
+            if path.is_empty() {
+                continue;
+            }
+            let mut text = String::new();
+            if std::io::Read::read_to_string(&mut entry, &mut text).is_ok() {
+                files.insert(path, text);
+            }
+        }
+        Archive::from_files(&files)
+    }
+}
+
+fn zip_err(file: &str, e: zip::result::ZipError) -> ArchiveError {
+    ArchiveError::Malformed {
+        file: file.to_string(),
+        message: e.to_string(),
+    }
+}
+
+/// Strip a wrapping directory and platform noise, so an archive still reads
+/// when someone zipped the *folder* rather than its contents — which is what
+/// most people do.
+fn normalize_entry_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    if path.starts_with("__MACOSX/") || path.rsplit('/').next().is_some_and(|f| f == ".DS_Store") {
+        return String::new();
+    }
+    // Keep `data/<table>.csv` intact but drop any prefix above it.
+    for marker in [
+        "workspace.csv",
+        "tables.csv",
+        "columns.csv",
+        "views.csv",
+        "filters.csv",
+        "sorts.csv",
+    ] {
+        if let Some(idx) = path.rfind(marker) {
+            if path[idx..].len() == marker.len() {
+                return marker.to_string();
+            }
+        }
+    }
+    match path.rfind("data/") {
+        Some(idx) => path[idx..].to_string(),
+        None => path,
+    }
+}
+
 /// Render one table as a standalone CSV — headers are column names, references
 /// are labels, so the file opens as an ordinary spreadsheet.
 pub fn table_to_csv(workspace: &Workspace, table_id: &str) -> Option<String> {
@@ -1611,6 +1717,42 @@ mod tests {
         let table = table_from_csv("tasks", "Tasks", "Title,Owner\nFirst,Second\nSecond,\n");
         let columns = vec![col("title", "Title", ColumnType::Text), owner];
         assert_eq!(validate_table(&ws, &table, &columns), Vec::new());
+    }
+
+    #[test]
+    fn zip_round_trips_and_is_reproducible() {
+        let archive = sample_archive();
+        let bytes = archive.to_zip().unwrap();
+        // Same contents → same bytes, so re-exporting unchanged data doesn't
+        // produce a different file.
+        assert_eq!(bytes, archive.to_zip().unwrap());
+
+        let back = Archive::from_zip(&bytes).unwrap();
+        assert_eq!(back.name, "Demo");
+        assert_eq!(back.tables.len(), 2);
+        let tasks = back.tables.iter().find(|t| t.id == "tasks").unwrap();
+        assert_eq!(tasks.rows[0]["Owner"], "Ada");
+    }
+
+    #[test]
+    fn a_zip_of_the_folder_still_reads() {
+        // Most people zip the directory, not its contents. Both must work.
+        let mut zipped = std::io::Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut zipped);
+            let opts = zip::write::SimpleFileOptions::default();
+            for (path, contents) in sample_archive().to_files() {
+                w.start_file(format!("My Workspace/{path}"), opts).unwrap();
+                std::io::Write::write_all(&mut w, contents.as_bytes()).unwrap();
+            }
+            // Noise a Mac would add.
+            w.start_file("__MACOSX/._workspace.csv", opts).unwrap();
+            std::io::Write::write_all(&mut w, b"junk").unwrap();
+            w.finish().unwrap();
+        }
+        let back = Archive::from_zip(&zipped.into_inner()).unwrap();
+        assert_eq!(back.name, "Demo");
+        assert_eq!(back.tables.len(), 2);
     }
 
     #[test]
