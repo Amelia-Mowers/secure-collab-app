@@ -12,6 +12,7 @@ import {
 import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
 import { setSnapshotKey } from '../lib/atRestSession'
 import { fetchPortalUrl } from '../lib/billing'
+import { isSessionRejected } from '../lib/authErrors'
 
 /** How long a post-recovery `initialSync` may hold up the UI before it is
  *  demoted to the background (issue 58dfe52b: on a large account that sync
@@ -1001,12 +1002,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch (err: any) {
         console.error('[auth] Session restore failed:', err)
-        // Don't remove the account on timeout — only on auth errors.
-        // A timeout just means the server is slow, not that creds are bad.
-        const isTimeout = err?.message?.includes('timed out')
-        if (isTimeout) {
-          console.warn('[auth] Restore timed out, keeping account but clearing loading state')
-          setError('Connection to homeserver is slow. You may need to reload.')
+        // Only a DEFINITIVE rejection removes the account. This used to keep
+        // the account solely when the message said "timed out" and delete it
+        // for everything else — so a few minutes of the auth service being
+        // unreachable signed the user out and cleared their cached workspaces
+        // (observed in prod 2026-07-26). An unreachable server says nothing
+        // about whether the session is still valid, so it must fail open.
+        if (!isSessionRejected(err)) {
+          console.warn('[auth] Restore failed without a rejection, keeping account:', err)
+          setError('Could not reach the homeserver. Check your connection and reload.')
         } else {
           // Remove the stale account from the pool
           const updated = accs.filter(a => a.userId !== account.userId)
