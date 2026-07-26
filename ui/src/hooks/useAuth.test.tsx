@@ -209,8 +209,10 @@ describe('AuthProvider', () => {
       })
     })
 
-    it('removes stale account and shows error when restore fails (expired token)', async () => {
-      mockRestore.mockRejectedValueOnce(new Error('Token expired'))
+    it('removes stale account and shows error when the server REJECTS the session', async () => {
+      // A definitive rejection — the server considered the credentials and
+      // refused. Only this removes the account.
+      mockRestore.mockRejectedValueOnce(new Error('M_UNKNOWN_TOKEN: Invalid access token'))
 
       storeAccount('@alice:localhost', 'alice', SESSION_DATA_JSON)
 
@@ -224,6 +226,26 @@ describe('AuthProvider', () => {
       // Account should be removed from pool
       const accounts = JSON.parse(localStorage.getItem('collab:accounts')!)
       expect(accounts).toHaveLength(0)
+    })
+
+    it('KEEPS the account when the homeserver is merely unreachable', async () => {
+      // Observed in prod 2026-07-26: MAS was briefly down and the app signed
+      // the user out. An unreachable server says nothing about whether the
+      // session is still valid, so the account must survive.
+      mockRestore.mockRejectedValueOnce(
+        new Error('error sending request for url (https://auth.example/)'),
+      )
+
+      storeAccount('@alice:localhost', 'alice', SESSION_DATA_JSON)
+
+      renderAuth()
+
+      await waitFor(() => {
+        expect(screen.getByTestId('consumer').textContent).toContain('Could not reach')
+      })
+
+      const accounts = JSON.parse(localStorage.getItem('collab:accounts')!)
+      expect(accounts).toHaveLength(1)
     })
   })
 
