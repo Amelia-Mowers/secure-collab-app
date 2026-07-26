@@ -1093,40 +1093,13 @@ impl Archive {
             }
         }
 
-        let mut refs = RefResolver::default();
-
-        // Rows already in the workspace are valid reference targets — an
-        // appended CSV routinely points at a table it does not itself carry.
-        // Seed from every table any reference column names, plus the tables
-        // being written (whose existing rows must stay addressable).
-        let mut targets: Vec<String> = effective
+        let targets: Vec<String> = effective
             .iter()
             .flatten()
             .filter_map(|c| c.reference_table.clone())
             .chain(self.tables.iter().map(|t| t.id.clone()))
             .collect();
-        targets.sort();
-        targets.dedup();
-        for target in targets {
-            let Some(schema) = workspace.get_table_schema(&target) else {
-                continue;
-            };
-            let columns = ordered_columns(&schema);
-            let Some(display) = display_column(&columns, None) else {
-                continue;
-            };
-            let map: HashMap<String, String> = workspace
-                .get_table_rows(&target)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|r| {
-                    let rid = r.get("_row_id")?.as_str()?.to_string();
-                    let label = r.get(&display)?.as_str()?.trim().to_string();
-                    (!label.is_empty()).then_some((label, rid))
-                })
-                .collect();
-            refs.by_table.insert(target, map);
-        }
+        let mut refs = seed_resolver(workspace, &targets);
 
         // Mint the row ids up front, so references can resolve against rows
         // that haven't been written yet (forward references, and cycles).
@@ -1195,6 +1168,87 @@ pub struct ImportResult {
     pub updates: Vec<tables_over_matrix::CellUpdate>,
     pub issues: Vec<ImportIssue>,
     pub rows_written: usize,
+}
+
+/// Build the label → row-id map for every table named in `targets`, from rows
+/// already in the workspace. Rows that are already there are valid reference
+/// targets, so an appended CSV can point at a table it doesn't itself carry.
+fn seed_resolver(workspace: &Workspace, targets: &[String]) -> RefResolver {
+    let mut refs = RefResolver::default();
+    let mut targets = targets.to_vec();
+    targets.sort();
+    targets.dedup();
+    for target in targets {
+        let Some(schema) = workspace.get_table_schema(&target) else {
+            continue;
+        };
+        let Some(display) = display_column(&ordered_columns(&schema), None) else {
+            continue;
+        };
+        let map: HashMap<String, String> = workspace
+            .get_table_rows(&target)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|r| {
+                let rid = r.get("_row_id")?.as_str()?.to_string();
+                let label = r.get(&display)?.as_str()?.trim().to_string();
+                (!label.is_empty()).then_some((label, rid))
+            })
+            .collect();
+        refs.by_table.insert(target, map);
+    }
+    refs
+}
+
+/// Dry-run a table's cells against `columns` and report what wouldn't apply,
+/// writing nothing. This is what lets the import preview show the failure count
+/// **before** anything is committed (ADR 0004) rather than after.
+///
+/// Reference labels resolve against rows already in the workspace *and* rows
+/// carried by this table, matching what the real import will do.
+pub fn validate_table(
+    workspace: &Workspace,
+    table: &ArchiveTable,
+    columns: &[ColumnDefinition],
+) -> Vec<ImportIssue> {
+    let targets: Vec<String> = columns
+        .iter()
+        .filter_map(|c| c.reference_table.clone())
+        .chain(std::iter::once(table.id.clone()))
+        .collect();
+    let mut refs = seed_resolver(workspace, &targets);
+    if let Some(display) = display_column(columns, None)
+        .and_then(|id| columns.iter().find(|c| c.id == id).map(|c| c.name.clone()))
+    {
+        let map = refs.by_table.entry(table.id.clone()).or_default();
+        for row in &table.rows {
+            if let Some(label) = row.get(&display).map(|s| s.trim()) {
+                if !label.is_empty() {
+                    // The id is a placeholder: validation only asks whether the
+                    // label RESOLVES, never what it resolves to.
+                    map.entry(label.to_string()).or_default();
+                }
+            }
+        }
+    }
+
+    let mut issues = Vec::new();
+    for (ri, row) in table.rows.iter().enumerate() {
+        for c in columns {
+            let Some(text) = row.get(&c.name) else {
+                continue;
+            };
+            if let Err(message) = text_to_value(text, c, &refs) {
+                issues.push(ImportIssue {
+                    table: table.id.clone(),
+                    row: ri,
+                    column: c.name.clone(),
+                    message,
+                });
+            }
+        }
+    }
+    issues
 }
 
 /// Read a standalone CSV as one table, inferring column types from the data —
@@ -1521,6 +1575,42 @@ mod tests {
         let rows = ws.get_table_rows("tasks").unwrap();
         let added = rows.iter().find(|r| r["title"] == "Second").unwrap();
         assert_eq!(added["owner"], Value::String("row_0_1".into()));
+    }
+
+    #[test]
+    fn validation_is_a_dry_run_that_writes_nothing() {
+        let mut ws = Workspace::new("ws");
+        sample_archive().apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
+        let before = ws.get_table_rows("tasks").unwrap().len();
+
+        let table = table_from_csv("tasks", "Tasks", "Title,Owner\nA,Ada\nB,Nobody\n");
+        let schema = ws.get_table_schema("tasks").unwrap();
+        let columns = ordered_columns(&schema);
+        let issues = validate_table(&ws, &table, &columns);
+
+        // "Ada" is already in the workspace and resolves; "Nobody" doesn't.
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].row, 1);
+        assert_eq!(issues[0].column, "Owner");
+        assert_eq!(
+            ws.get_table_rows("tasks").unwrap().len(),
+            before,
+            "validation must not write"
+        );
+    }
+
+    #[test]
+    fn validation_resolves_labels_carried_by_the_csv_itself() {
+        let mut ws = Workspace::new("ws");
+        sample_archive().apply_to_workspace(&mut ws, &mut |t, r| format!("row_{t}_{r}"));
+
+        // A self-reference to a row this same CSV introduces must validate —
+        // the real import mints its id up front, so the dry run has to agree.
+        let mut owner = col("owner", "Owner", ColumnType::Reference);
+        owner.reference_table = Some("tasks".into());
+        let table = table_from_csv("tasks", "Tasks", "Title,Owner\nFirst,Second\nSecond,\n");
+        let columns = vec![col("title", "Title", ColumnType::Text), owner];
+        assert_eq!(validate_table(&ws, &table, &columns), Vec::new());
     }
 
     #[test]
