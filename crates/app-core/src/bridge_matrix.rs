@@ -2145,12 +2145,52 @@ impl ConnectedWorkspace {
     }
 
     /// Export the whole workspace as an archive: a JSON object of
-    /// `relative path -> file contents`, which the UI zips.
+    /// `relative path -> file contents`. Use [`Self::export_workspace_zip`]
+    /// for the one-file form; this is for callers that want the parts.
     #[wasm_bindgen(js_name = exportWorkspaceArchive)]
     pub fn export_workspace_archive(&self, name: String) -> String {
         let ws = self.inner.borrow();
         let files = crate::archive::Archive::from_workspace(&ws, name).to_files();
         serde_json::to_string(&files).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Export the whole workspace as a zip (ADR 0004) — the one file you hand
+    /// to someone. Same container the CLI writes and reads.
+    #[wasm_bindgen(js_name = exportWorkspaceZip)]
+    pub fn export_workspace_zip(&self, name: String) -> Result<Vec<u8>, JsValue> {
+        let ws = self.inner.borrow();
+        crate::archive::Archive::from_workspace(&ws, name)
+            .to_zip()
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Import a workspace archive (zip) into this workspace. Existing tables
+    /// are appended to rather than replaced — see
+    /// [`crate::archive::Archive::apply_to_workspace`].
+    ///
+    /// Returns `{rowsWritten, issues}`, like `importCsv`.
+    #[wasm_bindgen(js_name = importWorkspaceZip)]
+    pub async fn import_workspace_zip(&self, bytes: Vec<u8>) -> Result<String, JsValue> {
+        let archive = crate::archive::Archive::from_zip(&bytes)
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        let stamp = js_sys::Date::now() as u64;
+        let result = {
+            let mut ws = self.inner.borrow_mut();
+            archive.apply_to_workspace(&mut ws, &mut |table, row| {
+                format!("row_{stamp}_{table}_{row}")
+            })
+        };
+        self.enqueue_updates(result.updates);
+        Ok(serde_json::json!({
+            "rowsWritten": result.rows_written,
+            "issues": result.issues.iter().map(|i| serde_json::json!({
+                "table": i.table,
+                "row": i.row,
+                "column": i.column,
+                "message": i.message,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string())
     }
 
     /// Inspect a CSV without importing it — the data behind the preview step.

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type CSSProperties } from 'react'
+import { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   DndContext,
@@ -356,6 +356,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
   const [importing, setImporting] = useState(false)
+  const archiveInput = useRef<HTMLInputElement>(null)
   const [creatingTable, setCreatingTable] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
@@ -668,6 +669,63 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
     [workspace],
   )
 
+  const canArchive =
+    !!workspace &&
+    typeof workspace.exportWorkspaceZip === 'function' &&
+    typeof workspace.importWorkspaceZip === 'function'
+
+  /** Download the whole workspace as one zip (ADR 0004) — the same container
+   *  `tidework import` reads, so an export is portable between the app and the
+   *  CLI rather than being an app-only convenience. */
+  const handleExportWorkspace = () => {
+    if (!workspace || typeof workspace.exportWorkspaceZip !== 'function') return
+    try {
+      const name = workspaceName || 'workspace'
+      const bytes = workspace.exportWorkspaceZip(name)
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${name}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err: unknown) {
+      console.error('Failed to export workspace:', err)
+      alert('Failed to export workspace: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
+  /** Import an archive zip. Tables that already exist are appended to, not
+   *  replaced — say so before writing, because "import" reads as "replace" to
+   *  plenty of people and this one genuinely isn't. */
+  const handleImportArchive = async (file: File) => {
+    if (!workspace || typeof workspace.importWorkspaceZip !== 'function') return
+    if (
+      !window.confirm(
+        `Import "${file.name}" into this workspace?\n\n` +
+          'Tables that already exist will have the archive’s rows ADDED to them; ' +
+          'nothing is replaced or deleted.',
+      )
+    ) {
+      return
+    }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const raw = await workspace.importWorkspaceZip(bytes)
+      const result = JSON.parse(raw) as { rowsWritten: number; issues: CsvIssue[] }
+      if (workspaceId) notifyWorkspaceChanged(workspaceId)
+      refreshData()
+      alert(
+        `Imported ${result.rowsWritten} row(s).` +
+          (result.issues.length
+            ? `\n${result.issues.length} value(s) could not be applied and were left empty.`
+            : ''),
+      )
+    } catch (err: unknown) {
+      console.error('Failed to import archive:', err)
+      alert('Failed to import archive: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
   /** Not memoized, unlike `previewCsv`: this one fires on a click rather than
    *  feeding the modal's effect deps, so a stable identity buys nothing. */
   const importCsv = async (
@@ -813,6 +871,35 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
                 <DownloadIcon />
                 <span>Import CSV</span>
               </button>
+            )}
+
+            {canArchive && (
+              <>
+                <button className="sidebar__item sidebar__item--add" onClick={handleExportWorkspace}>
+                  <DownloadIcon />
+                  <span>Export workspace</span>
+                </button>
+                <button
+                  className="sidebar__item sidebar__item--add"
+                  onClick={() => archiveInput.current?.click()}
+                >
+                  <DownloadIcon />
+                  <span>Import archive…</span>
+                </button>
+                <input
+                  ref={archiveInput}
+                  type="file"
+                  accept=".zip,application/zip"
+                  aria-label="Workspace archive"
+                  hidden
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    // Reset first: picking the same file twice must re-fire.
+                    e.target.value = ''
+                    if (file) void handleImportArchive(file)
+                  }}
+                />
+              </>
             )}
 
             {tables.length === 0 && !isCreatingTable && (

@@ -1106,6 +1106,219 @@ pub async fn column_set(
     Ok(())
 }
 
+// ── export / import (ADR 0004) ──────────────────────────────────────────
+//
+// The same archive code as the web app, so the two cannot drift. Ids are not
+// preserved across a round trip: this is a portability format, not a backup
+// format, and `export` says so rather than letting someone discover it.
+
+/// Write a workspace out as a directory of CSVs, a `.zip`, or one table's
+/// standalone `.csv`.
+pub async fn export(workspace: String, dest: String, table: Option<String>) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let ws = load_workspace(&mut client, &room_id).await?;
+    let path = std::path::Path::new(&dest);
+    let is_csv = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+
+    if let Some(table) = table {
+        if !is_csv {
+            return Err(anyhow!(
+                "--table exports a single table, so the destination must end in .csv"
+            ));
+        }
+        let table_id = resolve_table(&ws, &table)?;
+        let csv = app_core::archive::table_to_csv(&ws, &table_id)
+            .ok_or_else(|| anyhow!("table {table:?} not found"))?;
+        write_file(path, csv.as_bytes())?;
+        println!("Exported table \"{table_id}\" to {dest}");
+        return Ok(());
+    }
+    if is_csv {
+        return Err(anyhow!(
+            "a .csv destination exports one table — pass --table, or use a directory or .zip"
+        ));
+    }
+
+    // Prefer the workspace's own display name; fall back to whatever the user
+    // typed (which may already be that name, or a room id).
+    let name = client
+        .list_workspaces()
+        .await
+        .ok()
+        .and_then(|list| {
+            list.into_iter()
+                .find(|w| w.room_id == room_id && !w.name.is_empty())
+                .map(|w| w.name)
+        })
+        .unwrap_or_else(|| workspace.clone());
+    let archive = app_core::archive::Archive::from_workspace(&ws, name);
+    let tables = archive.tables.len();
+    let rows: usize = archive.tables.iter().map(|t| t.rows.len()).sum();
+
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+    {
+        let bytes = archive.to_zip().map_err(|e| anyhow!("packing zip: {e}"))?;
+        write_file(path, &bytes)?;
+    } else {
+        for (rel, contents) in archive.to_files() {
+            write_file(&path.join(&rel), contents.as_bytes())?;
+        }
+    }
+    println!("Exported {tables} table(s), {rows} row(s) to {dest}");
+    println!("note: row and column ids are re-minted on import — this is a portability format");
+    Ok(())
+}
+
+/// Read an archive (directory, `.zip`, or single `.csv`) into a workspace.
+pub async fn import(
+    workspace: String,
+    src: String,
+    table: Option<String>,
+    dry_run: bool,
+) -> Result<()> {
+    let path = std::path::Path::new(&src);
+    let archive = read_archive(path, table)?;
+
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    if dry_run {
+        for t in &archive.tables {
+            let existing = ws.get_table_schema(&t.id);
+            let issues = app_core::archive::validate_table(&ws, t, &t.columns);
+            println!(
+                "{} {}: {} row(s), {} column(s){}",
+                if existing.is_some() {
+                    "append to"
+                } else {
+                    "create"
+                },
+                t.id,
+                t.rows.len(),
+                t.columns.len(),
+                if issues.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {} value(s) would not import", issues.len())
+                }
+            );
+        }
+        println!("(dry run — nothing was written)");
+        return Ok(());
+    }
+
+    let stamp = now_ms();
+    let result = archive.apply_to_workspace(&mut ws, &mut |t, r| format!("row_{stamp}_{t}_{r}"));
+    if !result.updates.is_empty() {
+        client
+            .send_cell_batch(&result.updates)
+            .await
+            .context("sending imported rows")?;
+    }
+    println!(
+        "Imported {} row(s) into {} table(s)",
+        result.rows_written,
+        archive.tables.len()
+    );
+    if !result.issues.is_empty() {
+        println!("{} value(s) could not be applied:", result.issues.len());
+        for i in result.issues.iter().take(10) {
+            println!("  {}[{}].{}: {}", i.table, i.row, i.column, i.message);
+        }
+        if result.issues.len() > 10 {
+            println!("  … and {} more", result.issues.len() - 10);
+        }
+    }
+    Ok(())
+}
+
+/// Read an archive from a directory, a `.zip`, or a single `.csv`.
+fn read_archive(
+    path: &std::path::Path,
+    table: Option<String>,
+) -> Result<app_core::archive::Archive> {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    if ext == "csv" {
+        let csv =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let name = table.unwrap_or_else(|| {
+            path.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "imported".into())
+        });
+        let id = slug(&name);
+        return Ok(app_core::archive::Archive {
+            name: name.clone(),
+            tables: vec![app_core::archive::table_from_csv(&id, &name, &csv)],
+            views: Vec::new(),
+        });
+    }
+    if ext == "zip" {
+        let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+        return app_core::archive::Archive::from_zip(&bytes)
+            .map_err(|e| anyhow!("reading archive: {e}"));
+    }
+
+    // A directory: gather every .csv under it, keyed by its relative path.
+    let mut files = app_core::archive::Files::new();
+    collect_csvs(path, path, &mut files)?;
+    if files.is_empty() {
+        return Err(anyhow!("no .csv files found under {}", path.display()));
+    }
+    app_core::archive::Archive::from_files(&files).map_err(|e| anyhow!("reading archive: {e}"))
+}
+
+fn collect_csvs(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    files: &mut app_core::archive::Files,
+) -> Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let path = entry?.path();
+        if path.is_dir() {
+            collect_csvs(root, &path, files)?;
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("csv"))
+        {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.insert(rel, std::fs::read_to_string(&path)?);
+        }
+    }
+    Ok(())
+}
+
+fn write_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

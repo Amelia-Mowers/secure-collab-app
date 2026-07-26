@@ -81,7 +81,14 @@ span. JSON appears in an archive in exactly these two places and nowhere else.
 
 **Container:** in-tree templates ship as plain directories (diffable, reviewable
 in a PR). User-facing export produces a `.zip` of the same layout — one file to
-hand to someone. Import accepts either.
+hand to someone. Import accepts either, and tolerates a zip of the *folder*
+rather than its contents, which is what most people produce.
+
+The zip codec is written once, in Rust, rather than once for the CLI and again
+in JavaScript for the browser. Measured cost: **+213 KB on an 11 MB wasm
+bundle** already dominated by matrix-sdk. A container implemented twice is a
+container that eventually disagrees with itself, and 2% is a cheap price for
+not having that class of bug.
 
 **Implementation lives in `app-core`**, not the UI. The reader/writer is pure
 logic over strings, so it is natively testable, and the same code backs the web
@@ -127,3 +134,6 @@ is why the override exists in the same step.
   single value. Multi-value columns cannot represent a value containing a comma.
 - The zip path adds a dependency in `app-core`. It is confined to the container
   layer; the format itself is readable without it.
+- The CLI gets `tidework export` / `tidework import` over the same code, so a
+  workspace exported from the app imports through the CLI and vice versa.
+  `import --dry-run` reports what would be written without writing it.
