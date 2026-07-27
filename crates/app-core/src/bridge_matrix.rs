@@ -1503,61 +1503,86 @@ impl ConnectedWorkspace {
         let marker_ts = Rc::clone(&self.marker_ts);
         let last_sync_ok_ms = Rc::clone(&self.last_sync_ok_ms);
 
+        // Supervised for the same reason as `start_session_sync`. THIS is the
+        // loop whose callback sets `last_sync_ok_ms`, so it is the one the
+        // connection badge reads: when it died, the UI said "reconnecting"
+        // forever and only a reload reconnected.
         spawn_local(async move {
-            let settings = SyncSettings::default();
+            const MIN_BACKOFF_MS: u64 = 1_000;
+            const MAX_BACKOFF_MS: u64 = 60_000;
+            const HEALTHY_RUN_MS: f64 = 30_000.0;
+            let mut backoff_ms = MIN_BACKOFF_MS;
 
-            let _ = client
-                .sync_with_callback(settings, |response| {
-                    let workspace = Rc::clone(&workspace);
-                    let undecryptable = Rc::clone(&undecryptable);
-                    let marker_ts = Rc::clone(&marker_ts);
-                    let last_sync_ok_ms = Rc::clone(&last_sync_ok_ms);
-                    let room_id = room_id.clone();
-                    let on_change = on_change.clone();
+            loop {
+                let settings = SyncSettings::default();
+                let started_at = js_sys::Date::now();
 
-                    async move {
-                        // Every sync response is proof the homeserver answered
-                        // (ADR 0003 phase 2 — connection health).
-                        last_sync_ok_ms.set(js_sys::Date::now());
-                        // Look for our room in the sync response
-                        if let Some(joined) = response.rooms.joined.get(&room_id) {
-                            let mut changed = false;
+                let outcome = client
+                    .sync_with_callback(settings, |response| {
+                        let workspace = Rc::clone(&workspace);
+                        let undecryptable = Rc::clone(&undecryptable);
+                        let marker_ts = Rc::clone(&marker_ts);
+                        let last_sync_ok_ms = Rc::clone(&last_sync_ok_ms);
+                        let room_id = room_id.clone();
+                        let on_change = on_change.clone();
 
-                            for raw_event in &joined.timeline.events {
-                                // Try to extract our custom event(s) — one event
-                                // may carry many cells (a batch event).
-                                if let Ok(json_str) = serde_json::to_string(raw_event.raw().json())
-                                {
-                                    let received = MatrixClient::extract_cell_updates(&json_str);
-                                    if !received.is_empty() {
-                                        let mut ws = workspace.borrow_mut();
-                                        for r in received {
-                                            // Advance the snapshot marker from the
-                                            // event envelope before consuming `r`.
-                                            let ots: u64 = r.origin_server_ts.0.into();
-                                            if ots > marker_ts.get() {
-                                                marker_ts.set(ots);
+                        async move {
+                            // Every sync response is proof the homeserver answered
+                            // (ADR 0003 phase 2 — connection health).
+                            last_sync_ok_ms.set(js_sys::Date::now());
+                            // Look for our room in the sync response
+                            if let Some(joined) = response.rooms.joined.get(&room_id) {
+                                let mut changed = false;
+
+                                for raw_event in &joined.timeline.events {
+                                    // Try to extract our custom event(s) — one event
+                                    // may carry many cells (a batch event).
+                                    if let Ok(json_str) =
+                                        serde_json::to_string(raw_event.raw().json())
+                                    {
+                                        let received =
+                                            MatrixClient::extract_cell_updates(&json_str);
+                                        if !received.is_empty() {
+                                            let mut ws = workspace.borrow_mut();
+                                            for r in received {
+                                                // Advance the snapshot marker from the
+                                                // event envelope before consuming `r`.
+                                                let ots: u64 = r.origin_server_ts.0.into();
+                                                if ots > marker_ts.get() {
+                                                    marker_ts.set(ots);
+                                                }
+                                                // Attach origin_server_ts as the LWW tiebreaker.
+                                                let _ = ws.apply_update(r.into_update());
                                             }
-                                            // Attach origin_server_ts as the LWW tiebreaker.
-                                            let _ = ws.apply_update(r.into_update());
+                                            changed = true;
+                                        } else if MatrixClient::is_undecryptable_event(&json_str) {
+                                            undecryptable.set(undecryptable.get() + 1);
+                                            changed = true;
                                         }
-                                        changed = true;
-                                    } else if MatrixClient::is_undecryptable_event(&json_str) {
-                                        undecryptable.set(undecryptable.get() + 1);
-                                        changed = true;
                                     }
+                                }
+
+                                if changed {
+                                    let _ = on_change.call0(&JsValue::NULL);
                                 }
                             }
 
-                            if changed {
-                                let _ = on_change.call0(&JsValue::NULL);
-                            }
+                            LoopCtrl::Continue
                         }
+                    })
+                    .await;
 
-                        LoopCtrl::Continue
-                    }
-                })
-                .await;
+                match outcome {
+                    Ok(()) => tracing::warn!("workspace sync stream ended; restarting"),
+                    Err(e) => tracing::warn!("workspace sync stream failed ({e}); restarting"),
+                }
+
+                if js_sys::Date::now() - started_at >= HEALTHY_RUN_MS {
+                    backoff_ms = MIN_BACKOFF_MS;
+                }
+                matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
+                backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
+            }
         });
     }
 
