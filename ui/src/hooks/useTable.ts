@@ -92,15 +92,20 @@ export interface WorkspaceHandle {
   /** CSV interchange (ADR 0004). Export renders one table with column names as
    *  headers and references as labels; preview is a dry run that reports what
    *  wouldn't apply *before* the import commits. */
-  exportTableCsv?(tableId: string): string
+  exportTableCsv?(tableId: string): string | Promise<string>
   /** The whole workspace as a zip — the same container the CLI reads. */
-  exportWorkspaceZip?(name: string): Uint8Array
+  exportWorkspaceZip?(name: string): Uint8Array | Promise<Uint8Array>
   /** Audit local state against a full re-gather and repair any difference
    *  (issue 48f042ba). Expensive — user-initiated, never scheduled. */
   checkIntegrity?(): Promise<string>
 
   importWorkspaceZip?(bytes: Uint8Array): Promise<string> | string
-  previewCsvImport?(tableId: string, csv: string, sample: number, overridesJson: string): string
+  previewCsvImport?(
+    tableId: string,
+    csv: string,
+    sample: number,
+    overridesJson: string,
+  ): string | Promise<string>
   importCsv?(
     tableId: string,
     tableName: string,
@@ -128,7 +133,7 @@ export interface WorkspaceHandle {
    *  resolve to. */
   currentUserId?(): string | undefined
   /** Serialize current state for incremental cold start (ConnectedWorkspace only). */
-  snapshot?(): string
+  snapshot?(): string | Promise<string>
   /** Change history (edits + reverts) as a JSON array, newest-first, optionally
    *  scoped to one table. ConnectedWorkspace only — walks the room timeline. */
   getChangeLog?(tableId?: string): Promise<string>

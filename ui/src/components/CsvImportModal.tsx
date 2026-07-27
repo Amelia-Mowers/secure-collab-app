@@ -72,7 +72,13 @@ export function CsvImportModal({
   /** Preselect a destination (opened from a table's own menu). */
   defaultTableId?: string
   /** Dry run: returns the inferred/effective columns, a sample, and failures. */
-  preview: (tableId: string, csv: string, overrides: CsvPreviewColumn[]) => CsvPreview
+  /** Dry run. Async because the worker-backed workspace answers it over a
+   *  port; the in-tab one resolves immediately. */
+  preview: (
+    tableId: string,
+    csv: string,
+    overrides: CsvPreviewColumn[],
+  ) => CsvPreview | Promise<CsvPreview>
   onImport: (
     tableId: string,
     tableName: string,
@@ -103,12 +109,23 @@ export function CsvImportModal({
   // picked. Cheap — it's local, and it keeps the failure count honest.
   useEffect(() => {
     if (!csv) return
-    try {
-      setPreview(runPreview(destinationId, csv, overrides))
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setPreview(null)
+    // A stale run must not overwrite a newer one: the user can change the
+    // destination or a column type while a previous dry run is still in flight.
+    let current = true
+    ;(async () => {
+      try {
+        const result = await runPreview(destinationId, csv, overrides)
+        if (!current) return
+        setPreview(result)
+        setError(null)
+      } catch (err) {
+        if (!current) return
+        setError(err instanceof Error ? err.message : String(err))
+        setPreview(null)
+      }
+    })()
+    return () => {
+      current = false
     }
   }, [csv, destinationId, overrides, runPreview])
 

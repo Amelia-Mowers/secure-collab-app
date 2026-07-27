@@ -242,16 +242,15 @@ export function createWorkerWorkspace(
     },
 
     // ── Async by design: user-initiated, never on a render path ───────────────
-    // `WorkspaceHandle` still declares these four as sync (the in-tab client
-    // answers them from local state). The casts are the seam: the call sites are
-    // widened to `await` when the direct path is retired, and then these go away.
-    exportTableCsv: ((tableId: string) =>
-      call('exportTableCsv', tableId)) as unknown as WorkspaceHandle['exportTableCsv'],
-    exportWorkspaceZip: ((name: string) =>
-      call('exportWorkspaceZip', name)) as unknown as WorkspaceHandle['exportWorkspaceZip'],
-    previewCsvImport: ((tableId: string, csv: string, sample: number, overridesJson: string) =>
-      call('previewCsvImport', tableId, csv, sample, overridesJson)) as unknown as WorkspaceHandle['previewCsvImport'],
-    snapshot: (() => call('snapshot')) as unknown as WorkspaceHandle['snapshot'],
+    // These forward rather than bloating every pushed bundle. `WorkspaceHandle`
+    // now declares them `T | Promise<T>`, so the `as unknown as` casts that used
+    // to mark this seam are gone and the call sites simply await — which costs
+    // the in-tab client nothing, since it resolves immediately.
+    exportTableCsv: tableId => call('exportTableCsv', tableId) as Promise<string>,
+    exportWorkspaceZip: name => call('exportWorkspaceZip', name) as Promise<Uint8Array>,
+    previewCsvImport: (tableId, csv, sample, overridesJson) =>
+      call('previewCsvImport', tableId, csv, sample, overridesJson) as Promise<string>,
+    snapshot: () => call('snapshot') as Promise<string>,
 
     // ── Session-ish passthroughs ──────────────────────────────────────────────
     inviteUser: userId => call('inviteUser', userId) as Promise<void>,

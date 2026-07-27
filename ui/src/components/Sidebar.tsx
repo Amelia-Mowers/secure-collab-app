@@ -670,10 +670,11 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
 
   /** Download one table as a standalone CSV (ADR 0004) — column names as
    *  headers, references as labels, so it opens as an ordinary spreadsheet. */
-  const handleExportCsv = (table: TableInfo) => {
+  const handleExportCsv = async (table: TableInfo) => {
     if (!workspace || typeof workspace.exportTableCsv !== 'function') return
     try {
-      const csv = workspace.exportTableCsv(table.id)
+      // Awaited: local on the in-tab client, a worker round-trip otherwise.
+      const csv = await workspace.exportTableCsv(table.id)
       const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
       const a = document.createElement('a')
       a.href = url
@@ -687,7 +688,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
   }
 
   const previewCsv = useCallback(
-    (tableId: string, csv: string, overrides: CsvPreviewColumn[]) => {
+    async (tableId: string, csv: string, overrides: CsvPreviewColumn[]) => {
       if (!workspace || typeof workspace.previewCsvImport !== 'function') {
         throw new Error('Import is not available on this workspace')
       }
@@ -702,7 +703,7 @@ export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
         options: c.options ?? null,
         reference_table: null,
       }))
-      return JSON.parse(workspace.previewCsvImport(tableId, csv, 8, JSON.stringify(asColumns)))
+      return JSON.parse(await workspace.previewCsvImport(tableId, csv, 8, JSON.stringify(asColumns)))
     },
     [workspace],
   )
@@ -756,11 +757,11 @@ ${r.undecryptable} event(s) could not be decrypted — those are a key problem, 
   /** Download the whole workspace as one zip (ADR 0004) — the same container
    *  `tidework import` reads, so an export is portable between the app and the
    *  CLI rather than being an app-only convenience. */
-  const handleExportWorkspace = () => {
+  const handleExportWorkspace = async () => {
     if (!workspace || typeof workspace.exportWorkspaceZip !== 'function') return
     try {
       const name = workspaceName || 'workspace'
-      const bytes = workspace.exportWorkspaceZip(name)
+      const bytes = await workspace.exportWorkspaceZip(name)
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }))
       const a = document.createElement('a')
       a.href = url
