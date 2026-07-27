@@ -111,11 +111,29 @@ export async function registerPasskeyPrf(userId: string, displayName: string): P
         requireResidentKey: true,
         userVerification: 'required',
       },
+      // Steer the picker toward this device's own authenticator (Windows Hello,
+      // Touch ID), because that is where PRF support is near-universal while some
+      // password managers still lack it (issue b5a7e62c).
+      //
+      // `hints` and NOT `authenticatorSelection.authenticatorAttachment:
+      // 'platform'`: attachment would EXCLUDE roaming authenticators, and
+      // hardware security keys do support PRF (hmac-secret) — they are a
+      // supported path here, not a failure mode. A hint reorders the UI; it
+      // forbids nothing.
+      //
+      // What this cannot do, so nobody expects it to: a password manager
+      // registered as the OS/browser platform credential provider (Windows 11
+      // credential manager, Chrome's third-party provider API) legitimately IS
+      // "client-device" and still appears. And an extension that shims
+      // `navigator.credentials` decides for itself regardless of what we pass.
+      // WebAuthn has no way to ask about PRF before creating a credential, so
+      // the after-the-fact check below stays load-bearing.
+      hints: ['client-device'],
       // Request PRF, and ask to evaluate it now — some authenticators return the
       // result at create() time (one prompt); others only at get() (we fall back).
       extensions: { prf: { eval: { first: PRF_SALT } } } as unknown as
         AuthenticationExtensionsClientInputs,
-    },
+    } as PublicKeyCredentialCreationOptions & { hints: string[] },
   })) as PublicKeyCredential | null
 
   if (!cred) throw new Error('Passkey registration was cancelled')
