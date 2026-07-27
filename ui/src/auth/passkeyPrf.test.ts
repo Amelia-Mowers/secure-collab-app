@@ -90,6 +90,29 @@ describe('passkeyPrf', () => {
       expect(opts.extensions.prf).toBeDefined()
     })
 
+    it('hints at this device rather than excluding roaming authenticators', async () => {
+      // PRF is near-universal on platform authenticators and still missing from
+      // some password managers, so the picker is steered toward Windows Hello /
+      // Touch ID. Deliberately a HINT and not
+      // `authenticatorSelection.authenticatorAttachment: 'platform'`: attachment
+      // would exclude hardware security keys, which DO support PRF and are a
+      // supported path here. (issue b5a7e62c)
+      create.mockResolvedValue(fakeCred({ results: { first: PRF_FIRST } }))
+      await registerPasskeyPrf('@me:tidework.io', 'Me')
+      const opts = create.mock.calls[0][0].publicKey
+      expect(opts.hints).toEqual(['client-device'])
+      expect(opts.authenticatorSelection.authenticatorAttachment).toBeUndefined()
+    })
+
+    it('does not steer the UNLOCK assertion, which may be on another device', async () => {
+      // At unlock the credential already exists and can legitimately live on a
+      // security key or another device over hybrid/QR. Hinting at this device
+      // there would hide a working path.
+      get.mockResolvedValue(fakeCred({ results: { first: PRF_FIRST } }))
+      await unlockPasskeyPrf()
+      expect(get.mock.calls[0][0].publicKey.hints).toBeUndefined()
+    })
+
     it('falls back to a get() when create() does not evaluate the PRF', async () => {
       create.mockResolvedValue(fakeCred({ enabled: true })) // no results at create
       get.mockResolvedValue(fakeCred({ results: { first: PRF_FIRST } }))
