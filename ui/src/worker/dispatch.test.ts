@@ -490,6 +490,45 @@ describe('worker dispatcher', () => {
       expect(errorOf(response)).toMatch(/is not open/)
     })
 
+    it('pushes state BEFORE answering the write that caused it', async () => {
+      // The ordering callers depend on: `Sidebar.handleCreateTable` awaits
+      // `createTable` and immediately reads the new table's schema. Port messages
+      // arrive in send order, so pushing first means the writer's read model
+      // already includes the write when its promise resolves. Deferring the push
+      // made that read throw "Table not found" and swallowed the navigation —
+      // invisible on Chromium, reproducible on Firefox.
+      const tab = await subscribed(['items'])
+      const order: string[] = []
+      const recording = {
+        send: (e: Event) => {
+          if (e.event === 'workspace-state') order.push('state')
+          return true
+        },
+      }
+      await dispatcher.handle(
+        { kind: 'workspace.subscribe', id: 4, roomId: ROOM, tableIds: ['items'] },
+        recording,
+      )
+      await settle()
+      order.length = 0
+
+      const response = await dispatcher.handle(
+        {
+          kind: 'call',
+          id: 5,
+          target: `room:${ROOM}`,
+          method: 'updateCell',
+          args: ['items', 'r1', 'name', '"written"'],
+        },
+        recording,
+      )
+      order.push('response')
+
+      expect(order).toEqual(['state', 'response'])
+      expect(response && 'ok' in response && response.ok).toBe(true)
+      void tab
+    })
+
     it("pushes a sibling tab's write immediately, not on the homeserver echo", async () => {
       // This is what replaces "the other tab catches up when you switch to it".
       const reader = await subscribed(['items'])

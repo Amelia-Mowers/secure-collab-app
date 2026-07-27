@@ -87,6 +87,7 @@ export function createWorkerWorkspace(
 
   const unsubscribe = client.on(event => {
     if (event.event === 'workspace-state' && event.roomId === roomId) {
+      const previousQueue = current.pendingUpdates
       try {
         current = JSON.parse(event.state) as WorkspaceState
       } catch (err) {
@@ -95,9 +96,25 @@ export function createWorkerWorkspace(
       }
       announceReady()
       for (const listener of listeners) listener()
+      // A bundle can also be the first time this tab learns the send queue
+      // changed — see the note on the `queue-change` branch below.
+      if (current.pendingUpdates !== previousQueue) {
+        for (const listener of queueListeners) listener()
+      }
       return
     }
     if (event.event === 'queue-change' && event.roomId === roomId) {
+      // Fired from the bridge's own queue callback, which runs INSIDE the write,
+      // before the state push that carries the new queue. So on its own it makes
+      // the outbox mirror read a bundle that predates the enqueue and persist an
+      // empty queue — which is why the push above fires these listeners too.
+      //
+      // That mattered more than it sounds: a SharedWorker is terminated when its
+      // last port goes away, so a reload destroys the worker AND its send queue.
+      // The persistent outbox is the only thing that carries an unsent write
+      // across, and it was being written stale. A drag-then-reload lost the write
+      // every time (kanban e2e, 3/3), while the same test with 15s of slack
+      // passed — the interval mirror had caught up by then.
       for (const listener of queueListeners) listener()
     }
   })
@@ -176,6 +193,16 @@ export function createWorkerWorkspace(
     getTableOrderKeys: () => current.tableOrderKeys,
     currentUserId: () => current.currentUserId,
     pendingUpdates: () => current.pendingUpdates,
+    // Scalars the bundle already carries. These are not optional extras: the UI
+    // FEATURE-DETECTS them (`typeof workspace.connectionHealth === 'function'`)
+    // and silently does nothing when they are absent — so omitting
+    // `connectionHealth` left the connection badge permanently hidden, and
+    // omitting `myRole` left every role check falling back. Neither failed
+    // loudly; the e2e suite is what caught them.
+    isEncrypted: () => current.isEncrypted,
+    undecryptableCount: () => current.undecryptableCount,
+    connectionHealth: () => current.connectionHealth,
+    rejectedWrites: () => current.rejectedWrites,
 
     // ── Writes: forwarded to the one real client ──────────────────────────────
     createTable: definition => call('createTable', definition) as Promise<string>,
@@ -224,6 +251,10 @@ export function createWorkerWorkspace(
     // ── Session-ish passthroughs ──────────────────────────────────────────────
     inviteUser: userId => call('inviteUser', userId) as Promise<void>,
     listMembers: () => call('listMembers') as Promise<string>,
+    myRole: () => call('myRole') as Promise<string>,
+    setUserRole: (userId: string, role: string) => call('setUserRole', userId, role) as Promise<void>,
+    leaveWorkspace: (removeEveryone: boolean) =>
+      call('leaveWorkspace', removeEveryone) as Promise<void>,
     getChangeLog: tableId => call('getChangeLog', tableId) as Promise<string>,
     rollbackTo: (tableId, targetServerTs, label) =>
       call('rollbackTo', tableId, targetServerTs, label) as Promise<number>,

@@ -5,9 +5,11 @@
  * `matrix.roomCall(roomId, 'updateCell', …)` instead of hand-rolling ids. Two
  * deliberate properties:
  *
- *  - `connectWorker()` returns `null` when the browser has no SharedWorker or
- *    the worker fails to answer a ping. Callers then keep today's in-tab client.
- *    A missing worker must degrade to the current behaviour, not to a blank app.
+ *  - `connectWorker()` THROWS if the worker cannot be reached. It used to return
+ *    null so callers could fall back to an in-tab client, and that was wrong:
+ *    falling back hands the user the exact bug the worker exists to fix — a
+ *    second tab whose writes vanish with no error — in precisely the situations
+ *    nobody is watching. Failing loudly is the lesser harm.
  *
  *  - No blanket request timeout. Several calls legitimately run for minutes (a
  *    cold-start history gather, `initialSync` on a large account) and the ones
@@ -16,6 +18,7 @@
  *    worker is detected instead of hanging the app.
  */
 
+import { workerSupportGap } from './flag'
 import {
   roomKey,
   sessionKey,
@@ -31,8 +34,8 @@ import {
 
 declare const __BUILD_ID__: string
 
-/** How long the worker gets to answer the connect-time ping before we give up
- *  on it and fall back to an in-tab client. */
+/** How long the worker gets to answer the connect-time ping before connecting is
+ *  treated as failed. */
 const PING_TIMEOUT_MS = 10_000
 
 export type EventHandler = (event: Event) => void
@@ -73,16 +76,25 @@ export interface MatrixWorkerClient {
   on(handler: EventHandler): () => void
 }
 
-let connecting: Promise<MatrixWorkerClient | null> | null = null
+let connecting: Promise<MatrixWorkerClient> | null = null
 
 /**
- * Connect to the shared worker, or resolve `null` if this browser can't (no
- * SharedWorker) or the worker doesn't answer. Idempotent per tab: the connection
- * is a singleton, because a second port would not be harmful but a second
- * *client* would, and keeping one place to reason about is worth more.
+ * Connect to the shared worker. Rejects if this browser has no SharedWorker or
+ * the worker will not answer — there is no fallback by design (see the module
+ * docs and `flag.ts`).
+ *
+ * Idempotent per tab: the connection is a singleton, because a second port would
+ * be harmless but a second *client* would not, and one place to reason about is
+ * worth more. A failed attempt is not cached, so a transient failure can be
+ * retried by whatever surfaces the error.
  */
-export function connectWorker(): Promise<MatrixWorkerClient | null> {
-  if (!connecting) connecting = establish()
+export function connectWorker(): Promise<MatrixWorkerClient> {
+  if (!connecting) {
+    connecting = establish().catch(err => {
+      connecting = null
+      throw err
+    })
+  }
   return connecting
 }
 
@@ -91,11 +103,9 @@ export function resetWorkerConnection() {
   connecting = null
 }
 
-async function establish(): Promise<MatrixWorkerClient | null> {
-  if (typeof SharedWorker === 'undefined') {
-    console.warn('[worker] SharedWorker unavailable — using an in-tab Matrix client')
-    return null
-  }
+async function establish(): Promise<MatrixWorkerClient> {
+  const gap = workerSupportGap()
+  if (gap) throw new Error(gap)
 
   let port: MessagePort
   try {
@@ -105,8 +115,9 @@ async function establish(): Promise<MatrixWorkerClient | null> {
     })
     port = worker.port
   } catch (err) {
-    console.warn('[worker] SharedWorker failed to start — using an in-tab Matrix client', err)
-    return null
+    throw new Error(
+      `Could not start the shared worker this app needs: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
 
   const pending = new Map<number, { resolve: (r: Response) => void }>()
@@ -185,8 +196,12 @@ async function establish(): Promise<MatrixWorkerClient | null> {
       (await send({ kind: 'ping', build: __BUILD_ID__ }, PING_TIMEOUT_MS)) as string,
     ) as PingInfo
   } catch (err) {
-    console.warn('[worker] no answer from the shared worker — using an in-tab client', err)
-    return null
+    // Most likely the worker failed to load — its own console is unreachable
+    // from here, so say where to look rather than just what failed.
+    throw new Error(
+      `The shared worker did not start (${err instanceof Error ? err.message : String(err)}). ` +
+        'Reload; if it persists, check the worker in about:debugging / chrome://inspect.',
+    )
   }
   if (!info.match) {
     // A deploy replaced this tab's assets while the worker (started by the older
