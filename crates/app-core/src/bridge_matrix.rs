@@ -2889,11 +2889,23 @@ async fn flush_pending(
                 // Remove exactly what was sent — an edit that arrived during
                 // the flight has a higher timestamp and must survive for the
                 // next pass.
-                let mut p = pending.borrow_mut();
-                for u in &batch {
-                    let key = (u.table_id.clone(), u.row_id.clone(), u.column_id.clone());
-                    if p.get(&key).is_some_and(|cur| cur.timestamp <= u.timestamp) {
-                        p.remove(&key);
+                //
+                // The borrow MUST end before notifying: the listener is a JS
+                // callback that synchronously calls back in via
+                // `pendingUpdates()`, which takes `pending.borrow()`. Holding
+                // the mutable borrow across that call panicked the flush task,
+                // and because `flushing` is only cleared on the empty-batch
+                // path, the task died with the flag still set — so that tab
+                // never sent again until a reload. (Caught by the two-tab e2e,
+                // issue 9e9efe94; the `Rejected` arm below already scoped its
+                // borrow this way.)
+                {
+                    let mut p = pending.borrow_mut();
+                    for u in &batch {
+                        let key = (u.table_id.clone(), u.row_id.clone(), u.column_id.clone());
+                        if p.get(&key).is_some_and(|cur| cur.timestamp <= u.timestamp) {
+                            p.remove(&key);
+                        }
                     }
                 }
                 notify_queue_changed(&queue_listener);
