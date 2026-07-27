@@ -9,6 +9,9 @@ import {
   unlockPasskeyPrf,
   confirmPasskeyPrf,
 } from '../auth/passkeyPrf'
+import { sharedWorkerEnabled } from '../worker/flag'
+import { connectWorker } from '../worker/client'
+import { openWorkerSession } from '../worker/workerSession'
 import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
 import { setSnapshotKey } from '../lib/atRestSession'
 import { fetchPortalUrl } from '../lib/billing'
@@ -42,6 +45,60 @@ async function syncBounded(
     console.warn(`[auth] ${label} still running after ${timeoutMs}ms — continuing without it`)
   }
   return { done }
+}
+
+/**
+ * Build a Matrix session — in the SharedWorker when that is enabled, otherwise
+ * in this tab exactly as before (issue 87bf86a6, stage 3).
+ *
+ * ONE seam for all five ways a session comes into being (restore, sign-in,
+ * register, OAuth, and the re-key that logs in again), so there is no route by
+ * which a tab ends up with an in-tab client while the flag says otherwise.
+ *
+ * `expectUserId` is the whole point of the worker path and is known for every
+ * RESTORE: it lets the worker hand back the client another tab already built,
+ * without touching the shared crypto store. Login/register/OAuth cannot know it
+ * up front and are deduped after the fact.
+ *
+ * Falling back to the in-tab client when there is no worker is deliberate: no
+ * SharedWorker, or a worker that won't answer, must degrade to today's behaviour
+ * rather than to a broken app.
+ */
+async function buildSession(
+  via: 'login' | 'register' | 'restore' | 'finishOauthLogin',
+  args: Array<string | undefined>,
+  expectUserId?: string,
+): Promise<any> {
+  if (sharedWorkerEnabled()) {
+    const worker = await connectWorker()
+    if (worker) {
+      const session = await openWorkerSession(worker, via, args, expectUserId)
+      if (session.joined()) {
+        console.log('[auth] attached to the shared worker’s existing client for', session.userId())
+      }
+      return session
+    }
+  }
+  const wasm = await getWasmModule()
+  return await wasm.MatrixSession[via](...args)
+}
+
+/**
+ * A static `MatrixSession` method, routed the same way `buildSession` routes the
+ * factories.
+ *
+ * This is not optional for `startOauthLogin`: it stashes the PKCE verifier in the
+ * client that issued it, and `finishOauthLogin` must find it there. Starting the
+ * flow in the tab and finishing it in the worker would fail the code exchange —
+ * the two must be the same client.
+ */
+async function staticSessionCall(method: string, ...args: string[]): Promise<any> {
+  if (sharedWorkerEnabled()) {
+    const worker = await connectWorker()
+    if (worker) return await worker.staticCall(method, ...args)
+  }
+  const wasm = await getWasmModule()
+  return await wasm.MatrixSession[method](...args)
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -450,9 +507,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // The session is still fully usable — `ConnectedWorkspace.create()` may need
   // to retry until the SDK cache is populated.
   const restoreSession = useCallback(async (account: AccountSession, storePassphrase?: string) => {
-    console.log('[auth] Loading WASM module...')
-    const wasm = await getWasmModule()
-    console.log('[auth] WASM loaded, restoring Matrix session for', account.userId)
+    console.log('[auth] Restoring Matrix session for', account.userId)
 
     // The session blob is plaintext for v1 accounts and the just-decrypted blob
     // for v2 (the caller decrypts it at unlock and stashes it on matrixSessionData).
@@ -464,10 +519,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // storePassphrase (v2) opens the at-rest-ENCRYPTED IndexedDB store; undefined
     // = plaintext store (v1 / legacy).
     const RESTORE_TIMEOUT_MS = 10_000
-    const restorePromise = wasm.MatrixSession.restore(
-      account.homeserverUrl,
-      account.matrixSessionData,
-      storePassphrase,
+    // A restore knows which account it is restoring, so the worker can hand back
+    // a client a sibling tab already built instead of making a second one.
+    const restorePromise = buildSession(
+      'restore',
+      [account.homeserverUrl, account.matrixSessionData, storePassphrase],
+      account.userId,
     )
     const restoreTimeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('MatrixSession.restore() timed out')), RESTORE_TIMEOUT_MS),
@@ -807,7 +864,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const status: string = await handle.advance()
         let emoji: SasEmoji[] = []
         try {
-          emoji = JSON.parse(handle.emoji() || '[]')
+          // Awaited: sync on the in-tab bridge, a port round-trip when the
+          // client lives in the SharedWorker. `await` covers both.
+          emoji = JSON.parse((await handle.emoji()) || '[]')
         } catch {
           /* emoji not ready */
         }
@@ -925,7 +984,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const id = setInterval(async () => {
       if (verificationRef.current) return
       try {
-        const flow: string | undefined = ms.pendingVerificationFlow?.()
+        // Awaited for the same reason as `handle.emoji()` above.
+        const flow: string | undefined = await ms.pendingVerificationFlow?.()
         if (flow) {
           const handle = await ms.verificationForFlow(flow)
           if (handle) {
@@ -1108,13 +1168,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         /* ignore */
       }
-      const wasm = await getWasmModule()
-      const ms = await wasm.MatrixSession.login(
+      const ms = await buildSession('login', [
         creds.homeserver,
         creds.user,
         creds.password,
         keys.storePassphrase,
-      )
+      ])
       await ms.initialSync()
       await ms.recoverWithKey(secret) // re-download room keys into the encrypted store
       // Bounded (issue 58dfe52b): this runs inside the gate's spinner via
@@ -1141,10 +1200,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null)
 
       try {
-        const wasm = await getWasmModule()
         // Hold creds so we can re-key to an encrypted store after unlock.
         pendingRekeyRef.current = { homeserver, user, password }
-        const ms = await wasm.MatrixSession.login(homeserver, user, password)
+        const ms = await buildSession('login', [homeserver, user, password])
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
       } catch (err: any) {
@@ -1165,20 +1223,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null)
 
       try {
-        const wasm = await getWasmModule()
         // Dynamic client registration + authorization URL; the PKCE verifier
-        // stays in this page's WASM client, which is why the popup (not a
-        // full-page redirect) carries the user through MAS.
+        // stays in the client that issued it, which is why the popup (not a
+        // full-page redirect) carries the user through MAS — and why this has to
+        // take the same route as finishOauthLogin below (see staticSessionCall).
         // BASE_URL keeps this correct under sub-path deployments (e.g. GH
         // Pages serves the app at /<repo>/) as well as root-path hosting.
-        const authUrl: string = await wasm.MatrixSession.startOauthLogin(
+        const authUrl: string = await staticSessionCall(
+          'startOauthLogin',
           homeserver,
           `${window.location.origin}${import.meta.env.BASE_URL}oauth/callback`,
         )
         popup.navigate(authUrl)
         const redirectedUrl = await popup.waitForCallback()
 
-        const ms = await wasm.MatrixSession.finishOauthLogin(redirectedUrl)
+        const ms = await buildSession('finishOauthLogin', [redirectedUrl])
         await ms.initialSync()
 
         const uid: string = ms.userId() ?? ''
@@ -1199,8 +1258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ── checkOauthSupport: does this homeserver use next-gen auth? ─────────────
   const checkOauthSupport = useCallback(async (homeserver: string): Promise<boolean> => {
     try {
-      const wasm = await getWasmModule()
-      return await wasm.MatrixSession.homeserverSupportsOauth(homeserver)
+      return await staticSessionCall('homeserverSupportsOauth', homeserver)
     } catch {
       // Unreachable server / no WASM — the password form is the safe default.
       return false
@@ -1214,10 +1272,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null)
 
       try {
-        const wasm = await getWasmModule()
         // Hold creds so we can re-key to an encrypted store once recovery boots.
         pendingRekeyRef.current = { homeserver, user, password }
-        const ms = await wasm.MatrixSession.register(homeserver, user, password)
+        const ms = await buildSession('register', [homeserver, user, password])
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
       } catch (err: any) {

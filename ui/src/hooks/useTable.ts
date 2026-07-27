@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 /** Shown when a viewer attempts a write the homeserver would refuse anyway. */
 const READ_ONLY_MESSAGE = 'You have view-only access to this workspace'
 import { getWasmModule } from '../wasm/loader'
+import { connectWorker } from '../worker/client'
+import { createWorkerWorkspace } from '../worker/workerWorkspace'
 import { loadSnapshot, saveSnapshot } from '../lib/snapshotStore'
 import { loadOutbox, saveOutbox, clearOutbox } from '../lib/outboxStore'
 import { getSnapshotKey } from '../lib/atRestSession'
@@ -21,6 +23,10 @@ import { canEdit } from '../lib/roles'
 // contexts that might be listening on the channel.
 
 const CHANNEL_PREFIX = 'collab:workspace:'
+
+/** How long the worker gets to push a first bundle before the workspace is
+ *  handed to the UI regardless (issue 87bf86a6). */
+const FIRST_STATE_TIMEOUT_MS = 30_000
 
 /** Get or create a BroadcastChannel for a workspace. */
 function getWorkspaceChannel(workspaceId: string): BroadcastChannel | null {
@@ -480,6 +486,41 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       // marker, instead of re-paginating the entire room history. Best-effort —
       // a missing/invalid snapshot just means a full gather.
       const snapshotJson = await loadSnapshot(workspaceId, getSnapshotKey() ?? undefined)
+
+      // ── Worker path (issue 87bf86a6) ────────────────────────────────
+      //
+      // Routed on the SESSION, not on the feature flag: a worker-backed session
+      // plus an in-tab workspace would build the second client over one crypto
+      // store that the worker exists to prevent, so the mismatch must not be
+      // representable. The worker opens (or JOINS) the room's one workspace and
+      // pushes materialized state; reads stay synchronous against that.
+      if (matrixSession?.isWorkerSession) {
+        const worker = await connectWorker()
+        if (!worker) throw new Error('The shared worker went away — reload to reconnect')
+        await worker.openWorkspace(matrixSession.userId(), workspaceId, snapshotJson ?? undefined)
+        const wws = createWorkerWorkspace(worker, workspaceId)
+        // Every pushed bundle means "something changed" — the worker's sync loop
+        // and any sibling tab's write both land here. This replaces the
+        // BroadcastChannel ping AND the visibility-refresh fallback: one client
+        // sees everything, so there is nothing for a tab to miss and catch up on.
+        wws.startSync?.(() => setSyncCount(c => c + 1))
+        // Wait for the first bundle before publishing the handle, so no reader
+        // ever sees an empty one. Without this a second tab rendered its grid
+        // first, `getTableSchema` threw "Table not found", and the grid stayed
+        // empty. Bounded, because a workspace that renders empty still beats one
+        // that never renders — and the next push repairs it.
+        await Promise.race([
+          wws.ready(),
+          new Promise(resolve => setTimeout(resolve, FIRST_STATE_TIMEOUT_MS)).then(() =>
+            console.warn('[workspace] no state from the worker yet; rendering anyway'),
+          ),
+        ])
+        workspaceRef.current = wws
+        setWorkspace(wws)
+        setLoading(false)
+        console.log('[workspace] connected via the shared worker')
+        return
+      }
 
       // Retry loop — handles the case where the SDK room cache is not yet
       // populated (initialSync still running in the background).

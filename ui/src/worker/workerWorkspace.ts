@@ -46,9 +46,19 @@ const EMPTY: WorkspaceState = {
 
 /** A worker-backed workspace plus the controls the hook layer needs. */
 export interface WorkerWorkspace extends WorkspaceHandle {
-  /** Declare which tables this tab is reading rows for. Cheap and idempotent —
-   *  call it when the open table changes. */
-  setTables(tableIds: string[]): void
+  /** Tables whose rows this tab has asked for — see the note on demand-driven
+   *  subscription in `createWorkerWorkspace`. Diagnostics. */
+  subscribedTables(): string[]
+  /**
+   * Resolves when the first bundle has landed.
+   *
+   * The hook layer awaits this before handing the workspace to the UI, which is
+   * what removes the "no state yet" window entirely rather than making every
+   * reader cope with it. Found the hard way: a second tab rendered its grid
+   * before its first push, `getTableSchema` threw "Table not found", and the
+   * grid came up empty and stayed that way.
+   */
+  ready(): Promise<void>
   /** Latest pushed bundle (diagnostics, and the health/banner hooks). */
   state(): WorkspaceState
   /** Register a callback fired whenever a new bundle lands. */
@@ -68,6 +78,10 @@ export function createWorkerWorkspace(
   let current: WorkspaceState = EMPTY
   let tableIds: string[] = []
   const listeners = new Set<() => void>()
+  let announceReady: () => void = () => {}
+  const readyPromise = new Promise<void>(resolve => {
+    announceReady = resolve
+  })
   /** Queue-change listeners registered through `onQueueChanged`. */
   const queueListeners = new Set<() => void>()
 
@@ -79,6 +93,7 @@ export function createWorkerWorkspace(
         console.warn('[worker] unreadable workspace state:', err)
         return
       }
+      announceReady()
       for (const listener of listeners) listener()
       return
     }
@@ -87,24 +102,63 @@ export function createWorkerWorkspace(
     }
   })
 
-  /** Ask the worker for rows of the tables this tab is showing. */
+  /** Ask the worker for rows of the tables this tab has read. */
   const resubscribe = () => {
     void client.subscribe(roomId, tableIds).catch(err => {
       // Not fatal: the previous subscription (if any) still delivers, and the
-      // next table switch retries. Worth surfacing because a lost subscription
-      // shows up as a grid that stops updating.
+      // next read retries. Worth surfacing because a lost subscription shows up
+      // as a grid that stops updating.
       console.warn('[worker] subscribe failed:', err)
     })
   }
   resubscribe()
+
+  /**
+   * Note a table this tab reads rows from, subscribing if it is new.
+   *
+   * DEMAND-DRIVEN rather than declared by the caller, because there is no
+   * caller who knows. `useTable` knows the open table, but
+   * `makeReferenceLookup` resolves whatever table a `reference` column points at
+   * — synchronously, during render, for an id only known at that moment. Any
+   * "declare your tables up front" API would have to be threaded through the
+   * grid, the entry view, the kanban view and the cell registry, and would still
+   * miss a case.
+   *
+   * So a read for an unknown table returns empty and subscribes; the push that
+   * follows re-renders with the real rows. That is the same brief window as
+   * before the first bundle arrives, which the UI already handles — a reference
+   * cell shows its raw id for one frame instead of its label.
+   *
+   * Subscribing is coalesced to one message per tick, so a render resolving five
+   * reference tables sends one subscribe, and it converges: the resulting push
+   * re-renders, that render reads the same tables, the set is unchanged, no
+   * further message.
+   */
+  let pendingResubscribe = false
+  const noteTable = (tableId: string) => {
+    if (tableIds.includes(tableId)) return
+    tableIds = [...tableIds, tableId]
+    if (pendingResubscribe) return
+    pendingResubscribe = true
+    queueMicrotask(() => {
+      pendingResubscribe = false
+      resubscribe()
+    })
+  }
 
   const call = (method: string, ...args: Array<string | number | boolean | Uint8Array | undefined>) =>
     client.roomCall(roomId, method, ...args)
 
   return {
     // ── Reads: answered from the last pushed bundle ───────────────────────────
-    getTableRows: tableId => current.rows[tableId] ?? '[]',
-    getRowOrderKeys: tableId => current.rowOrderKeys[tableId] ?? '{}',
+    getTableRows: tableId => {
+      noteTable(tableId)
+      return current.rows[tableId] ?? '[]'
+    },
+    getRowOrderKeys: tableId => {
+      noteTable(tableId)
+      return current.rowOrderKeys[tableId] ?? '{}'
+    },
     getTableSchema: tableId => {
       const schema = current.schemas[tableId]
       // Distinguish "not pushed yet" from "no such table": callers parse this,
@@ -186,13 +240,8 @@ export function createWorkerWorkspace(
     },
 
     // ── Controls ──────────────────────────────────────────────────────────────
-    setTables(next) {
-      const changed =
-        next.length !== tableIds.length || next.some((id, index) => id !== tableIds[index])
-      if (!changed) return
-      tableIds = [...next]
-      resubscribe()
-    },
+    ready: () => readyPromise,
+    subscribedTables: () => [...tableIds],
     state: () => current,
     onState(callback) {
       listeners.add(callback)
