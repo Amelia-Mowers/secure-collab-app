@@ -59,13 +59,16 @@ test('passkey migration: legacy account adds a passkey, then unlocks with it', a
   await dialogB.locator('.verify__input').fill(masterKey)
   await dialogB.getByRole('button', { name: /^restore$/i }).click()
 
-  // Phase 4b: after the master-key unlock, B is offered to add a passkey.
-  await expect(dialogB.getByRole('heading', { name: /add a passkey/i })).toBeVisible({
+  // After the master-key unlock, B is offered a passkey — as an ADDITIVE
+  // speed-up now, not a re-key (issue 63dc1339). The old flow called
+  // resetRecoveryWithPassphrase here, which retired the very key just typed.
+  await expect(dialogB.getByRole('heading', { name: /unlock faster with a passkey/i })).toBeVisible({
     timeout: 90_000,
   })
   await dialogB.getByRole('button', { name: /set up a passkey/i }).click()
 
-  // Phase 4c: re-key done — "Passkey ready", break-glass key collapsed.
+  // Enrolled — and the confirmation says the typed key still works, because it
+  // does: the passkey wrapped it rather than replacing it.
   await expect(dialogB.getByRole('heading', { name: /passkey ready/i })).toBeVisible({
     timeout: 90_000,
   })
@@ -80,11 +83,26 @@ test('passkey migration: legacy account adds a passkey, then unlocks with it', a
   await expect(dialogB.getByRole('heading', { name: /verify this device/i })).toBeVisible({
     timeout: 90_000,
   })
-  // Now enrolled: the passkey-unlock button appears and opens the backup that
-  // `reset_key` re-keyed to the PRF secret — no master key typed.
+  // Now enrolled: the passkey-unlock button appears because a WRAP exists for
+  // this account, and the PRF output opens it to reveal the same master key.
   await dialogB.getByRole('button', { name: /unlock with passkey/i }).click()
   await expect(dialogB).toBeHidden({ timeout: 90_000 })
   await expect(pageB).toHaveURL(/workspaces/, { timeout: 30_000 })
+
+  // THE property the old flow could not offer: the ORIGINAL master key still
+  // works after enrolling a passkey. Under the previous design it had been
+  // rotated away by this point.
+  await clientB.send('Storage.clearDataForOrigin', { origin, storageTypes: 'all' })
+  await signInDevice(pageB, url, user)
+  await expect(dialogB.getByRole('heading', { name: /verify this device/i })).toBeVisible({
+    timeout: 90_000,
+  })
+  // Enrolled now, so the gate leads with the passkey; the key field is behind
+  // the explicit escape hatch.
+  await dialogB.getByRole('button', { name: /use your master key instead/i }).click()
+  await dialogB.locator('.verify__input').fill(masterKey)
+  await dialogB.getByRole('button', { name: /^restore$/i }).click()
+  await expect(dialogB).toBeHidden({ timeout: 90_000 })
 
   await ctxA.close()
   await ctxB.close()

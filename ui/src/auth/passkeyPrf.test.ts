@@ -76,8 +76,11 @@ describe('passkeyPrf', () => {
   describe('registerPasskeyPrf', () => {
     it('uses the PRF result evaluated at create() time (single prompt)', async () => {
       create.mockResolvedValue(fakeCred({ enabled: true, results: { first: PRF_FIRST } }))
-      const secret = await registerPasskeyPrf('@me:tidework.io', 'Me')
-      expect(secret).toBe(PRF_SECRET)
+      const registered = await registerPasskeyPrf('@me:tidework.io', 'Me')
+      expect(registered.secret).toBe(PRF_SECRET)
+      // The credential id comes back too, so a wrap can be attached to THIS
+      // passkey and removed later without disturbing others (issue 63dc1339).
+      expect(registered.credentialId).toBeTruthy()
       expect(get).not.toHaveBeenCalled() // no fallback assertion needed
     })
 
@@ -116,8 +119,11 @@ describe('passkeyPrf', () => {
     it('falls back to a get() when create() does not evaluate the PRF', async () => {
       create.mockResolvedValue(fakeCred({ enabled: true })) // no results at create
       get.mockResolvedValue(fakeCred({ results: { first: PRF_FIRST } }))
-      const secret = await registerPasskeyPrf('@me:tidework.io', 'Me')
-      expect(secret).toBe(PRF_SECRET)
+      const registered = await registerPasskeyPrf('@me:tidework.io', 'Me')
+      expect(registered.secret).toBe(PRF_SECRET)
+      // The credential id comes back too, so a wrap can be attached to THIS
+      // passkey and removed later without disturbing others (issue 63dc1339).
+      expect(registered.credentialId).toBeTruthy()
       // The fallback targets the just-created credential.
       expect(get.mock.calls[0][0].publicKey.allowCredentials).toHaveLength(1)
     })

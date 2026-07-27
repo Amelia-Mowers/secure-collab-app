@@ -41,16 +41,29 @@ export async function signInDevice(page: Page, url: string, username: string, pa
 }
 
 /**
- * Complete the first-device "Save your master key" step and return the key.
- * The first device auto-bootstraps recovery, so this screen appears after
- * registration.
+ * Complete the first-device "Save your recovery key" step and return the key.
+ *
+ * EVERY first device sees this now (issue 63dc1339) — there is no passkey-first
+ * path that skips it — and it requires an explicit acknowledgement before it
+ * will continue, which is the point of the screen.
+ *
+ * On a passkey-capable context the optional "unlock faster with a passkey" step
+ * follows; it is skipped here so key-only tests aren't forced through it. Tests
+ * that want the passkey enrolled drive that screen themselves.
  */
 export async function captureMasterKey(page: Page): Promise<string> {
   const keyText = page.locator('.verify__key-text')
   await expect(keyText).toBeVisible({ timeout: 90_000 })
   const key = (await keyText.textContent())?.trim()
   if (!key) throw new Error('Master key was empty')
-  await page.getByRole('button', { name: /saved it/i }).click()
+  await page.getByRole('checkbox').check()
+  await page.getByRole('button', { name: /continue/i }).click()
+
+  // The speed-up offer only appears where a platform authenticator exists.
+  const notNow = page.getByRole('button', { name: /not now/i })
+  if (await notNow.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    await notNow.click()
+  }
   return key
 }
 

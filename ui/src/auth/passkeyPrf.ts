@@ -88,7 +88,18 @@ export async function hasPlatformAuthenticator(): Promise<boolean> {
  * (Touch ID / Windows Hello / security key). The passkey is resident, so it
  * syncs via the platform keychain and can be found on other devices.
  */
-export async function registerPasskeyPrf(userId: string, displayName: string): Promise<string> {
+/** A freshly registered passkey: its PRF secret, plus the credential id that
+ *  identifies WHICH passkey it is — needed so a wrap can be attached to it and
+ *  removed later without disturbing the others (issue 63dc1339). */
+export interface RegisteredPasskey {
+  secret: string
+  credentialId: string
+}
+
+export async function registerPasskeyPrf(
+  userId: string,
+  displayName: string,
+): Promise<RegisteredPasskey> {
   if (!isPasskeyPrfSupported()) {
     throw new Error('Passkeys are not supported in this browser')
   }
@@ -139,8 +150,10 @@ export async function registerPasskeyPrf(userId: string, displayName: string): P
   if (!cred) throw new Error('Passkey registration was cancelled')
 
   const ext = cred.getClientExtensionResults() as unknown as PrfExtensionResults
+  const credentialId = toBase64Url(cred.rawId)
   if (ext.prf?.results?.first) {
-    return toBase64Url(ext.prf.results.first) // evaluated at create — single prompt
+    // Evaluated at create — single prompt.
+    return { secret: toBase64Url(ext.prf.results.first), credentialId }
   }
   if (ext.prf?.enabled === false) {
     throw new Error(PRF_UNSUPPORTED_MESSAGE)
@@ -149,7 +162,7 @@ export async function registerPasskeyPrf(userId: string, displayName: string): P
   // provider turns out not to evaluate PRF there either, surface the provider
   // message — at this point a credential exists but can never derive a secret.
   try {
-    return await derivePrfSecret([cred.rawId])
+    return { secret: await derivePrfSecret([cred.rawId]), credentialId }
   } catch (err) {
     if (err instanceof Error && /PRF/.test(err.message)) {
       throw new Error(PRF_UNSUPPORTED_MESSAGE)

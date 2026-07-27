@@ -29,21 +29,32 @@ test('passkey: protect history on setup, then unlock a re-provisioned device', a
   const page = await ctx.newPage()
   const { client } = await addPrfAuthenticator(page)
 
-  // ── Provision: register → choose passkey → save the break-glass key ─────────
+  // ── Provision: register → SAVE THE KEY → then add a passkey ────────────────
+  // Order matters and is the point of issue 63dc1339: everyone leaves setup with
+  // a recovery key they have seen and acknowledged, and the passkey is offered
+  // afterwards as a speed-up that WRAPS that key rather than replacing it.
   await registerDevice(page, url, user)
   const dialog = page.getByRole('dialog')
 
-  // The platform authenticator is present, so we get the passkey-vs-key choice.
+  const keyText = page.locator('.verify__key-text')
+  await expect(keyText).toBeVisible({ timeout: 90_000 })
+  const recoveryKey = ((await keyText.textContent()) ?? '').trim()
+  expect(recoveryKey).not.toBe('')
+  await dialog.getByRole('checkbox').check()
+  await dialog.getByRole('button', { name: /continue/i }).click()
+
+  // Now the optional passkey step.
   await expect(dialog.getByRole('button', { name: /set up a passkey/i })).toBeVisible({
     timeout: 90_000,
   })
   await dialog.getByRole('button', { name: /set up a passkey/i }).click()
 
-  // Passkey-ready screen (secure backup is now keyed by the passkey's PRF
-  // secret; the break-glass key is collapsed by default — phase 4c).
   await expect(dialog.getByRole('heading', { name: /passkey ready/i })).toBeVisible({
     timeout: 90_000,
   })
+  // The confirmation says the key still works, because it does — nothing was
+  // rotated to enrol the passkey.
+  await expect(dialog.getByText(/recovery key still works/i)).toBeVisible()
   await dialog.getByRole('button', { name: /^done$/i }).click()
   await expect(page).toHaveURL(/workspaces/, { timeout: 60_000 })
 
@@ -58,11 +69,26 @@ test('passkey: protect history on setup, then unlock a re-provisioned device', a
     timeout: 90_000,
   })
 
-  // Unlock with the passkey — the virtual authenticator auto-approves and the
-  // same PRF secret opens secure backup, so the gate clears with no key typed.
+  // Unlock with the passkey. The authenticator auto-approves; its PRF output
+  // now opens the WRAP, and the recovery key inside is what actually opens
+  // secure backup. No key typed, and the key itself was never re-keyed.
   await dialog.getByRole('button', { name: /unlock with passkey/i }).click()
   await expect(dialog).toBeHidden({ timeout: 90_000 })
   await expect(page).toHaveURL(/workspaces/, { timeout: 30_000 })
+
+  // …and the typed key STILL works, which the old flow could not promise: it
+  // keyed secret storage with the PRF secret, so enrolling a passkey retired
+  // whatever key the user had saved.
+  await client.send('Storage.clearDataForOrigin', { origin, storageTypes: 'all' })
+  await signInDevice(page, url, user)
+  await expect(dialog.getByRole('heading', { name: /verify this device/i })).toBeVisible({
+    timeout: 90_000,
+  })
+  // Enrolled, so the gate leads with the passkey — take the escape hatch.
+  await dialog.getByRole('button', { name: /use your master key instead/i }).click()
+  await dialog.locator('.verify__input').fill(recoveryKey)
+  await dialog.getByRole('button', { name: /^restore$/i }).click()
+  await expect(dialog).toBeHidden({ timeout: 90_000 })
 
   await ctx.close()
 })
