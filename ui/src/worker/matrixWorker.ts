@@ -11,7 +11,7 @@
  */
 
 import { getWasmModule } from '../wasm/loader'
-import { createDispatcher } from './dispatch'
+import { createDispatcher, type Client } from './dispatch'
 import type { Event, Message, Request } from './protocol'
 
 /** The bit of `SharedWorkerGlobalScope` this file uses. Declared locally rather
@@ -22,18 +22,29 @@ interface SharedWorkerScope {
 }
 declare const self: SharedWorkerScope
 
-/** Every connected tab. There is no reliable "port closed" signal, so ports are
- *  pruned when a tab says goodbye or when posting to it throws. */
-const ports = new Set<MessagePort>()
+/** Every connected tab, port → the dispatcher's view of it. There is no reliable
+ *  "port closed" signal, so tabs are pruned when one says goodbye or when posting
+ *  to it throws. */
+const clients = new Map<MessagePort, Client>()
+
+function post(port: MessagePort, message: Message): boolean {
+  try {
+    port.postMessage(message)
+    return true
+  } catch {
+    drop(port)
+    return false
+  }
+}
+
+function drop(port: MessagePort) {
+  const client = clients.get(port)
+  if (client) dispatcher.disconnect(client)
+  clients.delete(port)
+}
 
 function broadcast(event: Event) {
-  for (const port of [...ports]) {
-    try {
-      port.postMessage(event satisfies Message)
-    } catch {
-      ports.delete(port) // the tab is gone
-    }
-  }
+  for (const port of [...clients.keys()]) post(port, event)
 }
 
 // NOTE: nothing here may reference `__BUILD_ID__` or any other Vite `define`.
@@ -45,24 +56,20 @@ const dispatcher = createDispatcher({ loadWasm: getWasmModule, broadcast })
 
 self.onconnect = (connectEvent: MessageEvent) => {
   const port = connectEvent.ports[0]
-  ports.add(port)
+  const client: Client = { send: event => post(port, event) }
+  clients.set(port, client)
 
   port.onmessage = async (messageEvent: MessageEvent<Request>) => {
     const req = messageEvent.data
     if (req?.kind === 'bye') {
-      ports.delete(port)
+      drop(port)
       return
     }
-    const response = await dispatcher.handle(req)
-    if (!response) return
-    try {
-      port.postMessage(response satisfies Message)
-    } catch {
-      // The tab vanished mid-request. Nothing to report to, and the worker's
-      // state is unaffected — the session and workspace it built stay open for
-      // whichever tab asks next.
-      ports.delete(port)
-    }
+    const response = await dispatcher.handle(req, client)
+    // A tab that vanished mid-request gets dropped by `post`. The worker's state
+    // is unaffected: the session and workspace it built stay open for whichever
+    // tab asks next.
+    if (response) post(port, response)
   }
 
   port.start()

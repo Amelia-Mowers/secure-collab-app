@@ -255,6 +255,35 @@ test('the shared worker owns one client per account and one workspace per room',
     expect(rejected).toMatchObject({ count: 0 })
   })
 
+  await test.step('a subscribed page is PUSHED materialized state it can read synchronously', async () => {
+    // Option (b): the worker owns truth and pushes a bundle, so a tab answers
+    // reads out of it without a client of its own. Run against the real bridge
+    // because this is where a wrong method name or return shape would show up —
+    // the unit tests use a fake workspace and cannot catch that.
+    await send(first, { kind: 'workspace.subscribe', roomId, tableIds: [tableId] })
+
+    let state: any = null
+    await expect
+      .poll(
+        async () => {
+          const pushed = (await events(first)).filter(e => e.event === 'workspace-state')
+          if (pushed.length > 0) state = JSON.parse(pushed[pushed.length - 1].state)
+          return pushed.length
+        },
+        { timeout: 30_000, intervals: [500] },
+      )
+      .toBeGreaterThan(0)
+
+    expect(JSON.parse(state.tables)).toContain(tableId)
+    expect(state.schemas[tableId]).toBeTruthy()
+    expect(state.currentUserId).toBe(userId)
+    expect(state.isEncrypted).toBe(true)
+    // Rows are pushed only for the subscribed table, and carry the write that
+    // the OTHER page made.
+    expect(Object.keys(state.rows)).toEqual([tableId])
+    expect(JSON.parse(state.rows[tableId]).map((r: any) => r.name)).toContain('Written by page two')
+  })
+
   await test.step('the worker broadcast its change events to both pages', async () => {
     // Replaces the per-tab BroadcastChannel ping: the sync echo of the write
     // lands on the ONE client and fans out to every port. Polled because the

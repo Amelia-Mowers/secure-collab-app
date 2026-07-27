@@ -38,7 +38,12 @@ function makeWasm(options: { userId?: string; restoreDelayMs?: number } = {}): F
   const syncCallbacks = new Map<string, () => void>()
   const queueCallbacks = new Map<string, () => void>()
   let tokenCallback: ((blob: string) => void) | undefined
-  const state = { workspacesCreated: 0, syncsStarted: 0, sessionSyncInstalls: 0 }
+  const state = {
+    workspacesCreated: 0,
+    syncsStarted: 0,
+    sessionSyncInstalls: 0,
+    rowsByTable: {} as Record<string, Array<Record<string, unknown>>>,
+  }
 
   const makeSession = () => ({
     userId: () => userId,
@@ -90,8 +95,26 @@ function makeWasm(options: { userId?: string; restoreDelayMs?: number } = {}): F
           syncCallbacks.set(roomId, cb)
         },
         onQueueChanged: (cb: () => void) => queueCallbacks.set(roomId, cb),
-        getTableRows: () => '[]',
-        updateCell: async () => undefined,
+        getTableRows: (tableId: string) => JSON.stringify(state.rowsByTable[tableId] ?? []),
+        getRowOrderKeys: () => '{"r1":"a0"}',
+        getTableSchema: (tableId: string) => JSON.stringify({ id: tableId, name: 'Items' }),
+        // Both of these return arrays of ID STRINGS in the real bridge. The
+        // fake said `{id}` objects at first, the dispatcher believed it, and the
+        // e2e against the real bridge is what caught the empty schema map.
+        listTables: () => JSON.stringify(['items', 'other']),
+        listViewsForTable: (tableId: string) =>
+          JSON.stringify(tableId === 'items' ? ['view-1'] : []),
+        getView: (viewId: string) => JSON.stringify({ id: viewId, table_id: 'items' }),
+        getTableOrderKeys: () => '{"items":"a0"}',
+        isEncrypted: () => true,
+        undecryptableCount: () => 0,
+        connectionHealth: () => '{"state":"ok"}',
+        rejectedWrites: () => '{"count":0,"lastReason":""}',
+        pendingUpdates: () => '[]',
+        updateCell: async (tableId: string, rowId: string, columnId: string, valueJson: string) => {
+          const rows = (state.rowsByTable[tableId] ??= [])
+          rows.push({ _row_id: rowId, [columnId]: JSON.parse(valueJson) })
+        },
         currentUserId: () => userId,
         snapshot: () => '{"version":1}',
         exportWorkspaceZip: () => new Uint8Array([1, 2, 3]),
@@ -412,10 +435,173 @@ describe('worker dispatcher', () => {
     await restore(1, USER)
     await openRoom(2)
     await dispatcher.handle({ kind: 'session.destroy', id: 3, userId: USER })
-    expect(dispatcher.inspect()).toEqual({ sessions: [], rooms: [] })
+    expect(dispatcher.inspect()).toMatchObject({ sessions: [], rooms: [] })
     expect(events).toContainEqual({ kind: 'event', event: 'session-dropped', userId: USER })
     expect(errorOf(await dispatcher.handle({ kind: 'call', id: 4, target: `session:${USER}`, method: 'listRooms', args: [] })))
       .toMatch(/No session for/)
+  })
+
+  // ── Pushed materialized state (option b) ──────────────────────────────────
+
+  describe('materialized state', () => {
+    /** A fake tab: collects what the worker pushes to it. */
+    const makeClient = () => {
+      const received: Event[] = []
+      return { client: { send: (e: Event) => (received.push(e), true) }, received }
+    }
+    const states = (received: Event[]) =>
+      received.filter(e => e.event === 'workspace-state').map(e => JSON.parse((e as any).state))
+    /** Let the `setTimeout(0)` push land. */
+    const settle = () => new Promise(resolve => setTimeout(resolve, 5))
+
+    const subscribed = async (tableIds: string[]) => {
+      await restore(1, USER)
+      await openRoom(2)
+      const tab = makeClient()
+      await dispatcher.handle(
+        { kind: 'workspace.subscribe', id: 3, roomId: ROOM, tableIds },
+        tab.client,
+      )
+      await settle()
+      return tab
+    }
+
+    it('pushes a bundle on subscribe, with rows only for the named tables', async () => {
+      const tab = await subscribed(['items'])
+      const [state] = states(tab.received)
+      expect(state).toBeTruthy()
+      // Metadata for every table…
+      expect(Object.keys(state.schemas).sort()).toEqual(['items', 'other'])
+      expect(state.views['view-1']).toContain('view-1')
+      expect(state.tableOrderKeys).toBe('{"items":"a0"}')
+      expect(state.isEncrypted).toBe(true)
+      // …rows only for what this tab is showing, because rows are the only part
+      // whose size scales with the data.
+      expect(Object.keys(state.rows)).toEqual(['items'])
+    })
+
+    it('refuses to subscribe to a workspace that is not open', async () => {
+      await restore(1, USER)
+      const tab = makeClient()
+      const response = await dispatcher.handle(
+        { kind: 'workspace.subscribe', id: 2, roomId: ROOM, tableIds: [] },
+        tab.client,
+      )
+      expect(errorOf(response)).toMatch(/is not open/)
+    })
+
+    it("pushes a sibling tab's write immediately, not on the homeserver echo", async () => {
+      // This is what replaces "the other tab catches up when you switch to it".
+      const reader = await subscribed(['items'])
+      const writer = makeClient()
+      await dispatcher.handle(
+        { kind: 'workspace.subscribe', id: 4, roomId: ROOM, tableIds: ['items'] },
+        writer.client,
+      )
+      await settle()
+      const before = states(reader.received).length
+
+      await dispatcher.handle(
+        {
+          kind: 'call',
+          id: 5,
+          target: `room:${ROOM}`,
+          method: 'updateCell',
+          args: ['items', 'r1', 'name', '"from the other tab"'],
+        },
+        writer.client,
+      )
+      await settle()
+
+      const pushed = states(reader.received)
+      expect(pushed.length).toBeGreaterThan(before)
+      expect(JSON.parse(pushed[pushed.length - 1].rows.items)).toEqual([
+        { _row_id: 'r1', name: 'from the other tab' },
+      ])
+    })
+
+    it('does not re-push for a read', async () => {
+      const tab = await subscribed(['items'])
+      const before = states(tab.received).length
+      await dispatcher.handle(
+        { kind: 'call', id: 4, target: `room:${ROOM}`, method: 'getTableRows', args: ['items'] },
+        tab.client,
+      )
+      await settle()
+      expect(states(tab.received)).toHaveLength(before)
+    })
+
+    it('pushes to every subscribed tab when the sync loop sees remote writes', async () => {
+      const a = await subscribed(['items'])
+      const b = makeClient()
+      await dispatcher.handle(
+        { kind: 'workspace.subscribe', id: 4, roomId: ROOM, tableIds: ['other'] },
+        b.client,
+      )
+      await settle()
+      const [beforeA, beforeB] = [states(a.received).length, states(b.received).length]
+
+      wasm.fireSync(ROOM)
+      await settle()
+
+      expect(states(a.received).length).toBeGreaterThan(beforeA)
+      expect(states(b.received).length).toBeGreaterThan(beforeB)
+      // Each tab gets rows for ITS tables, not the union.
+      expect(Object.keys(states(a.received).pop().rows)).toEqual(['items'])
+      expect(Object.keys(states(b.received).pop().rows)).toEqual(['other'])
+    })
+
+    it('re-subscribing replaces the table set rather than adding to it', async () => {
+      await restore(1, USER)
+      await openRoom(2)
+      const tab = makeClient()
+      for (const [id, tableIds] of [[3, ['items']], [4, ['other']]] as const) {
+        await dispatcher.handle({ kind: 'workspace.subscribe', id, roomId: ROOM, tableIds: [...tableIds] }, tab.client)
+      }
+      await settle()
+      expect(Object.keys(states(tab.received).pop().rows)).toEqual(['other'])
+    })
+
+    it('drops a tab that has gone away instead of pushing into the void', async () => {
+      await restore(1, USER)
+      await openRoom(2)
+      let alive = true
+      const client = { send: () => alive }
+      await dispatcher.handle({ kind: 'workspace.subscribe', id: 3, roomId: ROOM, tableIds: [] }, client)
+      await settle()
+      expect(dispatcher.inspect().subscribers).toBe(1)
+
+      alive = false // the tab closed; postMessage now fails
+      wasm.fireSync(ROOM)
+      await settle()
+      expect(dispatcher.inspect().subscribers).toBe(0)
+    })
+
+    it('forgets subscriptions on an explicit disconnect', async () => {
+      const tab = await subscribed([])
+      expect(dispatcher.inspect().subscribers).toBe(1)
+      dispatcher.disconnect(tab.client)
+      expect(dispatcher.inspect().subscribers).toBe(0)
+    })
+
+    it('survives a read method that throws, pushing the rest of the bundle', async () => {
+      // A bundle is worth pushing even when one field can't be read; the
+      // alternative is a grid that stops updating because of a peripheral field.
+      const broken = makeWasm()
+      const originalCreate = broken.ConnectedWorkspace.create
+      broken.ConnectedWorkspace.create = async (session: unknown, roomId: string) => {
+        const ws = await originalCreate(session, roomId)
+        ws.connectionHealth = () => {
+          throw new Error('health unavailable')
+        }
+        return ws
+      }
+      setup(broken)
+      const tab = await subscribed(['items'])
+      const [state] = states(tab.received)
+      expect(state.connectionHealth).toBe('{}') // the fallback
+      expect(state.tables).toContain('items') // …and the rest still arrived
+    })
   })
 
   it('answers nothing to a goodbye', async () => {
