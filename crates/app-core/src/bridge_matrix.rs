@@ -905,27 +905,59 @@ impl MatrixSession {
     pub fn start_session_sync(&self, on_change: js_sys::Function) {
         let client = self.client.clone();
 
+        // Supervised: `sync_with_callback` RETURNS when the stream ends — a
+        // network drop while the tab is backgrounded, a token refresh hiccup, a
+        // homeserver blip. The result used to be discarded (`let _ = ...`) and
+        // the task simply ended, with nothing to restart it. From then on
+        // `last_sync_ok_ms` stopped advancing, so the UI showed "reconnecting"
+        // forever and only a reload actually reconnected. Reported 2026-07-26
+        // ("off tab long enough → stuck reconnecting, needs a reload").
+        //
+        // So: restart it, with backoff, forever. Backoff resets once a stream
+        // has run for a while, so an occasional drop reconnects promptly while
+        // a server that keeps refusing is not hammered.
         spawn_local(async move {
-            let settings = SyncSettings::default();
+            const MIN_BACKOFF_MS: u64 = 1_000;
+            const MAX_BACKOFF_MS: u64 = 60_000;
+            /// A stream that lasted this long counts as healthy, so the next
+            /// drop starts over at the minimum delay.
+            const HEALTHY_RUN_MS: f64 = 30_000.0;
+            let mut backoff_ms = MIN_BACKOFF_MS;
 
-            let _ = client
-                .sync_with_callback(settings, |response| {
-                    let on_change = on_change.clone();
+            loop {
+                let settings = SyncSettings::default();
+                let started_at = js_sys::Date::now();
 
-                    async move {
-                        // Fire when ANY room activity happens (invites, joins, leaves)
-                        let has_changes = !response.rooms.invited.is_empty()
-                            || !response.rooms.joined.is_empty()
-                            || !response.rooms.left.is_empty();
+                let outcome = client
+                    .sync_with_callback(settings, |response| {
+                        let on_change = on_change.clone();
 
-                        if has_changes {
-                            let _ = on_change.call0(&JsValue::NULL);
+                        async move {
+                            // Fire when ANY room activity happens (invites, joins, leaves)
+                            let has_changes = !response.rooms.invited.is_empty()
+                                || !response.rooms.joined.is_empty()
+                                || !response.rooms.left.is_empty();
+
+                            if has_changes {
+                                let _ = on_change.call0(&JsValue::NULL);
+                            }
+
+                            LoopCtrl::Continue
                         }
+                    })
+                    .await;
 
-                        LoopCtrl::Continue
-                    }
-                })
-                .await;
+                match outcome {
+                    Ok(()) => tracing::warn!("sync stream ended; restarting"),
+                    Err(e) => tracing::warn!("sync stream failed ({e}); restarting"),
+                }
+
+                if js_sys::Date::now() - started_at >= HEALTHY_RUN_MS {
+                    backoff_ms = MIN_BACKOFF_MS;
+                }
+                matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
+                backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
+            }
         });
     }
 
