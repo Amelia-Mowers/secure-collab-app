@@ -52,6 +52,11 @@ pub mod bridge;
 #[cfg(all(feature = "wasm", feature = "matrix"))]
 pub mod bridge_matrix;
 
+/// Wall-clock bound for a sync that is allowed to hang — see the module docs for
+/// why matrix-rust-sdk's own request timeout does not apply in the browser.
+#[cfg(feature = "matrix")]
+pub mod sync_watchdog;
+
 // Re-export main types
 pub use archive::{Archive, ArchiveError, ArchiveTable, ImportIssue, FORMAT_VERSION};
 pub use history::{HistoryManager, RevertRecord, HISTORY_TABLE_ID};

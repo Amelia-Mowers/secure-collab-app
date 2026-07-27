@@ -30,7 +30,7 @@ use matrix_sdk::{
         serde::Raw,
         OwnedDeviceId, OwnedRoomId, OwnedUserId,
     },
-    AuthSession, Client, LoopCtrl, RoomMemberships, SessionChange, SessionMeta, SessionTokens,
+    AuthSession, Client, RoomMemberships, SessionChange, SessionMeta, SessionTokens,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -905,59 +905,18 @@ impl MatrixSession {
     pub fn start_session_sync(&self, on_change: js_sys::Function) {
         let client = self.client.clone();
 
-        // Supervised: `sync_with_callback` RETURNS when the stream ends — a
-        // network drop while the tab is backgrounded, a token refresh hiccup, a
-        // homeserver blip. The result used to be discarded (`let _ = ...`) and
-        // the task simply ended, with nothing to restart it. From then on
-        // `last_sync_ok_ms` stopped advancing, so the UI showed "reconnecting"
-        // forever and only a reload actually reconnected. Reported 2026-07-26
-        // ("off tab long enough → stuck reconnecting, needs a reload").
-        //
-        // So: restart it, with backoff, forever. Backoff resets once a stream
-        // has run for a while, so an occasional drop reconnects promptly while
-        // a server that keeps refusing is not hammered.
+        // Supervised on LIVENESS, not on return — see `sync_loop` below.
         spawn_local(async move {
-            const MIN_BACKOFF_MS: u64 = 1_000;
-            const MAX_BACKOFF_MS: u64 = 60_000;
-            /// A stream that lasted this long counts as healthy, so the next
-            /// drop starts over at the minimum delay.
-            const HEALTHY_RUN_MS: f64 = 30_000.0;
-            let mut backoff_ms = MIN_BACKOFF_MS;
-
-            loop {
-                let settings = SyncSettings::default();
-                let started_at = js_sys::Date::now();
-
-                let outcome = client
-                    .sync_with_callback(settings, |response| {
-                        let on_change = on_change.clone();
-
-                        async move {
-                            // Fire when ANY room activity happens (invites, joins, leaves)
-                            let has_changes = !response.rooms.invited.is_empty()
-                                || !response.rooms.joined.is_empty()
-                                || !response.rooms.left.is_empty();
-
-                            if has_changes {
-                                let _ = on_change.call0(&JsValue::NULL);
-                            }
-
-                            LoopCtrl::Continue
-                        }
-                    })
-                    .await;
-
-                match outcome {
-                    Ok(()) => tracing::warn!("sync stream ended; restarting"),
-                    Err(e) => tracing::warn!("sync stream failed ({e}); restarting"),
+            sync_loop("session", client, move |response| {
+                // Fire when ANY room activity happens (invites, joins, leaves).
+                let has_changes = !response.rooms.invited.is_empty()
+                    || !response.rooms.joined.is_empty()
+                    || !response.rooms.left.is_empty();
+                if has_changes {
+                    let _ = on_change.call0(&JsValue::NULL);
                 }
-
-                if js_sys::Date::now() - started_at >= HEALTHY_RUN_MS {
-                    backoff_ms = MIN_BACKOFF_MS;
-                }
-                matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
-                backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
-            }
+            })
+            .await;
         });
     }
 
@@ -1282,6 +1241,66 @@ pub struct ConnectedWorkspace {
     queue_listener: Rc<RefCell<Option<js_sys::Function>>>,
 }
 
+/// No `/sync` may take longer than this before the loop abandons it and starts a
+/// fresh one. Comfortably above the 30 s long-poll (`DEFAULT_SYNC_TIMEOUT`), so a
+/// healthy sync with nothing to report is never mistaken for a stall.
+const SYNC_WATCHDOG_MS: u64 = 90_000;
+/// Delay between a failed/abandoned sync and the next attempt, doubling up to…
+const MIN_SYNC_BACKOFF_MS: u64 = 1_000;
+/// …this, so a server that keeps refusing is not hammered.
+const MAX_SYNC_BACKOFF_MS: u64 = 60_000;
+
+/// The one sync loop, shared by the session-level and workspace-level streams.
+///
+/// It runs `sync_once` itself rather than handing control to
+/// `sync_with_callback`, for one reason: **a sync that never returns**.
+///
+/// `sync_with_callback` returns when the stream ends, and #174/#175 restart it
+/// when it does. But matrix-rust-sdk's WASM HTTP client ignores its request
+/// config (see `sync_watchdog`), so in the browser there is no request timeout at
+/// all, and a request issued over a connection that died without a TCP reset —
+/// sleep/resume, a dropped Wi-Fi link, a NAT rebind — simply never settles.
+/// Nothing returns, so nothing restarts: `last_sync_ok_ms` freezes, and five
+/// minutes later `ConnectionStatus` raises its page-blocking overlay and leaves
+/// it up until the user reloads. That is issue dc8bbbb8, and restarting on return
+/// cannot fix it — the loop has to supervise LIVENESS.
+///
+/// So each sync is bounded by a watchdog. If it fires, the request is dropped and
+/// a new one goes out; the sync token is only persisted after a response is
+/// processed, so re-running from the same token loses nothing.
+///
+/// `on_response` is called for every successful sync, before the next one starts.
+async fn sync_loop<F>(label: &'static str, client: Client, mut on_response: F)
+where
+    F: FnMut(&matrix_sdk::sync::SyncResponse),
+{
+    let mut backoff_ms = MIN_SYNC_BACKOFF_MS;
+    loop {
+        let outcome = crate::sync_watchdog::bounded(
+            client.sync_once(SyncSettings::default()),
+            Duration::from_millis(SYNC_WATCHDOG_MS),
+        )
+        .await;
+
+        match outcome.completed() {
+            Some(Ok(response)) => {
+                on_response(&response);
+                // A sync that answered proves the connection works, so the next
+                // failure starts over at the shortest delay.
+                backoff_ms = MIN_SYNC_BACKOFF_MS;
+                continue;
+            }
+            Some(Err(e)) => tracing::warn!("{label} sync failed ({e}); retrying"),
+            None => tracing::warn!(
+                "{label} sync stalled past {SYNC_WATCHDOG_MS}ms; abandoning it and retrying"
+            ),
+        }
+
+        matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
+        backoff_ms = backoff_ms.saturating_mul(2).min(MAX_SYNC_BACKOFF_MS);
+    }
+}
+
 /// Paginate a room's history backwards and replay every cell event into
 /// `workspace`, returning `(marker_ts, undecryptable_count)`.
 ///
@@ -1503,86 +1522,51 @@ impl ConnectedWorkspace {
         let marker_ts = Rc::clone(&self.marker_ts);
         let last_sync_ok_ms = Rc::clone(&self.last_sync_ok_ms);
 
-        // Supervised for the same reason as `start_session_sync`. THIS is the
+        // Supervised on LIVENESS, not on return (see `sync_loop`). THIS is the
         // loop whose callback sets `last_sync_ok_ms`, so it is the one the
-        // connection badge reads: when it died, the UI said "reconnecting"
-        // forever and only a reload reconnected.
+        // connection badge — and, past five minutes, the page-blocking overlay —
+        // reads. When it stopped advancing, only a reload reconnected.
         spawn_local(async move {
-            const MIN_BACKOFF_MS: u64 = 1_000;
-            const MAX_BACKOFF_MS: u64 = 60_000;
-            const HEALTHY_RUN_MS: f64 = 30_000.0;
-            let mut backoff_ms = MIN_BACKOFF_MS;
+            sync_loop("workspace", client, move |response| {
+                // Every sync response is proof the homeserver answered
+                // (ADR 0003 phase 2 — connection health).
+                last_sync_ok_ms.set(js_sys::Date::now());
+                // Look for our room in the sync response
+                let Some(joined) = response.rooms.joined.get(&room_id) else {
+                    return;
+                };
+                let mut changed = false;
 
-            loop {
-                let settings = SyncSettings::default();
-                let started_at = js_sys::Date::now();
-
-                let outcome = client
-                    .sync_with_callback(settings, |response| {
-                        let workspace = Rc::clone(&workspace);
-                        let undecryptable = Rc::clone(&undecryptable);
-                        let marker_ts = Rc::clone(&marker_ts);
-                        let last_sync_ok_ms = Rc::clone(&last_sync_ok_ms);
-                        let room_id = room_id.clone();
-                        let on_change = on_change.clone();
-
-                        async move {
-                            // Every sync response is proof the homeserver answered
-                            // (ADR 0003 phase 2 — connection health).
-                            last_sync_ok_ms.set(js_sys::Date::now());
-                            // Look for our room in the sync response
-                            if let Some(joined) = response.rooms.joined.get(&room_id) {
-                                let mut changed = false;
-
-                                for raw_event in &joined.timeline.events {
-                                    // Try to extract our custom event(s) — one event
-                                    // may carry many cells (a batch event).
-                                    if let Ok(json_str) =
-                                        serde_json::to_string(raw_event.raw().json())
-                                    {
-                                        let received =
-                                            MatrixClient::extract_cell_updates(&json_str);
-                                        if !received.is_empty() {
-                                            let mut ws = workspace.borrow_mut();
-                                            for r in received {
-                                                // Advance the snapshot marker from the
-                                                // event envelope before consuming `r`.
-                                                let ots: u64 = r.origin_server_ts.0.into();
-                                                if ots > marker_ts.get() {
-                                                    marker_ts.set(ots);
-                                                }
-                                                // Attach origin_server_ts as the LWW tiebreaker.
-                                                let _ = ws.apply_update(r.into_update());
-                                            }
-                                            changed = true;
-                                        } else if MatrixClient::is_undecryptable_event(&json_str) {
-                                            undecryptable.set(undecryptable.get() + 1);
-                                            changed = true;
-                                        }
-                                    }
+                for raw_event in &joined.timeline.events {
+                    // Try to extract our custom event(s) — one event may carry
+                    // many cells (a batch event).
+                    if let Ok(json_str) = serde_json::to_string(raw_event.raw().json()) {
+                        let received = MatrixClient::extract_cell_updates(&json_str);
+                        if !received.is_empty() {
+                            let mut ws = workspace.borrow_mut();
+                            for r in received {
+                                // Advance the snapshot marker from the event
+                                // envelope before consuming `r`.
+                                let ots: u64 = r.origin_server_ts.0.into();
+                                if ots > marker_ts.get() {
+                                    marker_ts.set(ots);
                                 }
-
-                                if changed {
-                                    let _ = on_change.call0(&JsValue::NULL);
-                                }
+                                // Attach origin_server_ts as the LWW tiebreaker.
+                                let _ = ws.apply_update(r.into_update());
                             }
-
-                            LoopCtrl::Continue
+                            changed = true;
+                        } else if MatrixClient::is_undecryptable_event(&json_str) {
+                            undecryptable.set(undecryptable.get() + 1);
+                            changed = true;
                         }
-                    })
-                    .await;
-
-                match outcome {
-                    Ok(()) => tracing::warn!("workspace sync stream ended; restarting"),
-                    Err(e) => tracing::warn!("workspace sync stream failed ({e}); restarting"),
+                    }
                 }
 
-                if js_sys::Date::now() - started_at >= HEALTHY_RUN_MS {
-                    backoff_ms = MIN_BACKOFF_MS;
+                if changed {
+                    let _ = on_change.call0(&JsValue::NULL);
                 }
-                matrix_sdk::sleep::sleep(Duration::from_millis(backoff_ms)).await;
-                backoff_ms = backoff_ms.saturating_mul(2).min(MAX_BACKOFF_MS);
-            }
+            })
+            .await;
         });
     }
 
