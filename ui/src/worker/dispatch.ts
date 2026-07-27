@@ -20,6 +20,8 @@
  * visited rooms is the case to revisit if memory ever becomes a problem.)
  */
 
+import { loadSnapshot, saveSnapshot } from '../lib/snapshotStore'
+import { loadOutbox, saveOutbox, clearOutbox } from '../lib/outboxStore'
 import {
   SESSION_METHODS,
   SESSION_STATIC_METHODS,
@@ -65,6 +67,26 @@ interface SessionEntry {
   sessionSyncStarted: boolean
 }
 
+/**
+ * How long after a change the snapshot is rewritten. Snapshot freshness is not a
+ * correctness property — a marker-bounded gather fills any gap — so this is
+ * debounced rather than immediate, unlike the outbox.
+ */
+const SNAPSHOT_DEBOUNCE_MS = 2_000
+/** Backstop for changes the debounce misses (a long run of steady edits). */
+const SNAPSHOT_INTERVAL_MS = 30_000
+
+/** Per-workspace persistence, owned here rather than by any tab. */
+interface Persistence {
+  roomId: string
+  cws: any
+  key?: CryptoKey
+  snapshotTimer?: ReturnType<typeof setTimeout>
+  snapshotInterval?: ReturnType<typeof setInterval>
+  /** Last outbox JSON written, so an unchanged queue costs nothing. */
+  lastOutbox?: string
+}
+
 export interface Dispatcher {
   /** Handle one request. Never rejects — failures come back as an ErrResponse
    *  so a tab can't be left waiting on a promise that silently died. `client`
@@ -72,6 +94,14 @@ export interface Dispatcher {
   handle(req: Request, client?: Client): Promise<Response | null>
   /** Forget a disconnected tab's subscriptions. */
   disconnect(client: Client): void
+  /**
+   * Every tab is gone. Flush snapshot and outbox now, because the browser is
+   * free to terminate this worker the moment its last port closes — and with it
+   * the send queue. Best-effort by nature: an async IndexedDB write started here
+   * may not finish. The per-change outbox write is what makes durability not
+   * depend on this.
+   */
+  flushPersistence(): void
   /** Test/diagnostic view of what the worker currently owns. */
   inspect(): { sessions: string[]; rooms: string[]; subscribers: number }
 }
@@ -356,6 +386,55 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     deps.broadcast({ kind: 'event', event: 'session-dropped', userId })
   }
 
+  // ── Persistence (snapshot + outbox), owned here ────────────────────────────
+  //
+  // This lives in the worker because the worker owns the send queue, and a queue
+  // whose durable copy is written from somewhere else is a race waiting to
+  // happen. It was: the bridge's queue callback fires inside the write, before
+  // the state push carrying the new queue, so a tab mirroring on that event
+  // persisted a queue that predated the enqueue. A reload — which destroys the
+  // worker and its queue — then lost the write. Writing it here, at the moment
+  // the queue changes, in the context that changed it, removes the window
+  // rather than narrowing it.
+  //
+  // It also fixes a second-order problem nobody had hit yet: with N tabs open,
+  // N mirrors were writing the same outbox record.
+
+  const persistence = new Map<string, Persistence>()
+
+  /** Write the outbox now. Called on every queue change — no debounce, because
+   *  an unsent write is exactly what must survive an unexpected termination. */
+  function persistOutbox(p: Persistence) {
+    let json: string
+    try {
+      json = p.cws.pendingUpdates()
+    } catch (err) {
+      log('warn', `pendingUpdates failed while mirroring the outbox: ${err}`)
+      return
+    }
+    if (json === p.lastOutbox) return
+    p.lastOutbox = json
+    void saveOutbox(p.roomId, json, p.key)
+  }
+
+  function persistSnapshot(p: Persistence) {
+    try {
+      const snap = p.cws.snapshot()
+      if (snap) void saveSnapshot(p.roomId, snap, p.key)
+    } catch (err) {
+      log('warn', `snapshot failed: ${err}`)
+    }
+  }
+
+  /** Note a change; the snapshot write is debounced behind it. */
+  function scheduleSnapshot(p: Persistence) {
+    if (p.snapshotTimer) clearTimeout(p.snapshotTimer)
+    p.snapshotTimer = setTimeout(() => {
+      p.snapshotTimer = undefined
+      persistSnapshot(p)
+    }, SNAPSHOT_DEBOUNCE_MS)
+  }
+
   // ── Workspaces ─────────────────────────────────────────────────────────────
 
   async function openWorkspace(req: Extract<Request, { kind: 'workspace.open' }>): Promise<void> {
@@ -371,7 +450,14 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
 
     const build = (async () => {
       const wasm = await deps.loadWasm()
-      const cws = await wasm.ConnectedWorkspace.create(entry.ms, req.roomId, req.snapshotJson)
+      // The worker reads its own snapshot: it is the one that will keep it
+      // current, and a tab handing one over could only ever pass a copy it read
+      // through this same store.
+      const snapshotJson = await loadSnapshot(req.roomId, req.snapshotKey)
+      const cws = await wasm.ConnectedWorkspace.create(entry.ms, req.roomId, snapshotJson)
+
+      const p: Persistence = { roomId: req.roomId, cws, key: req.snapshotKey }
+      persistence.set(req.roomId, p)
 
       // The two callbacks that used to be tab closures. They fire on the
       // worker's single client, so every tab hears about every change —
@@ -379,12 +465,36 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       cws.startSync(() => {
         deps.broadcast({ kind: 'event', event: 'workspace-change', roomId: req.roomId })
         pushState(req.roomId)
+        scheduleSnapshot(p)
       })
       if (typeof cws.onQueueChanged === 'function') {
-        cws.onQueueChanged(() =>
-          deps.broadcast({ kind: 'event', event: 'queue-change', roomId: req.roomId }),
-        )
+        cws.onQueueChanged(() => {
+          // Durable FIRST, notify second: the tabs only need to know, whereas an
+          // unsent write needs to exist somewhere the worker's death cannot reach.
+          persistOutbox(p)
+          deps.broadcast({ kind: 'event', event: 'queue-change', roomId: req.roomId })
+        })
       }
+      p.snapshotInterval = setInterval(() => persistSnapshot(p), SNAPSHOT_INTERVAL_MS)
+
+      // Replay a persisted outbox BEFORE any tab can write (ADR 0003 phase 1):
+      // unsent writes from a previous worker re-apply under LWW — carrying their
+      // original HLC timestamps, so a since-superseded write loses fairly — and
+      // re-enter the send queue.
+      try {
+        const saved = await loadOutbox(req.roomId, req.snapshotKey)
+        if (saved && typeof cws.restorePendingUpdates === 'function') {
+          const replayed = cws.restorePendingUpdates(saved)
+          if (replayed > 0) log('log', `replayed ${replayed} unsent write(s) for ${req.roomId}`)
+        }
+        void clearOutbox(req.roomId)
+      } catch (err) {
+        log('warn', `outbox replay failed: ${err}`)
+      }
+
+      // Persist the freshly-gathered state at once, so a quick reload already
+      // benefits from a snapshot.
+      persistSnapshot(p)
       // Registered last, so `room:` only ever resolves to a fully wired
       // workspace (the sync callbacks above fire later, by which time this ran).
       entry.workspaces.set(req.roomId, cws)
@@ -540,6 +650,16 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     },
     disconnect(client) {
       subscriptions.delete(client)
+    },
+    flushPersistence() {
+      for (const p of persistence.values()) {
+        if (p.snapshotTimer) {
+          clearTimeout(p.snapshotTimer)
+          p.snapshotTimer = undefined
+        }
+        persistOutbox(p)
+        persistSnapshot(p)
+      }
     },
     inspect() {
       const rooms: string[] = []

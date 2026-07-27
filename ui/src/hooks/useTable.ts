@@ -509,7 +509,13 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       // pushes materialized state; reads stay synchronous against that.
       if (matrixSession?.isWorkerSession) {
         const worker = await connectWorker()
-        await worker.openWorkspace(matrixSession.userId(), workspaceId, snapshotJson ?? undefined)
+        // The KEY, not the snapshot: the worker reads and writes both at-rest
+        // stores itself, because it owns the send queue those records describe.
+        await worker.openWorkspace(
+          matrixSession.userId(),
+          workspaceId,
+          getSnapshotKey() ?? undefined,
+        )
         const wws = createWorkerWorkspace(worker, workspaceId)
         // Every pushed bundle means "something changed" — the worker's sync loop
         // and any sibling tab's write both land here. This replaces the
@@ -527,29 +533,8 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
             console.warn('[workspace] no state from the worker yet; rendering anyway'),
           ),
         ])
-        // Replay a persisted outbox, exactly as the in-tab path does below.
-        //
-        // Skipping this was a real hole, not a simplification. The send queue
-        // lives in the worker, and a SharedWorker CAN be terminated once its last
-        // port goes away — which is precisely what a reload does. An unsent write
-        // then dies with the worker, and the reloaded tab re-gathers from the
-        // timeline without it: a write that showed as applied and then vanished.
-        // Observed as a flaky kanban drag that did not survive a reload.
-        //
-        // Replaying into an already-open workspace is safe: updates carry their
-        // original HLC timestamps, so re-applying under LWW is idempotent and a
-        // since-superseded write still loses fairly.
-        try {
-          const saved = await loadOutbox(workspaceId, getSnapshotKey() ?? undefined)
-          if (saved) {
-            wws.restorePendingUpdates?.(saved)
-            console.log('[outbox] replayed unsent write(s) into the shared worker')
-          }
-          void clearOutbox(workspaceId)
-        } catch (e) {
-          console.warn('[outbox] replay failed:', e)
-        }
-
+        // No outbox replay and no snapshot/outbox mirroring here: the worker does
+        // both, at the moment its own queue changes. See `persistedByWorker`.
         workspaceRef.current = wws
         setWorkspace(wws)
         setLoading(false)
@@ -723,6 +708,8 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
   // writes, which don't bump syncCount), and one when the tab is hidden.
   useEffect(() => {
     if (!workspace || typeof workspace.snapshot !== 'function') return
+    // The worker persists its own snapshot — it is the one making the changes.
+    if ((workspace as { persistedByWorker?: boolean }).persistedByWorker) return
     let cancelled = false
     const persist = async () => {
       if (cancelled || !workspace.snapshot) return
@@ -759,6 +746,11 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
   // the queue hasn't changed, so the idle steady state costs nothing.
   useEffect(() => {
     if (!workspace || typeof workspace.pendingUpdates !== 'function') return
+    // The worker mirrors its own queue, synchronously with the change. A tab
+    // doing it as well would be reading that queue one hop from where it changed
+    // — which is exactly how a stale, empty outbox got persisted and a write was
+    // lost across a reload — and N tabs would race over the one record.
+    if ((workspace as { persistedByWorker?: boolean }).persistedByWorker) return
     let cancelled = false
     let lastMirrored: string | null = null
     const mirror = () => {

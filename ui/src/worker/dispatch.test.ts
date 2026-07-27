@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createDispatcher, type Dispatcher } from './dispatch'
 import type { Event, PingInfo, Response, SessionInfo } from './protocol'
 
@@ -17,6 +17,34 @@ import type { Event, PingInfo, Response, SessionInfo } from './protocol'
 const ROOM = '!room:example.org'
 const USER = '@alice:example.org'
 
+// The at-rest stores are IndexedDB; mocked so the persistence assertions are
+// about WHEN and WITH WHAT the worker writes, not about IndexedDB.
+const stores = vi.hoisted(() => ({
+  savedSnapshots: [] as Array<{ roomId: string; snapshot: string }>,
+  savedOutboxes: [] as Array<{ roomId: string; json: string }>,
+  storedSnapshot: undefined as string | undefined,
+  storedOutbox: undefined as string | undefined,
+  cleared: [] as string[],
+}))
+
+vi.mock('../lib/snapshotStore', () => ({
+  loadSnapshot: async () => stores.storedSnapshot,
+  saveSnapshot: async (roomId: string, snapshot: string) => {
+    stores.savedSnapshots.push({ roomId, snapshot })
+  },
+  clearSnapshot: async () => {},
+}))
+
+vi.mock('../lib/outboxStore', () => ({
+  loadOutbox: async () => stores.storedOutbox,
+  saveOutbox: async (roomId: string, json: string) => {
+    stores.savedOutboxes.push({ roomId, json })
+  },
+  clearOutbox: async (roomId: string) => {
+    stores.cleared.push(roomId)
+  },
+}))
+
 interface FakeWasm {
   MatrixSession: any
   ConnectedWorkspace: any
@@ -26,6 +54,12 @@ interface FakeWasm {
   syncsStarted: number
   /** How many times the session-level sync loop was installed. */
   sessionSyncInstalls: number
+  /** Set what `pendingUpdates()` reports next. */
+  setQueue: (json: string) => void
+  /** Set what `snapshot()` reports next. */
+  setSnapshot: (json: string) => void
+  /** Outbox JSON the worker replayed on open. */
+  replayedOutboxes: string[]
   /** Fires the on_change callback the worker installed for a room. */
   fireSync: (roomId: string) => void
   fireQueueChange: (roomId: string) => void
@@ -43,6 +77,12 @@ function makeWasm(options: { userId?: string; restoreDelayMs?: number } = {}): F
     syncsStarted: 0,
     sessionSyncInstalls: 0,
     rowsByTable: {} as Record<string, Array<Record<string, unknown>>>,
+    /** What `pendingUpdates()` currently reports. */
+    queue: '[]',
+    /** What `snapshot()` currently reports. */
+    snapshot: '{"version":1}',
+    /** Outbox JSON handed to `restorePendingUpdates`. */
+    replayed: [] as string[],
   }
 
   const makeSession = () => ({
@@ -110,13 +150,17 @@ function makeWasm(options: { userId?: string; restoreDelayMs?: number } = {}): F
         undecryptableCount: () => 0,
         connectionHealth: () => '{"state":"ok"}',
         rejectedWrites: () => '{"count":0,"lastReason":""}',
-        pendingUpdates: () => '[]',
+        pendingUpdates: () => state.queue,
+        restorePendingUpdates: (json: string) => {
+          state.replayed.push(json)
+          return JSON.parse(json).length as number
+        },
         updateCell: async (tableId: string, rowId: string, columnId: string, valueJson: string) => {
           const rows = (state.rowsByTable[tableId] ??= [])
           rows.push({ _row_id: rowId, [columnId]: JSON.parse(valueJson) })
         },
         currentUserId: () => userId,
-        snapshot: () => '{"version":1}',
+        snapshot: () => state.snapshot,
         exportWorkspaceZip: () => new Uint8Array([1, 2, 3]),
         // Allowlisted, but returns an object — the cloneability guard's target.
         listMembers: async () => [{ userId }],
@@ -137,6 +181,9 @@ function makeWasm(options: { userId?: string; restoreDelayMs?: number } = {}): F
     get sessionSyncInstalls() {
       return state.sessionSyncInstalls
     },
+    setQueue: (json: string) => { state.queue = json },
+    setSnapshot: (json: string) => { state.snapshot = json },
+    replayedOutboxes: state.replayed,
     fireSync: (roomId: string) => syncCallbacks.get(roomId)?.(),
     fireQueueChange: (roomId: string) => queueCallbacks.get(roomId)?.(),
     fireTokenRefresh: (blob: string) => tokenCallback?.(blob),
@@ -184,6 +231,11 @@ describe('worker dispatcher', () => {
     dispatcher.handle({ kind: 'workspace.open', id, userId: USER, roomId })
 
   beforeEach(() => {
+    stores.savedSnapshots.length = 0
+    stores.savedOutboxes.length = 0
+    stores.cleared.length = 0
+    stores.storedSnapshot = undefined
+    stores.storedOutbox = undefined
     setup()
   })
 
@@ -640,6 +692,115 @@ describe('worker dispatcher', () => {
       const [state] = states(tab.received)
       expect(state.connectionHealth).toBe('{}') // the fallback
       expect(state.tables).toContain('items') // …and the rest still arrived
+    })
+  })
+
+  // ── Persistence, owned by the worker ──────────────────────────────────────
+
+  describe('snapshot and outbox persistence', () => {
+    const settle = () => new Promise(resolve => setTimeout(resolve, 5))
+
+    const opened = async () => {
+      await restore(1, USER)
+      await openRoom(2)
+      await settle()
+    }
+
+    it('writes the outbox the moment the queue changes, with no debounce', async () => {
+      // No debounce ON PURPOSE, unlike the snapshot. A SharedWorker dies when its
+      // last port goes, so an unsent write has to already be durable — there is
+      // no reliable "about to be terminated" hook to flush from.
+      await opened()
+      stores.savedOutboxes.length = 0
+
+      wasm.setQueue('[{"row":"r1"}]')
+      wasm.fireQueueChange(ROOM)
+
+      expect(stores.savedOutboxes).toEqual([{ roomId: ROOM, json: '[{"row":"r1"}]' }])
+    })
+
+    it('writes the outbox BEFORE telling tabs the queue changed', async () => {
+      // Tabs only need to know; the write needs to exist somewhere the worker's
+      // death cannot reach. Observed by recording how much had been saved at the
+      // moment the broadcast went out.
+      let savedWhenBroadcast = -1
+      wasm = makeWasm()
+      events = []
+      dispatcher = createDispatcher({
+        loadWasm: async () => wasm,
+        broadcast: e => {
+          if (e.event === 'queue-change') savedWhenBroadcast = stores.savedOutboxes.length
+          events.push(e)
+        },
+      })
+      await opened()
+      stores.savedOutboxes.length = 0
+
+      wasm.setQueue('[{"row":"r2"}]')
+      wasm.fireQueueChange(ROOM)
+
+      expect(savedWhenBroadcast).toBe(1)
+      expect(stores.savedOutboxes).toEqual([{ roomId: ROOM, json: '[{"row":"r2"}]' }])
+    })
+
+    it('skips a write when the queue has not changed', async () => {
+      await opened()
+      stores.savedOutboxes.length = 0
+      wasm.setQueue('[{"row":"r1"}]')
+      wasm.fireQueueChange(ROOM)
+      wasm.fireQueueChange(ROOM)
+      expect(stores.savedOutboxes).toHaveLength(1)
+    })
+
+    it('replays a persisted outbox when opening, then clears it', async () => {
+      stores.storedOutbox = '[{"row":"unsent"}]'
+      await opened()
+      expect(wasm.replayedOutboxes).toEqual(['[{"row":"unsent"}]'])
+      expect(stores.cleared).toContain(ROOM)
+      stores.storedOutbox = undefined
+    })
+
+    it('persists a snapshot on open so a quick reload already has one', async () => {
+      await opened()
+      expect(stores.savedSnapshots.map(s => s.roomId)).toContain(ROOM)
+    })
+
+    it('debounces the snapshot behind sync-driven changes', async () => {
+      // Snapshot freshness is not a correctness property — a marker-bounded
+      // gather fills any gap — so it is worth debouncing where the outbox is not.
+      vi.useFakeTimers()
+      try {
+        await restore(1, USER)
+        await openRoom(2)
+        await vi.advanceTimersByTimeAsync(10)
+        stores.savedSnapshots.length = 0
+
+        wasm.setSnapshot('{"version":1,"n":1}')
+        wasm.fireSync(ROOM)
+        wasm.fireSync(ROOM)
+        expect(stores.savedSnapshots).toHaveLength(0) // still debounced
+
+        await vi.advanceTimersByTimeAsync(2_500)
+        expect(stores.savedSnapshots).toEqual([{ roomId: ROOM, snapshot: '{"version":1,"n":1}' }])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('flushes both when the last tab disconnects', async () => {
+      // The browser is free to terminate the worker at that moment.
+      await opened()
+      stores.savedSnapshots.length = 0
+      stores.savedOutboxes.length = 0
+      wasm.setQueue('[{"row":"r9"}]')
+      wasm.setSnapshot('{"version":1,"final":true}')
+
+      dispatcher.flushPersistence()
+
+      expect(stores.savedOutboxes).toEqual([{ roomId: ROOM, json: '[{"row":"r9"}]' }])
+      expect(stores.savedSnapshots).toEqual([
+        { roomId: ROOM, snapshot: '{"version":1,"final":true}' },
+      ])
     })
   })
 
