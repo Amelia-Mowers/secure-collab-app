@@ -105,6 +105,25 @@ export interface WorkspaceOpenRequest {
   snapshotJson?: string
 }
 
+/**
+ * Declare which tables this tab is looking at, and start receiving
+ * `workspace-state` pushes for the room (option b in the issue: the worker owns
+ * truth and PUSHES materialized state, so a tab's reads stay SYNCHRONOUS).
+ *
+ * Everything cheap — the table list, schemas, views — is pushed whole. ROWS are
+ * pushed only for the tables named here, because rows are the only part whose
+ * size scales with the data, and a tab reads exactly one table's rows at a time.
+ * Re-send this whenever the tab looks at a different table; it replaces the
+ * previous subscription.
+ */
+export interface WorkspaceSubscribeRequest {
+  kind: 'workspace.subscribe'
+  id: number
+  roomId: string
+  /** Table ids whose rows this tab needs. Empty = metadata only. */
+  tableIds: string[]
+}
+
 /** Acquire a handle for an in-flight incoming device verification. */
 export interface VerificationAcquireRequest {
   kind: 'verification.acquire'
@@ -136,6 +155,7 @@ export type Request =
   | SessionStaticRequest
   | SessionDestroyRequest
   | WorkspaceOpenRequest
+  | WorkspaceSubscribeRequest
   | VerificationAcquireRequest
   | CallRequest
   | ByeRequest
@@ -192,6 +212,59 @@ export interface WorkspaceChangeEvent {
   roomId: string
 }
 
+/**
+ * A workspace's materialized state, as read out of the worker's single
+ * ConnectedWorkspace. This is what lets a tab keep answering reads
+ * synchronously without owning a client: it holds the last pushed bundle and
+ * reads out of it.
+ *
+ * Every field is the exact JSON the corresponding bridge method returns, kept as
+ * a string rather than parsed here — the callers already `JSON.parse` these, and
+ * re-encoding parsed objects would only add a place for the shapes to drift.
+ *
+ * Unlike `workspace-change` this DOES carry plaintext, so it goes only to the
+ * ports that asked for it — tabs of the same account in the same origin, which
+ * already hold this data today. It is never broadcast.
+ */
+export interface WorkspaceState {
+  /** `listTables()` */
+  tables: string
+  /** `getTableOrderKeys()` */
+  tableOrderKeys: string
+  /** `currentUserId()` — what an `@me` filter resolves to. */
+  currentUserId?: string
+  /** `isEncrypted()` */
+  isEncrypted: boolean
+  /** `undecryptableCount()` */
+  undecryptableCount: number
+  /** `connectionHealth()` */
+  connectionHealth: string
+  /** `rejectedWrites()` */
+  rejectedWrites: string
+  /** `pendingUpdates()` */
+  pendingUpdates: string
+  /** `getTableSchema(id)` for every table. */
+  schemas: Record<string, string>
+  /** `listViewsForTable(id)` for every table. */
+  viewsByTable: Record<string, string>
+  /** `getView(id)` for every view of every table — small, and a tab can ask for
+   *  a view whose table it is not currently subscribed to. */
+  views: Record<string, string>
+  /** `getTableRows(id)` for SUBSCRIBED tables only. */
+  rows: Record<string, string>
+  /** `getRowOrderKeys(id)` for SUBSCRIBED tables only. */
+  rowOrderKeys: Record<string, string>
+}
+
+/** A fresh materialized bundle for one room, sent to a subscribed port. */
+export interface WorkspaceStateEvent {
+  kind: 'event'
+  event: 'workspace-state'
+  roomId: string
+  /** A JSON-encoded `WorkspaceState`. */
+  state: string
+}
+
 /** A workspace's unsent send queue changed — drives the outbox mirror. */
 export interface QueueChangeEvent {
   kind: 'event'
@@ -235,6 +308,7 @@ export interface LogEvent {
 
 export type Event =
   | WorkspaceChangeEvent
+  | WorkspaceStateEvent
   | QueueChangeEvent
   | SessionSyncEvent
   | TokenRefreshEvent
@@ -294,6 +368,24 @@ export const WORKSPACE_METHODS = new Set([
   'inviteUser', 'listMembers', 'myRole', 'setUserRole', 'leaveWorkspace',
   // history
   'getChangeLog', 'rollbackTo', 'checkIntegrity',
+])
+
+/**
+ * Workspace methods that CHANGE materialized state. After one of these the
+ * worker re-pushes state to every subscribed port, so a sibling tab sees the
+ * write immediately instead of waiting for the sync echo to come back from the
+ * homeserver (or, as today, for the user to switch back to that tab).
+ *
+ * Being wrong here is a stale grid, not corruption, and the sync echo repairs it
+ * within a round-trip — but a missing entry is still a bug, so any method added
+ * to `WORKSPACE_METHODS` that mutates belongs here too.
+ */
+export const WORKSPACE_WRITE_METHODS = new Set([
+  'createTable', 'renameTable', 'deleteTable', 'setTableOrder',
+  'createView', 'deleteView',
+  'addColumn', 'updateColumn', 'deleteColumn', 'reorderColumns', 'setColumnWidth',
+  'updateCell', 'deleteRow', 'applyUpdate', 'importCsv', 'importWorkspaceZip',
+  'restorePendingUpdates', 'rollbackTo', 'checkIntegrity',
 ])
 
 /** Methods callable on `verify:<flowId>`. */

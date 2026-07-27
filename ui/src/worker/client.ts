@@ -55,6 +55,9 @@ export interface MatrixWorkerClient {
   destroySession(userId: string): Promise<void>
   /** Open or join the ConnectedWorkspace for a room, starting its sync loop. */
   openWorkspace(userId: string, roomId: string, snapshotJson?: string): Promise<void>
+  /** Declare which tables this tab is looking at and start receiving
+   *  `workspace-state` pushes. Replaces any previous subscription for the room. */
+  subscribe(roomId: string, tableIds: string[]): Promise<void>
   /** Call a MatrixSession method. */
   sessionCall(userId: string, method: string, ...args: Cloneable[]): Promise<Cloneable>
   /** Call a ConnectedWorkspace method. */
@@ -209,6 +212,9 @@ async function establish(): Promise<MatrixWorkerClient | null> {
     },
     async openWorkspace(userId, roomId, snapshotJson) {
       await send({ kind: 'workspace.open', userId, roomId, snapshotJson })
+    },
+    async subscribe(roomId, tableIds) {
+      await send({ kind: 'workspace.subscribe', roomId, tableIds })
     },
     sessionCall(userId, method, ...args) {
       return send({ kind: 'call', target: sessionKey(userId), method, args })

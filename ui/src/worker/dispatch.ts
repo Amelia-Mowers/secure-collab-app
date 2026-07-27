@@ -25,6 +25,7 @@ import {
   SESSION_STATIC_METHODS,
   SESSION_FACTORY_ARITY,
   WORKSPACE_METHODS,
+  WORKSPACE_WRITE_METHODS,
   VERIFICATION_METHODS,
   verifyKey,
   type Cloneable,
@@ -33,6 +34,7 @@ import {
   type Request,
   type Response,
   type SessionInfo,
+  type WorkspaceState,
 } from './protocol'
 
 /** What the dispatcher needs from its host: a wasm module and a way to reach
@@ -42,6 +44,17 @@ export interface DispatchDeps {
   loadWasm: () => Promise<any>
   /** Send an event to every connected port. */
   broadcast: (event: Event) => void
+}
+
+/**
+ * One connected tab, from the dispatcher's point of view. Requests carry their
+ * origin because `workspace-state` pushes are per-tab: tabs subscribe to
+ * different tables, and the bundle carries plaintext, so it goes to the ports
+ * that asked rather than to everyone.
+ */
+export interface Client {
+  /** Send one message to this tab. Returns false if the tab is gone. */
+  send: (event: Event) => boolean
 }
 
 interface SessionEntry {
@@ -54,10 +67,13 @@ interface SessionEntry {
 
 export interface Dispatcher {
   /** Handle one request. Never rejects — failures come back as an ErrResponse
-   *  so a tab can't be left waiting on a promise that silently died. */
-  handle(req: Request): Promise<Response | null>
+   *  so a tab can't be left waiting on a promise that silently died. `client`
+   *  identifies the asking tab; omit it only where no push can result. */
+  handle(req: Request, client?: Client): Promise<Response | null>
+  /** Forget a disconnected tab's subscriptions. */
+  disconnect(client: Client): void
   /** Test/diagnostic view of what the worker currently owns. */
-  inspect(): { sessions: string[]; rooms: string[] }
+  inspect(): { sessions: string[]; rooms: string[]; subscribers: number }
 }
 
 export function createDispatcher(deps: DispatchDeps): Dispatcher {
@@ -77,8 +93,127 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
    */
   let build: string | null = null
 
+  /** Which tables each tab is looking at, per room. */
+  const subscriptions = new Map<Client, Map<string, string[]>>()
+
   const log = (level: 'log' | 'warn' | 'error', message: string) =>
     deps.broadcast({ kind: 'event', event: 'log', level, message })
+
+  // ── Materialized state (option b) ──────────────────────────────────────────
+
+  /** Look up an open workspace without throwing. */
+  function findWorkspace(roomId: string): any {
+    for (const entry of sessions.values()) {
+      const ws = entry.workspaces.get(roomId)
+      if (ws) return ws
+    }
+    return undefined
+  }
+
+  /** Call a read method, tolerating bindings that predate it. A read that throws
+   *  must not take the whole bundle down with it — the rest of the state is still
+   *  worth pushing, and a missing field is visible to the tab as `undefined`. */
+  function read<T>(ws: any, method: string, args: unknown[], fallback: T): T {
+    try {
+      if (typeof ws[method] !== 'function') return fallback
+      return ws[method](...args) as T
+    } catch (err) {
+      log('warn', `${method} failed while materializing state: ${err}`)
+      return fallback
+    }
+  }
+
+  /** Parse a JSON array of id strings, tolerating anything unexpected. */
+  function parseIds(json: string): string[] {
+    try {
+      const parsed = JSON.parse(json)
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Read the whole materialized bundle out of the worker's workspace. Rows are
+   * limited to `tableIds` (the union of what the subscribed tabs are looking at)
+   * because they are the only part that scales with the data; everything else is
+   * per-table metadata and is pushed whole so a tab can render a sidebar, a view
+   * picker or a filter against a table it has not opened.
+   */
+  function materialize(ws: any, tableIds: string[]): WorkspaceState {
+    const tables = read(ws, 'listTables', [], '[]')
+    // Both `listTables` and `listViewsForTable` return arrays of ID STRINGS, not
+    // objects — worth stating because assuming `{id}` objects here silently
+    // produced an empty schema/view map, with no error anywhere.
+    const tableIdList = parseIds(tables)
+
+    const schemas: Record<string, string> = {}
+    const viewsByTable: Record<string, string> = {}
+    const views: Record<string, string> = {}
+    for (const tableId of tableIdList) {
+      schemas[tableId] = read(ws, 'getTableSchema', [tableId], '')
+      const viewList = read(ws, 'listViewsForTable', [tableId], '[]')
+      viewsByTable[tableId] = viewList
+      for (const viewId of parseIds(viewList)) {
+        views[viewId] = read(ws, 'getView', [viewId], '')
+      }
+    }
+
+    const rows: Record<string, string> = {}
+    const rowOrderKeys: Record<string, string> = {}
+    for (const tableId of new Set(tableIds)) {
+      rows[tableId] = read(ws, 'getTableRows', [tableId], '[]')
+      rowOrderKeys[tableId] = read(ws, 'getRowOrderKeys', [tableId], '{}')
+    }
+
+    return {
+      tables,
+      tableOrderKeys: read(ws, 'getTableOrderKeys', [], '{}'),
+      currentUserId: read<string | undefined>(ws, 'currentUserId', [], undefined) ?? undefined,
+      isEncrypted: read(ws, 'isEncrypted', [], false),
+      undecryptableCount: read(ws, 'undecryptableCount', [], 0),
+      connectionHealth: read(ws, 'connectionHealth', [], '{}'),
+      rejectedWrites: read(ws, 'rejectedWrites', [], '{}'),
+      pendingUpdates: read(ws, 'pendingUpdates', [], '[]'),
+      schemas,
+      viewsByTable,
+      views,
+      rows,
+      rowOrderKeys,
+    }
+  }
+
+  /**
+   * Push fresh state for `roomId` to every tab subscribed to it. Called on the
+   * sync callback AND right after a write, so a sibling tab reflects the write
+   * without waiting for the homeserver echo.
+   *
+   * The bundle is materialized ONCE per distinct row-set rather than per tab:
+   * tabs looking at the same table (the common case) share the work, and
+   * `getTableRows` on a large table is the expensive part.
+   */
+  function pushState(roomId: string) {
+    const ws = findWorkspace(roomId)
+    if (!ws) return
+    const byTableSet = new Map<string, Client[]>()
+    for (const [client, rooms] of subscriptions) {
+      const tableIds = rooms.get(roomId)
+      if (!tableIds) continue
+      const key = [...new Set(tableIds)].sort().join(' ')
+      const clients = byTableSet.get(key)
+      if (clients) clients.push(client)
+      else byTableSet.set(key, [client])
+    }
+    for (const [key, clients] of byTableSet) {
+      const tableIds = key === '' ? [] : key.split(' ')
+      const state = JSON.stringify(materialize(ws, tableIds))
+      for (const client of clients) {
+        if (!client.send({ kind: 'event', event: 'workspace-state', roomId, state })) {
+          subscriptions.delete(client) // the tab is gone
+        }
+      }
+    }
+  }
 
   // ── Handle registry ────────────────────────────────────────────────────────
 
@@ -241,14 +376,17 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       // The two callbacks that used to be tab closures. They fire on the
       // worker's single client, so every tab hears about every change —
       // including the changes a sibling tab wrote.
-      cws.startSync(() =>
-        deps.broadcast({ kind: 'event', event: 'workspace-change', roomId: req.roomId }),
-      )
+      cws.startSync(() => {
+        deps.broadcast({ kind: 'event', event: 'workspace-change', roomId: req.roomId })
+        pushState(req.roomId)
+      })
       if (typeof cws.onQueueChanged === 'function') {
         cws.onQueueChanged(() =>
           deps.broadcast({ kind: 'event', event: 'queue-change', roomId: req.roomId }),
         )
       }
+      // Registered last, so `room:` only ever resolves to a fully wired
+      // workspace (the sync callbacks above fire later, by which time this ran).
       entry.workspaces.set(req.roomId, cws)
     })()
 
@@ -260,9 +398,29 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     }
   }
 
+  /** Rooms with a state push already scheduled. */
+  const queuedPushes = new Set<string>()
+
+  /**
+   * Push state for a room after the current request has been answered.
+   *
+   * `setTimeout` rather than a microtask on purpose: the response is posted from
+   * the same microtask chain that called this, so a promise-scheduled push would
+   * overtake it and hand a tab state for a subscription it does not yet know
+   * succeeded. Coalescing on `roomId` also collapses a burst into one push.
+   */
+  function queueStateFor(roomId: string) {
+    if (queuedPushes.has(roomId)) return
+    queuedPushes.add(roomId)
+    setTimeout(() => {
+      queuedPushes.delete(roomId)
+      pushState(roomId)
+    }, 0)
+  }
+
   // ── Request dispatch ───────────────────────────────────────────────────────
 
-  async function run(req: Request): Promise<Cloneable> {
+  async function run(req: Request, client?: Client): Promise<Cloneable> {
     switch (req.kind) {
       case 'ping': {
         if (build === null) build = req.build
@@ -296,6 +454,22 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         await openWorkspace(req)
         return undefined
 
+      case 'workspace.subscribe': {
+        if (!client) throw new Error('workspace.subscribe needs a connected tab')
+        if (!findWorkspace(req.roomId)) throw new Error(`Workspace ${req.roomId} is not open`)
+        let rooms = subscriptions.get(client)
+        if (!rooms) {
+          rooms = new Map()
+          subscriptions.set(client, rooms)
+        }
+        rooms.set(req.roomId, req.tableIds)
+        // Answer the subscribe FIRST, then push: a tab that awaited the request
+        // is ready for state by the time it lands, and one that already had state
+        // is not handed a bundle it will discard.
+        queueStateFor(req.roomId)
+        return undefined
+      }
+
       case 'verification.acquire': {
         const entry = sessions.get(req.userId)
         if (!entry) throw new Error(`No session for ${req.userId} — sign in again`)
@@ -324,7 +498,14 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         if (!allowed.has(req.method) || typeof obj[req.method] !== 'function') {
           throw new Error(`${req.target}.${req.method} is not callable from a tab`)
         }
-        return toCloneable(await obj[req.method](...req.args), `${req.target}.${req.method}`)
+        const result = toCloneable(await obj[req.method](...req.args), `${req.target}.${req.method}`)
+        // A write changes what every subscribed tab should be showing. Pushing
+        // now (rather than waiting for the homeserver echo) is what makes a
+        // sibling tab's edit appear immediately.
+        if (req.target.startsWith('room:') && WORKSPACE_WRITE_METHODS.has(req.method)) {
+          queueStateFor(req.target.slice('room:'.length))
+        }
+        return result
       }
 
       case 'bye':
@@ -334,10 +515,10 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
   }
 
   return {
-    async handle(req) {
+    async handle(req, client) {
       if (req.kind === 'bye') return null
       try {
-        return { kind: 'response', id: req.id, ok: true, value: await run(req) }
+        return { kind: 'response', id: req.id, ok: true, value: await run(req, client) }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         // Worth logging in the tab as well as answering: a rejected request is
@@ -347,10 +528,13 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         return { kind: 'response', id: req.id, ok: false, error: message }
       }
     },
+    disconnect(client) {
+      subscriptions.delete(client)
+    },
     inspect() {
       const rooms: string[] = []
       for (const entry of sessions.values()) rooms.push(...entry.workspaces.keys())
-      return { sessions: [...sessions.keys()], rooms }
+      return { sessions: [...sessions.keys()], rooms, subscribers: subscriptions.size }
     },
   }
 }
