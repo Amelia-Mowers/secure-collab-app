@@ -48,11 +48,22 @@ test(
     // A locked gate appears instead of a silent restore, because the encrypted
     // store cannot be opened without the master secret.
     //
-    // The secret is TYPED here rather than taken from a passkey. Under
-    // recovery-key-first custody (63dc1339) the master secret is the recovery
-    // key, and the wrap that a passkey would open lives in account data — which
-    // needs a client, which needs this very store. Cold-start passkey unlock
-    // therefore waits on a local copy of the wrap; see the issue.
+    // UNLOCK WITH THE PASSKEY. This is the gap stage 2 left and stage 3 closes:
+    // the gate runs before any Matrix client exists, so the account-data copy of
+    // the wrap is unreachable — it unwraps from the LOCAL copy instead, and the
+    // recovery key inside derives the at-rest keys that open this store.
+    await expect(dialog.getByRole('button', { name: /unlock with passkey/i })).toBeVisible({
+      timeout: 90_000,
+    })
+    await dialog.getByRole('button', { name: /unlock with passkey/i }).click()
+    await expect(dialog).toBeHidden({ timeout: 90_000 })
+    await expect(page).toHaveURL(/workspaces/, { timeout: 30_000 })
+
+    // …and the TYPED key opens the same store, because both paths converge on
+    // one master secret. Two independent secrets would derive two different store
+    // passphrases and only one could ever open it.
+    await page.reload()
+    await dialog.getByRole('button', { name: /use your recovery key/i }).click()
     const keyInput = dialog.getByRole('textbox')
     await expect(keyInput).toBeVisible({ timeout: 90_000 })
     await keyInput.fill(recoveryKey)

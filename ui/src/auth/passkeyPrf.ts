@@ -47,6 +47,19 @@ export const PRF_PROVIDER_HINT =
   "(like Bitwarden) don't yet support the required PRF feature — if setup " +
   'fails, your recovery key still works.'
 
+/**
+ * Whether a failure means "this passkey CANNOT do what we need", as opposed to
+ * "the user cancelled" or "the network hiccuped".
+ *
+ * The distinction drives routing, not just wording: a capability failure has no
+ * retry that will ever succeed, so the unlock screens send the user straight to
+ * the recovery key instead of leaving them tapping a button that cannot work.
+ */
+export function isPrfCapabilityError(message: string | undefined | null): boolean {
+  if (!message) return false
+  return /PRF|does not support|doesn't support|can't unlock|cannot be used/i.test(message)
+}
+
 // ── minimal PRF typings (TS DOM lib coverage of the PRF extension varies) ──
 
 interface PrfInputs {

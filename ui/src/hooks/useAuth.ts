@@ -19,6 +19,7 @@ import {
   saveWrapRecord,
   unwrapRecoveryKey,
   hasEnrolledPasskey,
+  parseWrapRecord,
 } from '../lib/passkeyWrap'
 import { fetchPortalUrl } from '../lib/billing'
 import { isSessionRejected } from '../lib/authErrors'
@@ -185,6 +186,16 @@ export interface AccountSession {
   /** The user has confirmed they saved their master key. Legacy passkey-custody
    *  accounts predate this and are prompted once to save theirs (63dc1339). */
   keySaved?: boolean
+  /**
+   * A LOCAL copy of the passkey wrap record (the same JSON stored in account
+   * data). Duplicated on purpose: at-rest cold start is circular otherwise —
+   * reading account data needs a client, a client needs the encrypted store, and
+   * the store needs the master secret the wrap contains. This copy breaks the
+   * cycle. The account-data copy is still the portable one a NEW device reads.
+   *
+   * Ciphertext, so it is no more sensitive at rest than `secrets`.
+   */
+  passkeyWrap?: string
   /** v1 only: opaque JSON blob from MatrixSession.sessionData() (PLAINTEXT). */
   matrixSessionData?: string
   /** v2 only: AES-GCM(tokenKey) over the sessionData() blob (base64url). */
@@ -641,6 +652,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  /** Persist the wrap record locally on the active account. Also re-persists the
+   *  session blob so the entry is written as v2 with the current custody. */
+  const persistPasskeyWrap = useCallback((json: string) => {
+    const uid: string | undefined = matrixSessionRef.current?.userId?.()
+    if (!uid) return
+    setAccounts(prev => {
+      const updated = prev.map(a =>
+        a.userId === uid ? { ...a, passkeyWrap: json, custody: 'passkey' as const } : a,
+      )
+      saveAccounts(updated)
+      return updated
+    })
+  }, [])
+
   /**
    * `speedup` prompt: enrol a passkey that unlocks WITHOUT replacing the key.
    *
@@ -660,6 +685,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       recoveryKey,
     })
     await saveWrapRecord(ms, record)
+    // Custody is now 'passkey': the unlock gate should LEAD with the passkey for
+    // this account. It still offers the typed key — that is the whole point —
+    // this only picks the default. Set BEFORE the re-key below, so the v2 entry
+    // that re-key writes records the right custody.
+    custodyRef.current = 'passkey'
     passkeyEnrolledRef.current = true
     setPasskeyEnrolled(true)
     // Re-key this device to an ENCRYPTED store (at-rest, c72ec5df), exactly
@@ -669,7 +699,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // not set out to make. Widening at-rest to key-only accounts is its own
     // piece of work. No-op when credentials aren't held (e.g. OAuth).
     await rekeyRef.current?.(recoveryKey)
-  }, [])
+    // Store the wrap locally LAST. The re-key rebuilds the account entry, so
+    // writing it earlier only survives because that rebuild now merges it
+    // forward — doing it after removes the dependence on that ordering
+    // altogether. This local copy is what makes cold-start unlock possible; see
+    // `passkeyWrap` on AccountSession for why it is unavoidable.
+    persistPasskeyWrap(JSON.stringify(record))
+  }, [persistPasskeyWrap])
 
   /** Record that this account's key has been saved, so neither the legacy
    *  migration nor the save step nags again. Defined before its consumers: a
@@ -880,7 +916,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** 'unlock' gate, passkey path: derive the PRF secret, then unlock + restore. */
   const unlockSessionWithPasskey = useCallback(async () => {
     custodyRef.current = 'passkey'
-    await unlockAndRestore(await unlockPasskeyPrf())
+    const secret = await unlockPasskeyPrf()
+    // Unwrap from the LOCAL copy of the wrap record. This is the whole reason a
+    // local copy exists: the master secret is needed to open the encrypted store,
+    // the account-data copy needs a client, and a client needs that store. There
+    // is no client here at all.
+    //
+    // No wrap means a legacy account whose 4S key IS the PRF secret, so the raw
+    // secret is the master secret — the same fallback the verify gate uses, which
+    // keeps both custody models on one code path.
+    const record = parseWrapRecord(pendingUnlockRef.current?.passkeyWrap)
+    const unwrapped = await unwrapRecoveryKey(record, secret)
+    await unlockAndRestore(unwrapped ?? secret)
     // Unlocking via passkey proves the account has one — mark it enrolled so the
     // account view can offer "reveal recovery key" (the cold-start unlock path
     // doesn't run ensureHistoryAccess, which is the other place this is set).
@@ -1217,8 +1264,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Add or update in the account pool
       setAccounts(prev => {
+        // CARRY FORWARD the per-account facts that aren't derivable from a fresh
+        // sign-in: whether the user has saved their key, and the local passkey
+        // wrap. This function rebuilds the entry from scratch, and it runs again
+        // during the at-rest re-key — so without this, enrolling a passkey wiped
+        // `keySaved` and re-raised the "save your key" prompt over the success
+        // screen, and dropped the very wrap just written. (issue 63dc1339)
+        const previous = prev.find(a => a.userId === uid)
+        const merged: AccountSession = {
+          ...account,
+          keySaved: account.keySaved ?? previous?.keySaved,
+          passkeyWrap: account.passkeyWrap ?? previous?.passkeyWrap,
+        }
         const updated = prev.filter(a => a.userId !== uid)
-        updated.push(account)
+        updated.push(merged)
         saveAccounts(updated)
         return updated
       })

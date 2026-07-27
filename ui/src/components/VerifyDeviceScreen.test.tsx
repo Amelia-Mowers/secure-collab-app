@@ -228,6 +228,20 @@ describe('VerifyDeviceScreen', () => {
       h.recoveryPrompt = { kind: 'verify' }
     })
 
+    it('ROUTES a PRF-incapable passkey to the master key', async () => {
+      // Same rule as the at-rest gate: a capability failure moves the user on,
+      // a cancellation leaves them where they are.
+      h.passkeyAvailable = true
+      h.passkeyEnrolled = true
+      h.unlockWithPasskey.mockRejectedValueOnce(
+        new Error('This passkey does not support PRF — a recovery key is required'),
+      )
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
+
+      await waitFor(() => expect(screen.getByRole('textbox')).toBeInTheDocument())
+    })
+
     it('shows the master-key path with no SAS and no bypass', () => {
       // Default: no passkey available → straight to the master-key field.
       render(<VerifyDeviceScreen />)
@@ -308,6 +322,42 @@ describe('VerifyDeviceScreen', () => {
       expect(screen.getByPlaceholderText(/recovery key/i)).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
       expect(h.signOut).toHaveBeenCalledTimes(1)
+    })
+
+    it('offers the recovery key alongside the passkey, unprompted', () => {
+      // Both options, always. The passkey is the default for a passkey-custody
+      // account, not the only way in.
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByRole('button', { name: /unlock with passkey/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /use your recovery key/i })).toBeInTheDocument()
+    })
+
+    it('ROUTES a PRF-incapable passkey to the recovery key', async () => {
+      // A provider that cannot do PRF has no retry that will ever work, so
+      // leaving the user on that button is a dead end. The screen switches and
+      // explains why. (issue 63dc1339)
+      h.unlockSessionWithPasskey.mockRejectedValueOnce(
+        new Error("This passkey provider doesn't support WebAuthn PRF"),
+      )
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
+
+      await waitFor(() =>
+        expect(screen.getByPlaceholderText(/recovery key/i)).toBeInTheDocument(),
+      )
+      expect(screen.getByText(/can't unlock TideWork/i)).toBeInTheDocument()
+    })
+
+    it('does NOT route a cancellation — retrying the passkey is right there', async () => {
+      h.unlockSessionWithPasskey.mockRejectedValueOnce(new Error('Passkey unlock was cancelled'))
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
+
+      await waitFor(() =>
+        expect(screen.getByText(/Passkey unlock was cancelled/)).toBeInTheDocument(),
+      )
+      expect(screen.getByRole('button', { name: /unlock with passkey/i })).toBeInTheDocument()
+      expect(screen.queryByPlaceholderText(/recovery key/i)).not.toBeInTheDocument()
     })
   })
 

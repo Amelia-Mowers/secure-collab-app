@@ -5,6 +5,8 @@ import {
   isPasskeyPrfSupported,
   registerPasskeyPrf,
   unlockPasskeyPrf,
+  isPrfCapabilityError,
+  PRF_UNSUPPORTED_MESSAGE,
 } from './passkeyPrf'
 
 /** A fake PublicKeyCredential carrying given extension results. */
@@ -157,6 +159,24 @@ describe('passkeyPrf', () => {
     it('throws when WebAuthn is unsupported', async () => {
       delete (window as { PublicKeyCredential?: unknown }).PublicKeyCredential
       await expect(registerPasskeyPrf('@me:tidework.io', 'Me')).rejects.toThrow(/not supported/i)
+    })
+  })
+
+  describe('isPrfCapabilityError', () => {
+    it('recognises a provider that cannot do what we need', () => {
+      // Drives ROUTING, not wording: these have no retry that will ever work, so
+      // the unlock screens send the user straight to the recovery key.
+      expect(isPrfCapabilityError(PRF_UNSUPPORTED_MESSAGE)).toBe(true)
+      expect(isPrfCapabilityError('This passkey does not support PRF')).toBe(true)
+      expect(isPrfCapabilityError("That passkey can't unlock TideWork")).toBe(true)
+    })
+
+    it('does NOT claim a cancellation or a network error is a capability problem', () => {
+      // Retrying those IS the right move, so they must stay on the passkey screen.
+      expect(isPrfCapabilityError('Passkey unlock was cancelled')).toBe(false)
+      expect(isPrfCapabilityError('error sending request for url')).toBe(false)
+      expect(isPrfCapabilityError(undefined)).toBe(false)
+      expect(isPrfCapabilityError('')).toBe(false)
     })
   })
 

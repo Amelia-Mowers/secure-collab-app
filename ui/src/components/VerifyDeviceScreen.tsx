@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import type { VerificationState } from '../hooks/useAuth'
-import { PRF_PROVIDER_HINT } from '../auth/passkeyPrf'
+import { PRF_PROVIDER_HINT, isPrfCapabilityError } from '../auth/passkeyPrf'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './VerifyDeviceScreen.css'
 
@@ -468,7 +468,12 @@ function VerifyThisDevice({
     try {
       await fn()
     } catch (err: any) {
-      setError(err?.message ?? 'Something went wrong. Please try again.')
+      const message = err?.message ?? 'Something went wrong. Please try again.'
+      setError(message)
+      // Same routing as the at-rest gate: a passkey that cannot do PRF has no
+      // retry that will work, so move the user to the key rather than leaving
+      // them on a dead button.
+      if (isPrfCapabilityError(message)) setForceKey(true)
     } finally {
       setBusy(false)
     }
@@ -599,8 +604,14 @@ function UnlockSession({
     try {
       await fn()
     } catch (err: any) {
-      setError(err?.message ?? 'Could not unlock. Check your passkey or recovery key.')
+      const message = err?.message ?? 'Could not unlock. Check your passkey or recovery key.'
+      setError(message)
       setBusy(false)
+      // A passkey that CANNOT do PRF will never succeed, however many times it is
+      // tapped — so route to the recovery key rather than leaving the user on a
+      // button that cannot work. Cancellations and network errors stay put,
+      // because for those retrying is the right move.
+      if (isPrfCapabilityError(message)) setForceKey(true)
     }
   }
 
@@ -643,7 +654,15 @@ function UnlockSession({
         </>
       ) : (
         <>
-          <p className="verify__body">Enter your recovery key to unlock this device.</p>
+          {isPrfCapabilityError(error) ? (
+            <p className="verify__note" role="status">
+              That passkey can&apos;t unlock TideWork — its provider doesn&apos;t
+              support the security feature we need. Enter your recovery key
+              instead; it always works.
+            </p>
+          ) : (
+            <p className="verify__body">Enter your recovery key to unlock this device.</p>
+          )}
           <input
             type="text"
             className="verify__input"
