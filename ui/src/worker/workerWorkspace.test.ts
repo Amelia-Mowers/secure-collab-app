@@ -153,11 +153,38 @@ describe('worker-backed workspace handle', () => {
     ])
   })
 
-  it('re-subscribes when the open table changes, and only then', () => {
-    ws.setTables(['items'])
-    ws.setTables(['items']) // same set — no round-trip
-    ws.setTables(['other'])
-    expect(subscriptions).toEqual([[], ['items'], ['other']])
+  it('subscribes to a table the moment something reads it', async () => {
+    // Demand-driven because no caller knows the set: `makeReferenceLookup`
+    // resolves whatever table a reference column points at, during render.
+    push()
+    ws.getTableRows('items')
+    ws.getTableRows('items') // already known — no second message
+    await Promise.resolve()
+    expect(subscriptions).toEqual([[], ['items']])
+    expect(ws.subscribedTables()).toEqual(['items'])
+  })
+
+  it('coalesces a render that reads several tables into one subscribe', async () => {
+    // A row of reference cells pointing at three tables must not send three
+    // messages, and must not loop: the push re-renders, the render reads the
+    // same tables, the set is unchanged, nothing more is sent.
+    push()
+    ws.getTableRows('items')
+    ws.getTableRows('people')
+    ws.getRowOrderKeys?.('projects')
+    await Promise.resolve()
+    expect(subscriptions).toEqual([[], ['items', 'people', 'projects']])
+
+    push()
+    ws.getTableRows('items')
+    await Promise.resolve()
+    expect(subscriptions).toHaveLength(2)
+  })
+
+  it('returns empty for a table it has not received rows for yet', () => {
+    push()
+    expect(ws.getTableRows('not-pushed-yet')).toBe('[]')
+    expect(ws.getRowOrderKeys?.('not-pushed-yet')).toBe('{}')
   })
 
   it('stops listening on close, leaving the workspace open for other tabs', () => {

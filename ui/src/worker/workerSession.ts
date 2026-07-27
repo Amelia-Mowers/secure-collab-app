@@ -44,6 +44,14 @@ export interface WorkerVerification {
 }
 
 export interface WorkerSession {
+  /**
+   * Brand. `useWorkspace` routes on THIS, not on the feature flag: a tab that
+   * built a worker-backed session and then opened an in-tab workspace would
+   * create exactly the second client over one crypto store that this all exists
+   * to prevent. Deciding from the session object makes that mismatch
+   * unrepresentable.
+   */
+  readonly isWorkerSession: true
   /** MXID. Synchronous: it came back with the session info. */
   userId(): string
   /** The opaque session blob the tab persists. Synchronous, and kept current by
@@ -127,6 +135,7 @@ export function wrapSession(client: MatrixWorkerClient, info: SessionInfo): Work
     client.sessionCall(userId, method, ...args)
 
   return {
+    isWorkerSession: true,
     userId: () => userId,
     sessionData: () => sessionData,
     joined: () => info.joined,
