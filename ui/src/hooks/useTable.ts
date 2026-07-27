@@ -111,6 +111,19 @@ export interface WorkspaceHandle {
   startSync?(onChange: () => void): void
   inviteUser?(userId: string): Promise<void>
   listMembers?(): Promise<string>
+  /** Connection-health signal, roles, and the encryption/undecryptable counters.
+   *  Declared here rather than reached through `as any` at each call site because
+   *  the UI FEATURE-DETECTS them and silently does nothing when absent — which is
+   *  how the worker-backed handle shipped without `connectionHealth` and left the
+   *  connection badge permanently hidden. Optional because the local-only
+   *  WasmWorkspace has none of them. */
+  connectionHealth?(): string
+  rejectedWrites?(): string
+  isEncrypted?(): boolean
+  undecryptableCount?(): number
+  myRole?(): Promise<string>
+  setUserRole?(userId: string, role: string): Promise<void>
+  leaveWorkspace?(removeEveryone: boolean): Promise<void>
   /** The signed-in user's MXID (ConnectedWorkspace only) — what `@me` filters
    *  resolve to. */
   currentUserId?(): string | undefined
@@ -496,7 +509,6 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       // pushes materialized state; reads stay synchronous against that.
       if (matrixSession?.isWorkerSession) {
         const worker = await connectWorker()
-        if (!worker) throw new Error('The shared worker went away — reload to reconnect')
         await worker.openWorkspace(matrixSession.userId(), workspaceId, snapshotJson ?? undefined)
         const wws = createWorkerWorkspace(worker, workspaceId)
         // Every pushed bundle means "something changed" — the worker's sync loop
@@ -515,6 +527,29 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
             console.warn('[workspace] no state from the worker yet; rendering anyway'),
           ),
         ])
+        // Replay a persisted outbox, exactly as the in-tab path does below.
+        //
+        // Skipping this was a real hole, not a simplification. The send queue
+        // lives in the worker, and a SharedWorker CAN be terminated once its last
+        // port goes away — which is precisely what a reload does. An unsent write
+        // then dies with the worker, and the reloaded tab re-gathers from the
+        // timeline without it: a write that showed as applied and then vanished.
+        // Observed as a flaky kanban drag that did not survive a reload.
+        //
+        // Replaying into an already-open workspace is safe: updates carry their
+        // original HLC timestamps, so re-applying under LWW is idempotent and a
+        // since-superseded write still loses fairly.
+        try {
+          const saved = await loadOutbox(workspaceId, getSnapshotKey() ?? undefined)
+          if (saved) {
+            wws.restorePendingUpdates?.(saved)
+            console.log('[outbox] replayed unsent write(s) into the shared worker')
+          }
+          void clearOutbox(workspaceId)
+        } catch (e) {
+          console.warn('[outbox] replay failed:', e)
+        }
+
         workspaceRef.current = wws
         setWorkspace(wws)
         setLoading(false)
@@ -689,19 +724,24 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
   useEffect(() => {
     if (!workspace || typeof workspace.snapshot !== 'function') return
     let cancelled = false
-    const persist = () => {
+    const persist = async () => {
       if (cancelled || !workspace.snapshot) return
       try {
-        const snap = workspace.snapshot()
-        if (snap) void saveSnapshot(workspaceId, snap, getSnapshotKey() ?? undefined)
+        // Awaited because `snapshot()` is synchronous on the in-tab client and a
+        // PROMISE on the worker-backed one. Unawaited, the promise object itself
+        // is truthy, so this happily persisted `{}` as the snapshot — silently, and
+        // only visible as every cold start doing a full history gather because the
+        // stored snapshot never parsed.
+        const snap = await workspace.snapshot()
+        if (snap && !cancelled) await saveSnapshot(workspaceId, snap, getSnapshotKey() ?? undefined)
       } catch {
         /* best-effort */
       }
     }
-    const debounce = setTimeout(persist, 2_000)
-    const interval = setInterval(persist, 30_000)
+    const debounce = setTimeout(() => void persist(), 2_000)
+    const interval = setInterval(() => void persist(), 30_000)
     const onHide = () => {
-      if (document.hidden) persist()
+      if (document.hidden) void persist()
     }
     document.addEventListener('visibilitychange', onHide)
     return () => {

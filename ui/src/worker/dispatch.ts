@@ -502,8 +502,18 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
         // A write changes what every subscribed tab should be showing. Pushing
         // now (rather than waiting for the homeserver echo) is what makes a
         // sibling tab's edit appear immediately.
+        //
+        // Pushed SYNCHRONOUSLY, before this response goes out, which matters more
+        // than it looks: port messages arrive in send order, so the writing tab
+        // applies the new state and only then sees its write resolve. That is the
+        // invariant callers assume — `Sidebar.handleCreateTable` awaits
+        // `createTable` and immediately reads the new table's schema. With the
+        // push deferred, that read raced and lost: it threw "Table not found" and
+        // the navigation never happened. Chromium's timing hid it; Firefox did
+        // not. (Deferring is still right for `workspace.subscribe`, where the tab
+        // must learn the subscription succeeded before state arrives.)
         if (req.target.startsWith('room:') && WORKSPACE_WRITE_METHODS.has(req.method)) {
-          queueStateFor(req.target.slice('room:'.length))
+          pushState(req.target.slice('room:'.length))
         }
         return result
       }

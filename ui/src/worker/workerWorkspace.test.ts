@@ -142,6 +142,31 @@ describe('worker-backed workspace handle', () => {
     expect(onQueue).toHaveBeenCalledTimes(1)
   })
 
+  it('also notifies the outbox mirror when a bundle carries a changed queue', () => {
+    // The `queue-change` event fires from inside the write, BEFORE the state push
+    // that carries the new queue — so on that event alone the mirror reads a
+    // bundle predating the enqueue and persists an empty outbox.
+    //
+    // That is not cosmetic: a SharedWorker dies when its last port goes away, so a
+    // reload destroys the worker and its send queue, and the outbox is the only
+    // thing carrying an unsent write across. Stale mirroring lost a drag-then-
+    // reload write every time (kanban e2e, 3/3).
+    const onQueue = vi.fn()
+    ws.onQueueChanged?.(onQueue)
+
+    push(bundle({ pendingUpdates: '[{"row":"r1"}]' }))
+    expect(onQueue).toHaveBeenCalledTimes(1)
+    expect(ws.pendingUpdates?.()).toBe('[{"row":"r1"}]')
+
+    // An unchanged queue must not re-fire: the mirror skips identical writes
+    // anyway, but the idle steady state should cost nothing.
+    push(bundle({ pendingUpdates: '[{"row":"r1"}]' }))
+    expect(onQueue).toHaveBeenCalledTimes(1)
+
+    push(bundle({ pendingUpdates: '[]' }))
+    expect(onQueue).toHaveBeenCalledTimes(2)
+  })
+
   it('forwards writes to the worker', async () => {
     await ws.updateCell('items', 'r1', 'name', '"next"')
     await ws.deleteRow('items', 'r1')

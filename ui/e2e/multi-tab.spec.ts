@@ -9,36 +9,52 @@ import {
 } from './helpers'
 
 /**
- * The same account in two TABS (issue 9e9efe94).
+ * The same account in two TABS (issues 9e9efe94, 87bf86a6).
  *
  * Distinct from `collaboration.spec.ts`, which is two accounts in two isolated
  * browser contexts. Here both tabs live in ONE context, so they share
- * localStorage, the session blob, and — the part that can actually break — the
- * same IndexedDB crypto store. Two matrix-rust-sdk clients over one store,
- * each running its own sync loop.
+ * localStorage, the session blob, and — the part that used to break — the same
+ * IndexedDB crypto store.
  *
- * Three things this pins:
+ * The two tests at the bottom of this file were `test.fixme` until the client
+ * moved into a SharedWorker (issue 87bf86a6). They are the point of that work, so
+ * the history is worth keeping: two tabs are the SAME Matrix device, and two
+ * matrix-rust-sdk clients over one crypto store do not work. The sync stream has a
+ * single holder, so the second tab's `initialSync` timed out and everything it
+ * wrote queued into a client that never got to send — with no error, so the edit
+ * merely LOOKED applied. Now one client lives in the worker and every tab drives
+ * it, so both tabs write and both writes stick.
+ *
+ * What this pins:
  *
  *  1. A second tab restores the session without a verification gate. It is the
- *     same device; being asked to verify again would be a bug.
- *  2. Edits cross tabs. The write path broadcasts a data-free "something
- *     changed" ping (`notifyWorkspaceChanged`) and each tab re-reads from its
- *     own workspace — no plaintext ever crosses the channel.
- * What is NOT asserted as passing — and is quarantined at the bottom of this
- * file with the evidence — is anything involving the second tab's WRITE path,
- * or tab A's write path once a second tab exists. Both are broken today.
- *
- * Note the assertions bring a tab to the front before checking it. That is the
- * actual contract, not a workaround: `useTable` deliberately marks a HIDDEN tab
- * as needing a refresh and re-reads on `visibilitychange` rather than
- * re-rendering in the background. So the guarantee is "a backgrounded tab
- * catches up when you return to it" — asserting instant propagation into a
- * hidden tab would be testing behaviour the app intentionally does not have.
- * (Found the hard way: the first draft of this spec failed on exactly that.)
+ *     same device; being asked to verify again would be a bug — and there is now
+ *     only one client, so there is nothing to verify against.
+ *  2. Edits cross tabs, in BOTH directions, and survive a reload — which is the
+ *     only assertion that means anything here, since the old bug rendered the
+ *     edit locally and dropped it silently.
+ *  3. A backgrounded tab catches up. Assertions bring a tab to the front before
+ *     checking it, which is the honest contract rather than a workaround.
  */
 
 function gridRow(page: Page, text: string) {
   return page.locator('tbody tr', { hasText: text })
+}
+
+/**
+ * Surface a tab's worker lines and anything that failed.
+ *
+ * Not decoration: with the client in a SharedWorker, its console is not the
+ * tab's, and a silent console is how the last two bugs here hid. Everything in
+ * this file is a two-tab interaction, where "the row just didn't change" is the
+ * symptom of half a dozen different causes.
+ */
+function trace(page: Page, label: string) {
+  page.on('console', m => {
+    const text = m.text()
+    if (text.startsWith('[worker]') || m.type() === 'error') console.log(`[${label}] ${text}`)
+  })
+  page.on('pageerror', e => console.log(`[${label} error] ${e.message}`))
 }
 
 /** Edit a text cell in place, committing on Enter. */
@@ -61,6 +77,7 @@ test('two tabs, one account: no re-verification, and A→B propagation', async (
 
   const context = await browser.newContext()
   const tabA = await context.newPage()
+  trace(tabA, 'A')
 
   await registerDevice(tabA, homeserverUrl(), uniqueUser('mtab'))
   await captureMasterKey(tabA)
@@ -82,6 +99,7 @@ test('two tabs, one account: no re-verification, and A→B propagation', async (
 
   // ── A second tab of the same device ────────────────────────────────────────
   const tabB = await context.newPage()
+  trace(tabB, 'B')
 
   await test.step('tab B opens the same table without a verification gate', async () => {
     await tabB.goto(tableUrl)
@@ -107,27 +125,30 @@ test('two tabs, one account: no re-verification, and A→B propagation', async (
 })
 
 /**
- * KNOWN LIMITATION, deliberately quarantined rather than deleted (issue filed
- * 2026-07-26): a SECOND tab can read and stay in sync, but its writes never
- * reach the server.
+ * Was `test.fixme` until the client moved into the SharedWorker (issue 87bf86a6).
  *
- * Evidence, from the second tab's own console:
+ * The bug it records: the account had one Matrix client per IndexedDB crypto
+ * store, the first tab held the sync stream, and the second tab's own console
+ * said so —
  *
  *   [auth] initialSync timed out (another tab may hold the sync stream).
  *          Continuing with cached session — workspace init will retry.
  *
- * The account has one Matrix client per IndexedDB crypto store, and the first
- * tab holds the sync stream. The second tab materializes state fine — it
- * receives events and re-reads — but nothing it writes is ever sent, and it
- * reports no error, so the edit simply looks applied. That is the dangerous
- * part: silent, not visibly broken.
- *
- * Left as `fixme` so the day it starts working, this fails loudly and gets
- * promoted, rather than the gap quietly persisting untested.
+ * It materialized state fine and reported NO error, so the edit simply looked
+ * applied. Silent, not visibly broken, which is why the reload below is the
+ * assertion that matters: it reads the server's copy, not the tab's optimistic
+ * state.
  */
-test.fixme('writes from a second tab reach the server', async ({ browser }) => {
+test('writes from a second tab reach the server', async ({ browser }) => {
+  // Registration, a workspace, a table, a row, a second tab, an edit AND a reload
+  // do not fit in the default 180s — and when they don't, the failure looks
+  // exactly like the bug this test exists to catch. Same budget as the first test
+  // in this file.
+  test.setTimeout(600_000)
+
   const context = await browser.newContext()
   const tabA = await context.newPage()
+  trace(tabA, 'A')
   await registerDevice(tabA, homeserverUrl(), uniqueUser('mtabw'))
   await captureMasterKey(tabA)
   await createWorkspace(tabA, 'Second Tab Writes')
@@ -139,9 +160,11 @@ test.fixme('writes from a second tab reach the server', async ({ browser }) => {
   await expect(gridRow(tabA, 'Alpha')).toBeVisible({ timeout: 30_000 })
 
   const tabB = await context.newPage()
+  trace(tabB, 'B')
   await tabB.goto(tabA.url())
   await expect(gridRow(tabB, 'Alpha')).toBeVisible({ timeout: 180_000 })
 
+  await tabB.bringToFront()
   await editCell(tabB, 'Alpha', 'Alpha from B')
   await expect(gridRow(tabB, 'Alpha from B')).toBeVisible({ timeout: 30_000 })
 
@@ -153,19 +176,18 @@ test.fixme('writes from a second tab reach the server', async ({ browser }) => {
 })
 
 /**
- * KNOWN LIMITATION #2, from the same investigation: once a second tab has
- * initialized, tab A's grid can lose its rows entirely — the row it wrote
- * itself is no longer found, 60s after being brought back to the front.
- *
- * NOT root-caused. It is recorded here rather than guessed at, because the two
- * candidate explanations have very different severity: benign (tab A's re-read
- * races the sibling's store activity and recovers) versus serious (a second tab
- * corrupts the first tab's materialized state). Deciding that needs the store
- * layer instrumented, which is issue work, not test work.
+ * Also `test.fixme` until 87bf86a6. Its symptom was the other half of one crypto
+ * store having two writers: once a second tab existed, tab A's grid could lose its
+ * rows entirely — the row it had written itself was no longer found, 60s after
+ * being brought back to the front. Never root-caused at the store layer, because
+ * the fix removed the second writer instead.
  */
-test.fixme('tab A keeps writing while tab B is open', async ({ browser }) => {
+test('tab A keeps writing while tab B is open', async ({ browser }) => {
+  test.setTimeout(600_000)
+
   const context = await browser.newContext()
   const tabA = await context.newPage()
+  trace(tabA, 'A')
   await registerDevice(tabA, homeserverUrl(), uniqueUser('mtaba'))
   await captureMasterKey(tabA)
   await createWorkspace(tabA, 'First Tab Writes')
@@ -179,6 +201,7 @@ test.fixme('tab A keeps writing while tab B is open', async ({ browser }) => {
   }
 
   const tabB = await context.newPage()
+  trace(tabB, 'B')
   await tabB.goto(tabA.url())
   await expect(gridRow(tabB, 'Alpha')).toBeVisible({ timeout: 180_000 })
 
@@ -188,6 +211,17 @@ test.fixme('tab A keeps writing while tab B is open', async ({ browser }) => {
   // A reload reads the server's copy, not tab A's optimistic state.
   await tabA.reload()
   await expect(gridRow(tabA, 'Beta from A')).toBeVisible({ timeout: 180_000 })
+  // And tab A still has the row it wrote before tab B existed — the second
+  // symptom of two writers over one store.
+  await expect(gridRow(tabA, 'Alpha')).toBeVisible({ timeout: 60_000 })
+
+  await test.step("tab B sees tab A's edit without a reload", async () => {
+    // Stronger than "eventually consistent": the worker pushes state to every
+    // subscribed tab as soon as the write lands, so this needs neither a
+    // homeserver round-trip nor the visibility-change catch-up.
+    await tabB.bringToFront()
+    await expect(gridRow(tabB, 'Beta from A')).toBeVisible({ timeout: 120_000 })
+  })
 
   await context.close()
 })

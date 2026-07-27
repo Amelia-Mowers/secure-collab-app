@@ -33,6 +33,15 @@ import {
  * fulfils leaves the request pending exactly as a dead socket does.
  * `context.setOffline` would NOT reproduce it — that fails requests fast, which
  * is the case the earlier fixes already handle.
+ *
+ * RUNS ON THE IN-TAB CLIENT (`?sharedWorker=0`), deliberately. Playwright's
+ * `context.route` does not intercept requests issued from a SharedWorker, so on
+ * the default path the hang cannot be induced at all: the badge never appears and
+ * the test fails for a reason with nothing to do with reconnection. The loop under
+ * test is the same either way — `sync_loop` in
+ * `crates/app-core/src/bridge_matrix.rs`, compiled into the one wasm module both
+ * paths load — so this is testing the real thing, just where the harness can reach
+ * the socket. If a way to intercept worker traffic appears, move it.
  */
 
 /** Must exceed `SYNC_WATCHDOG_MS` (90s) plus a retry, with room to spare. */
@@ -44,6 +53,10 @@ test('recovers from a hung sync without a reload', async ({ browser }) => {
   test.setTimeout(900_000)
 
   const context = await browser.newContext()
+  // Force the in-tab client, so `context.route` below can actually see /sync.
+  await context.addInitScript(() => {
+    localStorage.setItem('collab:sharedWorker', 'off')
+  })
   const page = await context.newPage()
 
   await registerDevice(page, homeserverUrl(), uniqueUser('hang'))
@@ -85,6 +98,18 @@ test('recovers from a hung sync without a reload', async ({ browser }) => {
   await test.step('and the UI recovers on its own once sync answers again', async () => {
     hanging = false
     // No reload here, deliberately — needing one is the bug.
+    //
+    // Assert on the OVERLAY, not just the badge. They are one component at two
+    // thresholds (90s → badge, 300s → blocking overlay), so once the state has
+    // reached `down` the badge is not rendered at all and a `toBeHidden` check on
+    // it passes for entirely the wrong reason. That is what this test did, and it
+    // is why it appeared to verify recovery while actually verifying nothing —
+    // then failed one step later on a click the overlay was intercepting.
+    //
+    // The overlay clearing is also the user-visible symptom this whole issue was
+    // reported as: a page-blocking dialog promising automatic recovery that never
+    // came. This is the assertion that pins it.
+    await expect(page.locator('.conn-overlay')).toBeHidden({ timeout: RECOVERY_WINDOW_MS })
     await expect(page.getByRole('status').filter({ hasText: /Reconnecting|Offline/ })).toBeHidden({
       timeout: RECOVERY_WINDOW_MS,
     })

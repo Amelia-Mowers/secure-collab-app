@@ -48,21 +48,23 @@ async function syncBounded(
 }
 
 /**
- * Build a Matrix session — in the SharedWorker when that is enabled, otherwise
- * in this tab exactly as before (issue 87bf86a6, stage 3).
+ * Build a Matrix session — in the SharedWorker, which is the normal path
+ * (issue 87bf86a6, stage 4).
  *
  * ONE seam for all five ways a session comes into being (restore, sign-in,
  * register, OAuth, and the re-key that logs in again), so there is no route by
- * which a tab ends up with an in-tab client while the flag says otherwise.
+ * which a tab quietly ends up with a client of its own.
  *
- * `expectUserId` is the whole point of the worker path and is known for every
- * RESTORE: it lets the worker hand back the client another tab already built,
- * without touching the shared crypto store. Login/register/OAuth cannot know it
- * up front and are deduped after the fact.
+ * `expectUserId` is the whole point and is known for every RESTORE: it lets the
+ * worker hand back the client another tab already built, without touching the
+ * shared crypto store. Login/register/OAuth cannot know it up front and are
+ * deduped after the fact.
  *
- * Falling back to the in-tab client when there is no worker is deliberate: no
- * SharedWorker, or a worker that won't answer, must degrade to today's behaviour
- * rather than to a broken app.
+ * If the worker cannot be reached this THROWS rather than quietly building an
+ * in-tab client. That fallback existed and was removed: it handed the user back
+ * the exact bug — a second tab whose writes vanish with no error — in the
+ * situations least likely to be noticed. The in-tab path remains only behind an
+ * explicit `?sharedWorker=0` override, for debugging.
  */
 async function buildSession(
   via: 'login' | 'register' | 'restore' | 'finishOauthLogin',
@@ -71,13 +73,11 @@ async function buildSession(
 ): Promise<any> {
   if (sharedWorkerEnabled()) {
     const worker = await connectWorker()
-    if (worker) {
-      const session = await openWorkerSession(worker, via, args, expectUserId)
-      if (session.joined()) {
-        console.log('[auth] attached to the shared worker’s existing client for', session.userId())
-      }
-      return session
+    const session = await openWorkerSession(worker, via, args, expectUserId)
+    if (session.joined()) {
+      console.log('[auth] attached to the shared worker’s existing client for', session.userId())
     }
+    return session
   }
   const wasm = await getWasmModule()
   return await wasm.MatrixSession[via](...args)
@@ -94,8 +94,7 @@ async function buildSession(
  */
 async function staticSessionCall(method: string, ...args: string[]): Promise<any> {
   if (sharedWorkerEnabled()) {
-    const worker = await connectWorker()
-    if (worker) return await worker.staticCall(method, ...args)
+    return await (await connectWorker()).staticCall(method, ...args)
   }
   const wasm = await getWasmModule()
   return await wasm.MatrixSession[method](...args)
