@@ -100,9 +100,21 @@ export interface WorkspaceOpenRequest {
   id: number
   userId: string
   roomId: string
-  /** Persisted snapshot for the incremental cold start, if the tab has one.
-   *  Ignored when the workspace is already open. */
-  snapshotJson?: string
+  /**
+   * At-rest key for the snapshot and outbox stores, or omitted for a v1
+   * (plaintext) account.
+   *
+   * The tab sends the KEY, not the loaded snapshot: the worker owns the send
+   * queue, so it must also own the persistence of that queue. Mirroring it from
+   * a tab meant reading the queue one hop away from where it changed, which
+   * silently persisted a stale (empty) outbox and lost writes across a reload.
+   *
+   * `CryptoKey` survives structured clone, and a non-extractable one stays
+   * non-extractable — the worker gains USE of the key, not the secret. The tab
+   * already sends `storePassphrase` for `MatrixSession.restore`, so this crosses
+   * no boundary that was not already crossed.
+   */
+  snapshotKey?: CryptoKey
 }
 
 /**

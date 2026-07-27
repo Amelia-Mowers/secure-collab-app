@@ -56,8 +56,10 @@ export interface MatrixWorkerClient {
   createSession(via: SessionVia, args: Cloneable[], expectUserId?: string): Promise<SessionInfo>
   /** Sign-out: drop the worker's session for this account. */
   destroySession(userId: string): Promise<void>
-  /** Open or join the ConnectedWorkspace for a room, starting its sync loop. */
-  openWorkspace(userId: string, roomId: string, snapshotJson?: string): Promise<void>
+  /** Open or join the ConnectedWorkspace for a room, starting its sync loop.
+   *  `snapshotKey` lets the worker read and write the at-rest snapshot/outbox
+   *  stores itself — it owns the send queue, so it owns their persistence. */
+  openWorkspace(userId: string, roomId: string, snapshotKey?: CryptoKey): Promise<void>
   /** Declare which tables this tab is looking at and start receiving
    *  `workspace-state` pushes. Replaces any previous subscription for the room. */
   subscribe(roomId: string, tableIds: string[]): Promise<void>
@@ -225,8 +227,8 @@ async function establish(): Promise<MatrixWorkerClient> {
     async destroySession(userId) {
       await send({ kind: 'session.destroy', userId })
     },
-    async openWorkspace(userId, roomId, snapshotJson) {
-      await send({ kind: 'workspace.open', userId, roomId, snapshotJson })
+    async openWorkspace(userId, roomId, snapshotKey) {
+      await send({ kind: 'workspace.open', userId, roomId, snapshotKey })
     },
     async subscribe(roomId, tableIds) {
       await send({ kind: 'workspace.subscribe', roomId, tableIds })

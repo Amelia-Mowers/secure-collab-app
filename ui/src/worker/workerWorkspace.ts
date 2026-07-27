@@ -49,6 +49,11 @@ export interface WorkerWorkspace extends WorkspaceHandle {
   /** Tables whose rows this tab has asked for — see the note on demand-driven
    *  subscription in `createWorkerWorkspace`. Diagnostics. */
   subscribedTables(): string[]
+  /** The worker persists the snapshot and outbox for this workspace, so the tab
+   *  must NOT also mirror them: it would be reading the send queue one hop from
+   *  where it changes (which silently persisted a stale outbox), and N tabs would
+   *  race over one record. */
+  readonly persistedByWorker: true
   /**
    * Resolves when the first bundle has landed.
    *
@@ -272,6 +277,7 @@ export function createWorkerWorkspace(
 
     // ── Controls ──────────────────────────────────────────────────────────────
     ready: () => readyPromise,
+    persistedByWorker: true,
     subscribedTables: () => [...tableIds],
     state: () => current,
     onState(callback) {

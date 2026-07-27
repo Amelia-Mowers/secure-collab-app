@@ -41,6 +41,9 @@ function drop(port: MessagePort) {
   const client = clients.get(port)
   if (client) dispatcher.disconnect(client)
   clients.delete(port)
+  // The browser may terminate this worker as soon as its last port is gone,
+  // taking the send queue with it. Flush what has to survive.
+  if (clients.size === 0) dispatcher.flushPersistence()
 }
 
 function broadcast(event: Event) {
