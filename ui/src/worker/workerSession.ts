@@ -79,6 +79,12 @@ export interface WorkerSession {
   recoverWithKey(key: string): Promise<void>
   requestOpenIdToken(): Promise<string>
 
+  /** Read a global account-data event as raw JSON (`undefined` if unset). The
+   *  passkey wrap lives here — see `lib/passkeyWrap.ts`. */
+  getAccountData(eventType: string): Promise<string | undefined>
+  /** Write a global account-data event from raw JSON. */
+  setAccountData(eventType: string, json: string): Promise<void>
+
   /** Fires whenever the SDK refreshes its tokens, so the tab can re-persist. */
   startTokenPersistence(onTokens: (blob: string) => void): void
   /** Starts the worker's session-level sync (once per account, however many
@@ -159,6 +165,11 @@ export function wrapSession(client: MatrixWorkerClient, info: SessionInfo): Work
       call('resetRecoveryWithPassphrase', passphrase) as Promise<string>,
     recoverWithKey: key => call('recoverWithKey', key) as Promise<void>,
     requestOpenIdToken: () => call('requestOpenIdToken') as Promise<string>,
+
+    getAccountData: eventType =>
+      call('getAccountData', eventType) as Promise<string | undefined>,
+    setAccountData: (eventType, json) =>
+      call('setAccountData', eventType, json) as Promise<void>,
 
     startTokenPersistence(onTokens) {
       // The worker installed the SDK-side hook when it built the session; the

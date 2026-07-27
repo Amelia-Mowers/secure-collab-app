@@ -459,6 +459,42 @@ impl MatrixSession {
         }
     }
 
+    /// Read a global account-data event as raw JSON, or `None` if unset.
+    ///
+    /// Deliberately generic rather than a `passkey_wrap`-shaped accessor: the
+    /// payload is defined and interpreted in the UI (see `lib/passkeyWrap.ts`),
+    /// and the bridge has no business knowing its schema. Account data is the
+    /// right home for a passkey wrap because it follows the ACCOUNT rather than
+    /// the device, so a new device can unlock with the passkey alone — and the
+    /// homeserver only ever sees ciphertext. (issue 63dc1339)
+    #[wasm_bindgen(js_name = getAccountData)]
+    pub async fn get_account_data(&self, event_type: String) -> Result<Option<String>, JsValue> {
+        use matrix_sdk::ruma::events::GlobalAccountDataEventType;
+        let event_type: GlobalAccountDataEventType = event_type.as_str().into();
+        let raw = self
+            .client
+            .account()
+            .fetch_account_data(event_type)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to read account data: {e}")))?;
+        Ok(raw.map(|r| r.json().get().to_owned()))
+    }
+
+    /// Write a global account-data event from raw JSON.
+    #[wasm_bindgen(js_name = setAccountData)]
+    pub async fn set_account_data(&self, event_type: String, json: String) -> Result<(), JsValue> {
+        use matrix_sdk::ruma::events::GlobalAccountDataEventType;
+        let event_type: GlobalAccountDataEventType = event_type.as_str().into();
+        let content: Box<serde_json::value::RawValue> = serde_json::from_str(&json)
+            .map_err(|e| JsValue::from_str(&format!("Account data is not valid JSON: {e}")))?;
+        self.client
+            .account()
+            .set_account_data_raw(event_type, Raw::from_json(content))
+            .await
+            .map_err(|e| JsValue::from_str(&format!("Failed to write account data: {e}")))?;
+        Ok(())
+    }
+
     /// Create a new room (workspace) and return its room ID.
     /// Tags the room with a custom state event so it can be identified as
     /// a workspace when listing rooms.

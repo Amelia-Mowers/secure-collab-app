@@ -351,6 +351,8 @@ export const SESSION_METHODS = new Set([
   'recoverWithKey',
   // billing
   'requestOpenIdToken',
+  // account data — the passkey wrap lives here (issue 63dc1339)
+  'getAccountData', 'setAccountData',
   // device verification (incoming)
   'startVerificationListener', 'pendingVerificationFlow',
 ])
