@@ -8,7 +8,7 @@
  *                                already exists; payment just unlocks/keeps it)
  *   GET  /status?username=     → coarse {status, days_left} for the app badge
  *   POST /webhook              → lock on lapse/unpaid, unlock on active
- *   cron (and guarded /__sweep)→ lock unpaid accounts past the trial
+ *   cron (and guarded /__sweep)→ lock unpaid accounts past the trial + grace
  *
  * Invariants (ADR 0002):
  *  - Lock, never deactivate — except never-paid accounts long past trial,
@@ -25,6 +25,8 @@ export interface Env {
   PRICE_CENTS: string
   PRICE_CURRENCY: string
   TRIAL_DAYS: string
+  /** Extra days after the trial ends before the sweep locks. "0" = lock on the dot. */
+  GRACE_DAYS: string
   EXEMPT_USERNAMES: string
   SITE_URL: string
   APP_URL: string
@@ -106,6 +108,37 @@ async function activeSubscriptionFor(env: Env, username: string): Promise<boolea
     limit: 1,
   })
   return found.data.length > 0
+}
+
+/**
+ * Every username currently in good standing, read from Stripe's `list`
+ * endpoint.
+ *
+ * `subscriptions.search` (above) runs against Stripe's search index, which is
+ * eventually consistent — it can lag a write by up to a minute. That is fine
+ * for the /status badge, but not for the sweep: a user who paid moments before
+ * the cron fired would be invisible to search and get locked out. `list` is
+ * strongly consistent, so the sweep reads that instead. It is cheaper too — one
+ * paginated pass replaces a per-user search.
+ */
+async function payingUsernames(env: Env): Promise<Set<string>> {
+  const stripe = stripeClient(env)
+  const paying = new Set<string>()
+  let startingAfter: string | undefined
+  for (let page = 0; page < 100; page++) {
+    const batch = await stripe.subscriptions.list({
+      status: 'all',
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    })
+    for (const sub of batch.data) {
+      const username = sub.metadata?.tidework_username
+      if (username && (sub.status === 'active' || sub.status === 'trialing')) paying.add(username)
+    }
+    if (!batch.has_more || batch.data.length === 0) break
+    startingAfter = batch.data[batch.data.length - 1].id
+  }
+  return paying
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -311,25 +344,53 @@ async function webhook(env: Env, req: Request): Promise<Response> {
 
 // ── The sweep: lock unpaid accounts past the trial ───────────────────────────
 
-async function sweep(env: Env, overrideTrialDays?: number): Promise<string> {
+/** A knob that must survive a missing/garbled var without locking everyone early. */
+function days(raw: string | undefined, fallback: number): number {
+  const n = parseInt(raw ?? '', 10)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+async function sweep(
+  env: Env,
+  overrideTrialDays?: number,
+  overrideGraceDays?: number,
+): Promise<string> {
   const exempt = new Set(
     env.EXEMPT_USERNAMES.split(',').map((u) => u.trim()).filter(Boolean),
   )
-  const trialDays = overrideTrialDays ?? parseInt(env.TRIAL_DAYS, 10)
-  const trialMs = trialDays * 86_400_000
+  const trialDays = overrideTrialDays ?? days(env.TRIAL_DAYS, 14)
+  const graceDays = overrideGraceDays ?? days(env.GRACE_DAYS, 0)
+  // Grace buys back the ambiguity at the boundary: a card that failed once and
+  // retries, a renewal in flight, a timezone's worth of drift on `created_at`.
+  const deadlineMs = (trialDays + graceDays) * 86_400_000
   const tok = await masAdminToken(env)
   const users = await masListUsers(env, tok)
-  let locked = 0
-  for (const u of users) {
+
+  const done = (locked: number) =>
+    `sweep complete: ${users.length} users, ${locked} locked ` +
+    `(trial ${trialDays}d + grace ${graceDays}d)`
+
+  const overdue = users.filter((u) => {
     const a = u.attributes
-    if (a.admin || a.locked_at || exempt.has(a.username)) continue
-    if (Date.now() - Date.parse(a.created_at) < trialMs) continue
-    if (await activeSubscriptionFor(env, a.username)) continue
+    if (a.admin || a.locked_at || exempt.has(a.username)) return false
+    return Date.now() - Date.parse(a.created_at) >= deadlineMs
+  })
+  if (overdue.length === 0) return done(0)
+
+  // Read who is paying LAST — after the MAS token mint and the (paginated)
+  // user listing, immediately before any lock. Those round-trips are the window
+  // in which a payment can land, and locking a paying customer is the expensive
+  // mistake here. Anything that still slips through self-heals: the
+  // subscription webhook and /success both unlock within seconds.
+  const paying = await payingUsernames(env)
+  let locked = 0
+  for (const u of overdue) {
+    if (paying.has(u.attributes.username)) continue
     await masSetLockById(env, tok, u.id, true)
-    console.log(`sweep: locked '${a.username}' (trial expired, no subscription)`)
+    console.log(`sweep: locked '${u.attributes.username}' (trial expired, no subscription)`)
     locked++
   }
-  return `sweep complete: ${users.length} users, ${locked} locked`
+  return done(locked)
 }
 
 // ── The post-payment page ────────────────────────────────────────────────────
@@ -383,9 +444,17 @@ export default {
         const auth = req.headers.get('authorization') ?? ''
         if (auth !== `Bearer ${env.MAS_BILLING_CLIENT_SECRET}`)
           return new Response('Forbidden', { status: 403 })
-        // ?trial_days= lets operations/validation simulate the deadline.
-        const override = url.searchParams.get('trial_days')
-        return new Response(await sweep(env, override ? parseInt(override, 10) : undefined))
+        // ?trial_days= / ?grace_days= let operations/validation simulate the
+        // deadline without waiting out a real trial.
+        const trial = url.searchParams.get('trial_days')
+        const grace = url.searchParams.get('grace_days')
+        return new Response(
+          await sweep(
+            env,
+            trial ? parseInt(trial, 10) : undefined,
+            grace ? parseInt(grace, 10) : undefined,
+          ),
+        )
       }
       if (url.pathname === '/') return Response.redirect(`${env.SITE_URL}/#fares`, 302)
       return new Response('Not found', { status: 404 })
