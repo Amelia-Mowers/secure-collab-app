@@ -49,6 +49,13 @@ getrandom = { version = "0.2", features = ["js"] }
 proptest = "1.4"
 quickcheck = "1.0"
 
+# Formula columns: the Typst PARSER only. typst-syntax is standalone (unicode
+# tables + ecow + unscanny), so formulas are real Typst syntax without the
+# compiler. `typst-eval` is deliberately NOT used — it pulls typst-library (the
+# whole stdlib + layout types) and `stacker`, into a wasm bundle that is already
+# 10.7 MB. See crates/app-core/src/formula.rs for the evaluation boundary.
+typst-syntax = "0.15"
+
 # Time and UUID
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.6", features = ["v4", "serde", "js"] }

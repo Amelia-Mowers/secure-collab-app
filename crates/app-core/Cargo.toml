@@ -28,6 +28,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+typst-syntax = { workspace = true }
 
 # Matrix SDK (only pulled in via feature flag)
 matrix-sdk = { workspace = true, optional = true }

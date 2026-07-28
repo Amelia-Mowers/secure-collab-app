@@ -30,7 +30,7 @@ import { useTable, useMembers, useCurrentUserId, notifyWorkspaceChanged } from '
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
 import { HistoryDrawer } from '@/views/history/HistoryDrawer'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial, type ReferenceTarget } from '@/components/AddColumnModal'
-import { CellDisplay, CellEditor, type CellColumn } from '@/cells/cellRegistry'
+import { CellDisplay, CellEditor, isComputedColumn, type CellColumn } from '@/cells/cellRegistry'
 import { FilterPanel } from '@/components/FilterPanel'
 import { applyFilters, type FilterCondition } from '@/lib/filters'
 import './TableView.css'
@@ -633,6 +633,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         defaultValue: schemaCol?.default_value != null ? String(schemaCol.default_value) : undefined,
         referenceTable: schemaCol?.reference_table,
         referenceDisplayColumn: schemaCol?.reference_display_column,
+        formula: schemaCol?.formula,
       },
       existingValues: Array.from(seen).sort().slice(0, 50),
     })
@@ -651,6 +652,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     if (def.referenceTable) {
       patch.reference_table = def.referenceTable
       patch.reference_display_column = def.referenceDisplayColumn
+    }
+    if (def.columnType === 'formula') {
+      patch.formula = def.formula
     }
     handleUpdateColumn(editingColumn.id, patch)
     setEditingColumn(null)
@@ -698,6 +702,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
       ...(def.referenceDisplayColumn
         ? { reference_display_column: def.referenceDisplayColumn }
         : {}),
+      ...(def.formula ? { formula: def.formula } : {}),
     }
     try {
       await workspace.addColumn(tableId, JSON.stringify(columnDef))
@@ -879,6 +884,9 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             onClick={e => {
               e.stopPropagation()
               if (readOnly) return
+              // A computed cell has nowhere to write back to — it is derived
+              // from the row every time it is read.
+              if (isComputedColumn(col.column_type)) return
               // Ctrl/⌘ toggles the cell into the selection; shift ranges from
               // the anchor (issue e9898080). A plain click edits — and editing
               // a SELECTED cell fills every selected cell on commit, so the
@@ -1310,7 +1318,10 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                     }
                     return (
                       <td key={col.id}>
-                        <div className="cell-click cell-shadow" onClick={() => setEditing(cellKey)}>
+                        <div
+                          className="cell-click cell-shadow"
+                          onClick={() => { if (!isComputedColumn(col.column_type)) setEditing(cellKey) }}
+                        >
                           <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} members={members} />
                         </div>
                       </td>

@@ -234,6 +234,20 @@
 .cell-display--mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
 .cell-display--bool { font-weight: 600; color: var(--green, #4ade80); }
 
+/* Computed (formula) cells. Deliberately quiet rather than decorated: the
+   value reads like any other, and the cursor is what tells you it is not
+   yours to type into. */
+.cell-display--computed { color: var(--text-secondary, inherit); cursor: default; }
+/* A formula that failed. Errors are rendered into the cell (see the `formula`
+   case in cellRegistry) because a blank computed cell is indistinguishable
+   from an empty one, which is how a broken formula stays broken. */
+.cell-display--formula-error {
+  color: var(--red, #f87171);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.cell-editor--computed { padding: 4px 6px; }
+
 .cell-pill {
   padding: 2px 8px;
   border-radius: 4px;

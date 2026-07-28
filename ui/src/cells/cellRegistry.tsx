@@ -162,10 +162,32 @@ export function CellDisplay({ column, value, lookup, members }: CellDisplayProps
         </span>
       )
     }
+    case 'formula': {
+      // Computed in app-core at read time, never stored. A formula that failed
+      // renders its own error string (they all start with '#'), surfaced
+      // distinctly — a blank would be indistinguishable from "no data", which
+      // is exactly how a broken formula goes unnoticed.
+      const text = defaultText(value)
+      const failed = text.startsWith('#')
+      return (
+        <span
+          className={`cell-display cell-display--computed${failed ? ' cell-display--formula-error' : ''}`}
+          title={failed ? `This formula did not evaluate: ${text}` : undefined}
+        >
+          {text}
+        </span>
+      )
+    }
     default:
       return <span className="cell-display">{defaultText(value)}</span>
   }
 }
+
+/** Column types whose value is derived, not entered. The grid must not open an
+ *  editor on them: a computed cell has nowhere to write back to. */
+export const COMPUTED_TYPES = new Set(['formula'])
+
+export const isComputedColumn = (columnType: string) => COMPUTED_TYPES.has(columnType)
 
 // ── Editors: commit on blur / Enter, one value per logical edit ────────────
 
@@ -557,6 +579,18 @@ const EDITORS: Record<string, (p: CellEditorProps) => JSX.Element> = {
   multireference: MultiReferenceEditor,
   document: DocumentEditor,
   json: JsonEditor,
+  formula: ComputedCell,
+}
+
+/** "Editor" for a computed column: shows the value and explains why it cannot
+ *  be typed into. Registered so that even if some path opens an editor, there
+ *  is no input that could commit over a derived value. */
+function ComputedCell({ column, value }: CellEditorProps) {
+  return (
+    <div className="cell-editor cell-editor--computed" title={`${column.name} is computed by a formula`}>
+      <span className="cell-display cell-display--computed">{defaultText(value)}</span>
+    </div>
+  )
 }
 
 /** Render the editor for a column's type (falls back to a text editor). */

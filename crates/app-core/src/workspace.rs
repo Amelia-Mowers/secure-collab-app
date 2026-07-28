@@ -742,6 +742,43 @@ impl Workspace {
                     }
                 }
             }
+
+            // Formula columns are computed here and never stored. Read-time
+            // evaluation is what keeps them consistent under LWW: two devices
+            // materializing a computed value from different in-flight states
+            // would each write a "correct" answer and clobber the other, and
+            // editing a formula would mean rewriting every row. See
+            // `crate::formula`.
+            let formulas: Vec<(String, String)> = schema
+                .columns
+                .values()
+                .filter(|c| matches!(c.column_type, crate::ColumnType::Formula))
+                .filter_map(|c| c.formula.clone().map(|f| (c.id.clone(), f)))
+                .collect();
+            if !formulas.is_empty() {
+                // Name -> id, so formulas can refer to columns the way they are
+                // labelled in the UI.
+                let by_name: std::collections::HashMap<String, String> = schema
+                    .columns
+                    .values()
+                    .map(|c| (c.name.clone(), c.id.clone()))
+                    .collect();
+                for row in &mut rows {
+                    let cells: std::collections::HashMap<String, serde_json::Value> =
+                        row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    for (col_id, formula) in &formulas {
+                        // A failed formula renders its error in the cell rather
+                        // than a blank — an empty computed cell is
+                        // indistinguishable from "no data", so a broken formula
+                        // would be invisible.
+                        let value = match crate::formula::evaluate(formula, &cells, &by_name) {
+                            Ok(v) => v,
+                            Err(e) => serde_json::Value::String(e.to_string()),
+                        };
+                        row.insert(col_id.clone(), value);
+                    }
+                }
+            }
         }
         Ok(rows)
     }
