@@ -23,6 +23,13 @@ TRIAL_DAYS = "14"
 # Days after the trial ends before the sweep locks. Absorbs a retried card, a
 # renewal in flight, and timezone drift on `created_at`. "0" = lock on the dot.
 GRACE_DAYS = "3"
+# Days past the LOCK deadline after which a never-paid locked account is
+# deactivated + GDPR-erased (ADR 0002's one exception to lock-never-deactivate).
+# "0" disables deletion entirely.
+DELETE_AFTER_DAYS = "60"
+# Deletion is irreversible, so it is opt-in: "report" logs what it would delete
+# and changes nothing. Flip to "apply" once the reported list looks right.
+DELETE_MODE = "report"
 # Operator/test accounts the sweep must never lock.
 EXEMPT_USERNAMES = "opcheck,opcheck2"
 SITE_URL = "https://tidework.io"
