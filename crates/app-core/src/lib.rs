@@ -39,6 +39,7 @@ static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 pub mod archive;
 pub mod filter_eval;
+pub mod formula;
 pub mod fractional_index;
 pub mod history;
 pub mod schema;
@@ -59,6 +60,7 @@ pub mod sync_watchdog;
 
 // Re-export main types
 pub use archive::{Archive, ArchiveError, ArchiveTable, ImportIssue, FORMAT_VERSION};
+pub use formula::{evaluate as evaluate_formula, FormulaError};
 pub use history::{HistoryManager, RevertRecord, HISTORY_TABLE_ID};
 pub use schema::{ColumnDefinition, ColumnType, SchemaManager, TableDefinition};
 pub use snapshot::{WorkspaceSnapshot, SNAPSHOT_VERSION};

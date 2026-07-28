@@ -85,6 +85,14 @@ tidework table create "Issues" Bugs \
   --columns "title:text,status:select:open|closed,priority:number"
 tidework table list "Issues"
 
+# A formula column is computed from the row's other cells at READ time and is
+# never stored, so it always agrees with its inputs. Refer to columns by ID
+# (lowercase, underscores) — a display name with a space is not an identifier.
+# `join` skips empty values, so a missing middle name leaves no double space:
+tidework table create "CRM" Contacts \
+  --columns "first_name:text,last_name:text"
+tidework column add "CRM" Contacts 'name:formula:join(" ", first_name, last_name)'
+
 # Add or reconfigure columns on an existing table:
 tidework column add "Issues" Bugs "assignee:select:alice|bob"
 tidework column set "Issues" Bugs status --options open,in-progress,closed --default open

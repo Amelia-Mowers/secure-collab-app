@@ -13,6 +13,7 @@ export type ColumnType =
   | 'multimember'
   | 'reference'
   | 'multireference'
+  | 'formula'
 
 interface ColumnTypeMeta {
   type: ColumnType
@@ -32,6 +33,7 @@ const COLUMN_TYPES: ColumnTypeMeta[] = [
   { type: 'multimember', label: 'Members',      description: 'Several people from this workspace' },
   { type: 'reference',   label: 'Reference',    description: 'A row from another table'          },
   { type: 'multireference', label: 'References', description: 'Several rows from another table'  },
+  { type: 'formula',     label: 'Formula',     description: 'Computed from this row’s other columns' },
 ]
 
 /** A table this column could point at, with the columns that could label its
@@ -55,6 +57,8 @@ export interface NewColumnDef {
   /** reference / multireference: which of its columns labels a row. Written
    *  explicitly at creation time rather than inferred later (issue c14e01a0). */
   referenceDisplayColumn?: string
+  /** formula: the Typst expression, evaluated against each row at read time. */
+  formula?: string
 }
 
 export interface EditColumnInitial {
@@ -64,6 +68,7 @@ export interface EditColumnInitial {
   defaultValue?: string
   referenceTable?: string
   referenceDisplayColumn?: string
+  formula?: string
 }
 
 interface AddColumnModalProps {
@@ -96,16 +101,21 @@ export function AddColumnModal({
   const [defaultValue, setDefaultValue] = useState(initial?.defaultValue ?? '')
   const [referenceTable, setReferenceTable] = useState(initial?.referenceTable ?? '')
   const [displayColumn, setDisplayColumn] = useState(initial?.referenceDisplayColumn ?? '')
+  const [formula, setFormula] = useState(initial?.formula ?? '')
   const [adding, setAdding] = useState(false)
 
   const isSelectType = columnType === 'select' || columnType === 'multiselect'
   const isReferenceType = columnType === 'reference' || columnType === 'multireference'
+  const isFormulaType = columnType === 'formula'
   // Nothing to point at → don't offer the reference types at all.
   const columnTypes = referenceTargets.length
     ? COLUMN_TYPES
     : COLUMN_TYPES.filter(ct => ct.type !== 'reference' && ct.type !== 'multireference')
   const target = referenceTargets.find(t => t.id === referenceTable)
-  const canSubmit = name.trim().length > 0 && (!isReferenceType || !!referenceTable)
+  const canSubmit =
+    name.trim().length > 0 &&
+    (!isReferenceType || !!referenceTable) &&
+    (!isFormulaType || formula.trim().length > 0)
 
   const options = useMemo(
     () => optionsRaw.split(',').map(s => s.trim()).filter(s => s.length > 0),
@@ -151,6 +161,7 @@ export function AddColumnModal({
         defaultValue: columnType === 'select' && defaultValue ? defaultValue : undefined,
         referenceTable: isReferenceType ? referenceTable : undefined,
         referenceDisplayColumn: isReferenceType && displayColumn ? displayColumn : undefined,
+        formula: isFormulaType ? formula.trim() : undefined,
       })
     } finally {
       setAdding(false)
@@ -267,6 +278,32 @@ export function AddColumnModal({
                 </select>
               </div>
             </>
+          )}
+
+          {/* Formula: a Typst expression over this row's other columns. Never
+              stored — recomputed each time a row is read. */}
+          {isFormulaType && (
+            <div className="acm__form-group">
+              <label className="acm__label" htmlFor="acm-formula">
+                Formula <span className="acm__label-hint">(refer to columns by name)</span>
+              </label>
+              <input
+                id="acm-formula"
+                className="acm__input acm__input--mono"
+                value={formula}
+                onChange={e => setFormula(e.target.value)}
+                placeholder={'join(" ", First Name, Last Name)'}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <p className="acm__hint">
+                Computed from each row, never stored. <code>+</code> joins text and adds
+                numbers; <code>join(sep, …)</code> skips empty values, so a missing middle
+                name leaves no double space. Also available: <code>upper</code>,{' '}
+                <code>lower</code>, <code>trim</code>, <code>len</code>, and{' '}
+                <code>if … else</code>.
+              </p>
+            </div>
           )}
 
           {/* Default value — single-select starts on a value instead of blank */}

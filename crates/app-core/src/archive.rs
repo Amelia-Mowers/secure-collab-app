@@ -218,6 +218,7 @@ pub fn column_type_name(t: &ColumnType) -> &'static str {
         ColumnType::Json => "json",
         ColumnType::Member => "member",
         ColumnType::MultiMember => "multimember",
+        ColumnType::Formula => "formula",
     }
 }
 
@@ -234,6 +235,7 @@ pub fn column_type_from_name(s: &str) -> ColumnType {
         "json" => ColumnType::Json,
         "member" => ColumnType::Member,
         "multimember" => ColumnType::MultiMember,
+        "formula" => ColumnType::Formula,
         _ => ColumnType::Text,
     }
 }
@@ -430,6 +432,66 @@ impl RefResolver {
     }
 }
 
+/// The label column for `table_id`, honouring the `reference_display_column` of
+/// whichever column points at it.
+///
+/// Without this the archive fell back to "first text column", which silently
+/// disagreed with the UI whenever a table's label was set explicitly — and
+/// breaks outright once the label is a Formula column, since a formula is not
+/// a text column and would never be picked.
+fn display_for(
+    table_id: &str,
+    all_columns: &[ColumnDefinition],
+    target_columns: &[ColumnDefinition],
+) -> Option<String> {
+    let explicit = all_columns
+        .iter()
+        .filter(|c| c.reference_table.as_deref() == Some(table_id))
+        .find_map(|c| c.reference_display_column.clone());
+    display_column(target_columns, explicit.as_ref())
+}
+
+/// Cells of an archive row keyed by column ID (the CSV keys them by NAME), so a
+/// formula can be evaluated against a row that is not in the workspace yet.
+fn archive_row_by_id(
+    row: &IndexMap<String, String>,
+    columns: &[ColumnDefinition],
+) -> HashMap<String, Value> {
+    columns
+        .iter()
+        .filter_map(|c| {
+            row.get(&c.name)
+                .map(|v| (c.id.clone(), Value::String(v.clone())))
+        })
+        .collect()
+}
+
+/// A row's label, computing it when the label column is a formula. Rows carried
+/// by an import don't exist in the workspace yet, so there is no read-time
+/// evaluation to lean on — the label has to be derived here or forward
+/// references inside the same import cannot resolve.
+fn archive_row_label(
+    row: &IndexMap<String, String>,
+    columns: &[ColumnDefinition],
+    display: &ColumnDefinition,
+) -> Option<String> {
+    if matches!(display.column_type, ColumnType::Formula) {
+        let formula = display.formula.as_ref()?;
+        let cells = archive_row_by_id(row, columns);
+        let by_name: HashMap<String, String> = columns
+            .iter()
+            .map(|c| (c.name.clone(), c.id.clone()))
+            .collect();
+        return crate::formula::evaluate(formula, &cells, &by_name)
+            .ok()
+            .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty());
+    }
+    row.get(&display.name)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Which column supplies a row's label: the explicit setting, else the first
 /// text column, else the first column — matching the UI's fallback.
 fn display_column(columns: &[ColumnDefinition], explicit: Option<&String>) -> Option<String> {
@@ -481,6 +543,7 @@ impl Archive {
             "options".into(),
             "reference_table".into(),
             "reference_display_column".into(),
+            "formula".into(),
             "width".into(),
             "required".into(),
             "default".into(),
@@ -499,6 +562,7 @@ impl Archive {
                         .unwrap_or_default(),
                     c.reference_table.clone().unwrap_or_default(),
                     c.reference_display_column.clone().unwrap_or_default(),
+                    c.formula.clone().unwrap_or_default(),
                     c.width.map(|w| w.to_string()).unwrap_or_default(),
                     if c.required {
                         "true".into()
@@ -649,6 +713,7 @@ impl Archive {
                         &mut col.reference_display_column,
                         "reference_display_column",
                     ),
+                    (&mut col.formula, "formula"),
                 ] {
                     let v = field(&rec, key);
                     if !v.is_empty() {
@@ -969,9 +1034,13 @@ impl Archive {
 
         // Row-id → label per table, so reference cells export as text.
         let mut labels = LabelMap::default();
+        let all_columns: Vec<ColumnDefinition> = schemas
+            .iter()
+            .flat_map(|(_, def)| ordered_columns(def))
+            .collect();
         for (id, def) in &schemas {
             let columns = ordered_columns(def);
-            let Some(display) = display_column(&columns, None) else {
+            let Some(display) = display_for(id, &all_columns, &columns) else {
                 continue;
             };
             let Ok(rows) = workspace.get_table_rows(id) else {
@@ -1108,7 +1177,8 @@ impl Archive {
             .filter_map(|c| c.reference_table.clone())
             .chain(self.tables.iter().map(|t| t.id.clone()))
             .collect();
-        let mut refs = seed_resolver(workspace, &targets);
+        let all_columns: Vec<ColumnDefinition> = effective.iter().flatten().cloned().collect();
+        let mut refs = seed_resolver(workspace, &targets, &all_columns);
 
         // Mint the row ids up front, so references can resolve against rows
         // that haven't been written yet (forward references, and cycles).
@@ -1116,16 +1186,14 @@ impl Archive {
         for (ti, t) in self.tables.iter().enumerate() {
             let ids: Vec<String> = (0..t.rows.len()).map(|ri| mint_row_id(ti, ri)).collect();
             let columns = &effective[ti];
-            let display = display_column(columns, None)
+            let display = display_for(&t.id, &all_columns, columns)
                 .and_then(|id| columns.iter().find(|c| c.id == id).cloned());
             if let Some(display) = display {
                 let map = refs.by_table.entry(t.id.clone()).or_default();
                 for (row, rid) in t.rows.iter().zip(&ids) {
-                    let Some(label) = row.get(&display.name).map(|s| s.trim()) else {
-                        continue;
-                    };
-                    if !label.is_empty() {
-                        map.insert(label.to_string(), rid.clone());
+                    // `archive_row_label` already trims and drops empties.
+                    if let Some(label) = archive_row_label(row, columns, &display) {
+                        map.insert(label, rid.clone());
                     }
                 }
             }
@@ -1136,6 +1204,13 @@ impl Archive {
             for (ri, row) in t.rows.iter().enumerate() {
                 let row_id = &row_ids[ti][ri];
                 for c in &effective[ti] {
+                    // A computed column has no stored value. A CSV that carries
+                    // one (an export, round-tripped) is describing output, not
+                    // input — writing it would put a stale copy underneath a
+                    // cell that is recomputed on every read anyway.
+                    if matches!(c.column_type, ColumnType::Formula) {
+                        continue;
+                    }
                     let Some(text) = row.get(&c.name) else {
                         continue;
                     };
@@ -1182,7 +1257,11 @@ pub struct ImportResult {
 /// Build the label → row-id map for every table named in `targets`, from rows
 /// already in the workspace. Rows that are already there are valid reference
 /// targets, so an appended CSV can point at a table it doesn't itself carry.
-fn seed_resolver(workspace: &Workspace, targets: &[String]) -> RefResolver {
+fn seed_resolver(
+    workspace: &Workspace,
+    targets: &[String],
+    all_columns: &[ColumnDefinition],
+) -> RefResolver {
     let mut refs = RefResolver::default();
     let mut targets = targets.to_vec();
     targets.sort();
@@ -1191,7 +1270,9 @@ fn seed_resolver(workspace: &Workspace, targets: &[String]) -> RefResolver {
         let Some(schema) = workspace.get_table_schema(&target) else {
             continue;
         };
-        let Some(display) = display_column(&ordered_columns(&schema), None) else {
+        // Rows already in the workspace come from `get_table_rows`, so a
+        // formula label is already computed by the time we read it.
+        let Some(display) = display_for(&target, all_columns, &ordered_columns(&schema)) else {
             continue;
         };
         let map: HashMap<String, String> = workspace
@@ -1225,18 +1306,16 @@ pub fn validate_table(
         .filter_map(|c| c.reference_table.clone())
         .chain(std::iter::once(table.id.clone()))
         .collect();
-    let mut refs = seed_resolver(workspace, &targets);
-    if let Some(display) = display_column(columns, None)
-        .and_then(|id| columns.iter().find(|c| c.id == id).map(|c| c.name.clone()))
+    let mut refs = seed_resolver(workspace, &targets, columns);
+    if let Some(display) = display_for(&table.id, columns, columns)
+        .and_then(|id| columns.iter().find(|c| c.id == id).cloned())
     {
         let map = refs.by_table.entry(table.id.clone()).or_default();
         for row in &table.rows {
-            if let Some(label) = row.get(&display).map(|s| s.trim()) {
-                if !label.is_empty() {
-                    // The id is a placeholder: validation only asks whether the
-                    // label RESOLVES, never what it resolves to.
-                    map.entry(label.to_string()).or_default();
-                }
+            if let Some(label) = archive_row_label(row, columns, &display) {
+                // The id is a placeholder: validation only asks whether the
+                // label RESOLVES, never what it resolves to.
+                map.entry(label).or_default();
             }
         }
     }

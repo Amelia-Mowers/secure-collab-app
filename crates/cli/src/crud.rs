@@ -143,11 +143,12 @@ fn parse_column_type(s: &str) -> Result<ColumnType> {
         "members" | "multimember" => ColumnType::MultiMember,
         "reference" | "ref" => ColumnType::Reference,
         "references" | "multireference" => ColumnType::MultiReference,
+        "formula" => ColumnType::Formula,
         other => {
             return Err(anyhow!(
                 "unknown column type {other:?} \
                  (text|number|boolean|date|select|multiselect|document|json|\
-                 member|members|reference|references)"
+                 member|members|reference|references|formula)"
             ))
         }
     })
@@ -189,7 +190,22 @@ fn parse_column_spec(spec: &str, order: i64) -> Result<ColumnDefinition> {
     let col_type = parse_column_type(parts.next().unwrap_or("text"))?;
     let mut col = ColumnDefinition::new(slug(name), name, col_type.clone()).with_order(order);
 
-    if let Some(opts) = parts.next() {
+    let tail = parts.next();
+
+    // A formula takes the whole remainder verbatim — `splitn(3, …)` leaves it
+    // intact, so an expression may contain colons.
+    if matches!(col_type, ColumnType::Formula) {
+        let formula = tail.unwrap_or("").trim();
+        if formula.is_empty() {
+            return Err(anyhow!(
+                "formula column {name:?} needs an expression, e.g. \
+                 {name:?}:formula:join(\" \", First Name, Last Name)"
+            ));
+        }
+        return Ok(col.with_formula(formula));
+    }
+
+    if let Some(opts) = tail {
         let options = parse_options(opts);
         if !options.is_empty() {
             if !matches!(col_type, ColumnType::Select | ColumnType::MultiSelect) {
@@ -239,6 +255,12 @@ fn coerce_and_validate(column: &ColumnDefinition, raw: &str) -> Result<serde_jso
             }
             Ok(serde_json::json!(values))
         }
+        // Computed at read time from the row's other cells — there is nothing
+        // to write to, and a stored value would be silently ignored.
+        ColumnType::Formula => Err(anyhow!(
+            "column {:?} is a formula: its value is computed, not set",
+            column.name
+        )),
         ref t => Ok(coerce_value(t, raw)),
     }
 }

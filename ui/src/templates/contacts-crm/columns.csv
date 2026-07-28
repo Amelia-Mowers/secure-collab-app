@@ -1,6 +1,9 @@
-table,column,name,type,options,reference_table,reference_display_column,width,required,default,order
-contacts,name,Name,text,,,,,,,0
-contacts,email,Email,text,,,,,,,1
-contacts,company,Company,text,,,,,,,2
-contacts,status,Status,select,"Lead, Active, Closed",,,,,Lead,3
-contacts,notes,Notes,document,,,,,,,4
+table,column,name,type,options,reference_table,reference_display_column,formula,width,required,default,order
+contacts,first_name,First name,text,,,,,,,,0
+contacts,middle_name,Middle name,text,,,,,,,,1
+contacts,last_name,Last name,text,,,,,,,,2
+contacts,name,Name,formula,,,,"join("" "", first_name, middle_name, last_name)",,,,3
+contacts,email,Email,text,,,,,,,,4
+contacts,company,Company,text,,,,,,,,5
+contacts,status,Status,select,"Lead, Active, Closed",,,,,,Lead,6
+contacts,notes,Notes,document,,,,,,,,7

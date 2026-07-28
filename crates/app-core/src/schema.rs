@@ -33,6 +33,10 @@ pub enum ColumnType {
     Member,
     /// Array of member MXIDs (like MultiSelect for people).
     MultiMember,
+    /// Computed from the row's other cells by a Typst formula, evaluated at
+    /// READ time (never stored). See `crate::formula` for why, and for the
+    /// supported subset.
+    Formula,
 }
 
 /// Column definition in a schema
@@ -54,6 +58,11 @@ pub struct ColumnDefinition {
     /// leave it `None`, which falls back to the first text column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference_display_column: Option<String>,
+    /// For `Formula` columns — the Typst expression, e.g.
+    /// `join(" ", first_name, middle_name, last_name)`. Evaluated against each
+    /// row at read time; nothing is ever written back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
     /// Display width in pixels. Column METADATA rather than a view setting, so
     /// a resize is shared with collaborators and applies on the raw table too —
     /// not just inside whichever view happened to be open (issue a96dfc71).
@@ -77,9 +86,17 @@ impl ColumnDefinition {
             options: None,
             reference_table: None,
             reference_display_column: None,
+            formula: None,
             width: None,
             order: None,
         }
+    }
+
+    /// Make this a computed column driven by a Typst expression.
+    pub fn with_formula(mut self, formula: impl Into<String>) -> Self {
+        self.column_type = ColumnType::Formula;
+        self.formula = Some(formula.into());
+        self
     }
 
     pub fn with_order(mut self, order: i64) -> Self {
@@ -325,6 +342,18 @@ impl SchemaManager {
                 updates.push(display_update);
             }
 
+            if let Some(formula) = column.formula {
+                let formula_update = CellUpdate::new(
+                    SCHEMA_TABLE_ID,
+                    &row_id,
+                    "formula",
+                    serde_json::json!(formula),
+                    ts + 9,
+                );
+                self.schema_table.apply_update(formula_update.clone());
+                updates.push(formula_update);
+            }
+
             if let Some(width) = column.width {
                 let width_update = CellUpdate::new(
                     SCHEMA_TABLE_ID,
@@ -427,6 +456,10 @@ impl SchemaManager {
             .get_value(row_id, "reference_display_column")
         {
             column.reference_display_column = display.as_str().map(String::from);
+        }
+
+        if let Some(formula) = self.schema_table.get_value(row_id, "formula") {
+            column.formula = formula.as_str().map(String::from);
         }
 
         if let Some(width) = self.schema_table.get_value(row_id, "width") {
@@ -628,6 +661,7 @@ impl SchemaManager {
             ("default_value", "default"),
             ("reference_table", "reference_table"),
             ("reference_display_column", "reference_display_column"),
+            ("formula", "formula"),
             ("width", "width"),
         ];
         for (patch_key, cell) in mappings {

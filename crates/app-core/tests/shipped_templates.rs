@@ -128,6 +128,28 @@ fn the_demo_template_seeds_rows_and_resolves_its_references() {
     assert_eq!(stakeholders.len(), 2);
     assert!(stakeholders.contains(&serde_json::json!(dana_id)));
 
+    // The name above is a FORMULA column: the CSV carries first/last, and
+    // "Dana Whitfield" only exists because it was computed on read.
+    assert_eq!(dana["first_name"], serde_json::json!("Dana"));
+    assert_eq!(dana["last_name"], serde_json::json!("Whitfield"));
+
+    // Computed, not stored — editing a source cell changes it, with nothing
+    // written to the formula column itself. This is the property that makes
+    // read-time evaluation safe under LWW.
+    ws.update_cell(
+        "contacts",
+        dana_id,
+        "first_name",
+        serde_json::json!("Danielle"),
+    )
+    .expect("rename");
+    let renamed = ws.get_table_rows("contacts").expect("contacts");
+    let dana = renamed
+        .iter()
+        .find(|r| r["_row_id"] == serde_json::json!(dana_id))
+        .expect("still there");
+    assert_eq!(dana["name"], serde_json::json!("Danielle Whitfield"));
+
     // Two boards, one of them the per-viewer `@me` filter.
     assert_eq!(archive.views.len(), 2);
     let mine = archive

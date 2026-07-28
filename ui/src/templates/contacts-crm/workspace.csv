@@ -1,4 +1,4 @@
 key,value
 name,Contacts / CRM
-description,"People or leads with company, status, and a notes document."
+description,"People or leads with company, status, and a notes document. Full name is a formula over the name parts."
 format_version,1.0
