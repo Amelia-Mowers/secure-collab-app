@@ -9,12 +9,13 @@ const h = vi.hoisted(() => ({
   submitRecoveryKey: vi.fn(),
   dismissRecoveryPrompt: vi.fn(),
   retryRecoverySetup: vi.fn(async () => undefined),
-  setupPasskeyRecovery: vi.fn(async () => undefined),
-  setupKeyRecovery: vi.fn(async () => undefined),
+  addPasskeySpeedup: vi.fn(async () => undefined),
+  confirmKeySaved: vi.fn(),
+  revealLegacyKey: vi.fn(async () => 'LEGACY-KEY-1234'),
+  markKeySaved: vi.fn(),
   unlockWithPasskey: vi.fn(async () => undefined),
   unlockSessionWithPasskey: vi.fn(async () => undefined),
   submitUnlockKey: vi.fn(async () => undefined),
-  migrateToPasskey: vi.fn(async () => undefined),
   openBillingPortal: vi.fn(async () => undefined),
   signOut: vi.fn(),
   acceptIncomingVerification: vi.fn(),
@@ -31,12 +32,13 @@ vi.mock('../hooks/useAuth', () => ({
     submitRecoveryKey: h.submitRecoveryKey,
     dismissRecoveryPrompt: h.dismissRecoveryPrompt,
     retryRecoverySetup: h.retryRecoverySetup,
-    setupPasskeyRecovery: h.setupPasskeyRecovery,
-    setupKeyRecovery: h.setupKeyRecovery,
+    addPasskeySpeedup: h.addPasskeySpeedup,
+    confirmKeySaved: h.confirmKeySaved,
+    revealLegacyKey: h.revealLegacyKey,
+    markKeySaved: h.markKeySaved,
     unlockWithPasskey: h.unlockWithPasskey,
     unlockSessionWithPasskey: h.unlockSessionWithPasskey,
     submitUnlockKey: h.submitUnlockKey,
-    migrateToPasskey: h.migrateToPasskey,
     openBillingPortal: h.openBillingPortal,
     signOut: h.signOut,
     acceptIncomingVerification: h.acceptIncomingVerification,
@@ -61,60 +63,139 @@ describe('VerifyDeviceScreen', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('shows the master key to save (first device)', () => {
-    h.recoveryPrompt = { kind: 'save', recoveryKey: 'ABCD-EFGH-IJKL' }
-    render(<VerifyDeviceScreen />)
-    expect(screen.getByText('ABCD-EFGH-IJKL')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /saved it/i }))
-    expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
-  })
-
-  it('demotes the key for a passkey account — hidden by default, revealable on demand', () => {
-    h.recoveryPrompt = { kind: 'save', recoveryKey: 'BACKUP-KEY', viaPasskey: true }
-    render(<VerifyDeviceScreen />)
-    expect(screen.getByRole('heading', { name: /passkey ready/i })).toBeInTheDocument()
-    // The break-glass key is not surfaced by default for a passkey account.
-    expect(screen.queryByText('BACKUP-KEY')).not.toBeInTheDocument()
-    // ...but can be revealed if the user wants to store it.
-    fireEvent.click(screen.getByRole('button', { name: /show backup key/i }))
-    expect(screen.getByText('BACKUP-KEY')).toBeInTheDocument()
-  })
-
-  it('dismisses the passkey-ready screen via Done', () => {
-    h.recoveryPrompt = { kind: 'save', recoveryKey: 'BACKUP-KEY', viaPasskey: true }
-    render(<VerifyDeviceScreen />)
-    fireEvent.click(screen.getByRole('button', { name: /^done$/i }))
-    expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
-  })
-
-  describe('choose recovery method (first device, passkey-capable)', () => {
+  describe('save the recovery key (every first device)', () => {
     beforeEach(() => {
-      h.recoveryPrompt = { kind: 'setup' }
+      h.recoveryPrompt = { kind: 'save', recoveryKey: 'ABCD-EFGH-IJKL' }
     })
 
-    it('offers both the passkey and recovery-key paths', () => {
+    it('always shows the key — there is no passkey-first path that hides it', () => {
       render(<VerifyDeviceScreen />)
-      expect(screen.getByRole('button', { name: /set up a passkey/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /recovery key instead/i })).toBeInTheDocument()
+      expect(screen.getByText('ABCD-EFGH-IJKL')).toBeInTheDocument()
     })
 
-    it('shows the provider-compatibility hint before the user picks a passkey', () => {
+    it('states plainly that losing the key loses the data permanently', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByText(/gone permanently/i)).toBeInTheDocument()
+    })
+
+    it('tells the user where to put it', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByText(/password manager/i)).toBeInTheDocument()
+    })
+
+    it('will not continue until the user acknowledges saving it', () => {
+      // The cost of clicking past this screen is unbounded and unrecoverable,
+      // so it takes a deliberate act rather than a reflex.
+      render(<VerifyDeviceScreen />)
+      const cont = screen.getByRole('button', { name: /continue/i })
+      expect(cont).toBeDisabled()
+      fireEvent.click(cont)
+      expect(h.confirmKeySaved).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByRole('checkbox'))
+      expect(cont).toBeEnabled()
+      fireEvent.click(cont)
+      expect(h.confirmKeySaved).toHaveBeenCalledWith('ABCD-EFGH-IJKL')
+    })
+  })
+
+  describe('offer a passkey as a speed-up (after the key is saved)', () => {
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'speedup', recoveryKey: 'ABCD-EFGH-IJKL' }
+    })
+
+    it('presents the passkey as optional and additive, not a replacement', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByText(/does not replace the key/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /not now/i })).toBeInTheDocument()
+    })
+
+    it('warns about PRF-less providers before the user picks one', () => {
       render(<VerifyDeviceScreen />)
       expect(screen.getByText(/Bitwarden/)).toBeInTheDocument()
     })
 
-    it('sets up a passkey', async () => {
+    it('enrols the passkey against the saved key', async () => {
       render(<VerifyDeviceScreen />)
       fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
-      await waitFor(() => expect(h.setupPasskeyRecovery).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(h.addPasskeySpeedup).toHaveBeenCalledWith('ABCD-EFGH-IJKL'))
     })
 
-    it('falls back to a recovery key', async () => {
+    it('skipping proceeds without a passkey', () => {
       render(<VerifyDeviceScreen />)
-      fireEvent.click(screen.getByRole('button', { name: /recovery key instead/i }))
-      await waitFor(() => expect(h.setupKeyRecovery).toHaveBeenCalledTimes(1))
+      fireEvent.click(screen.getByRole('button', { name: /not now/i }))
+      expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
+    })
+
+    it('a PRF-less provider is reported as harmless, not as a failure', async () => {
+      // The whole reason for wrapping rather than re-keying: nothing about the
+      // account changed, so the copy must not imply damage.
+      h.addPasskeySpeedup.mockRejectedValueOnce(new Error('Provider cannot do PRF'))
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
+
+      await waitFor(() => expect(screen.getByText(/Nothing has changed/i)).toBeInTheDocument())
+      expect(screen.getByText(/Provider cannot do PRF/)).toBeInTheDocument()
+      // …and there is still a way forward.
+      expect(
+        screen.getByRole('button', { name: /continue without a passkey/i }),
+      ).toBeInTheDocument()
+    })
+
+    it('confirms success and reminds the user the key still works', async () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: /passkey ready/i })).toBeInTheDocument(),
+      )
+      expect(screen.getByText(/recovery key still works/i)).toBeInTheDocument()
     })
   })
+
+  describe('legacy passkey account: save the key it never showed you', () => {
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'save-legacy-key' }
+      // The shared beforeEach mockReset()s every fn, which drops the default
+      // implementation, so re-arm the one whose RETURN value matters here.
+      h.revealLegacyKey.mockResolvedValue('LEGACY-KEY-1234')
+    })
+
+    it('explains why the account is at risk', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByText(/only way in/i)).toBeInTheDocument()
+    })
+
+    it('offers no way to skip — the user cannot know the risk without being shown', () => {
+      render(<VerifyDeviceScreen />)
+      expect(screen.queryByRole('button', { name: /not now|skip|later/i })).not.toBeInTheDocument()
+    })
+
+    it('reveals the key via the passkey, then requires acknowledgement', async () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /reveal my recovery key/i }))
+
+      await waitFor(() => expect(screen.getByText('LEGACY-KEY-1234')).toBeInTheDocument())
+      const cont = screen.getByRole('button', { name: /continue/i })
+      expect(cont).toBeDisabled()
+
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(cont)
+      expect(h.markKeySaved).toHaveBeenCalledTimes(1)
+      expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
+    })
+
+    it('surfaces a failed reveal without leaving the screen', async () => {
+      h.revealLegacyKey.mockRejectedValueOnce(new Error('Passkey unlock was cancelled'))
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /reveal my recovery key/i }))
+
+      await waitFor(() =>
+        expect(screen.getByText(/Passkey unlock was cancelled/)).toBeInTheDocument(),
+      )
+      expect(screen.getByRole('button', { name: /reveal my recovery key/i })).toBeInTheDocument()
+    })
+  })
+
 
   describe('recovery setup failed (blocking, never silent)', () => {
     beforeEach(() => {
@@ -145,6 +226,20 @@ describe('VerifyDeviceScreen', () => {
   describe('verify gate (new device)', () => {
     beforeEach(() => {
       h.recoveryPrompt = { kind: 'verify' }
+    })
+
+    it('ROUTES a PRF-incapable passkey to the master key', async () => {
+      // Same rule as the at-rest gate: a capability failure moves the user on,
+      // a cancellation leaves them where they are.
+      h.passkeyAvailable = true
+      h.passkeyEnrolled = true
+      h.unlockWithPasskey.mockRejectedValueOnce(
+        new Error('This passkey does not support PRF — a recovery key is required'),
+      )
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
+
+      await waitFor(() => expect(screen.getByRole('textbox')).toBeInTheDocument())
     })
 
     it('shows the master-key path with no SAS and no bypass', () => {
@@ -228,43 +323,41 @@ describe('VerifyDeviceScreen', () => {
       fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
       expect(h.signOut).toHaveBeenCalledTimes(1)
     })
-  })
 
-  describe('offer passkey migration (legacy account, after master-key unlock)', () => {
-    beforeEach(() => {
-      h.recoveryPrompt = { kind: 'offer-passkey' }
+    it('offers the recovery key alongside the passkey, unprompted', () => {
+      // Both options, always. The passkey is the default for a passkey-custody
+      // account, not the only way in.
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByRole('button', { name: /unlock with passkey/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /use your recovery key/i })).toBeInTheDocument()
     })
 
-    it('shows the provider-compatibility hint on the migration offer too', () => {
+    it('ROUTES a PRF-incapable passkey to the recovery key', async () => {
+      // A provider that cannot do PRF has no retry that will ever work, so
+      // leaving the user on that button is a dead end. The screen switches and
+      // explains why. (issue 63dc1339)
+      h.unlockSessionWithPasskey.mockRejectedValueOnce(
+        new Error("This passkey provider doesn't support WebAuthn PRF"),
+      )
       render(<VerifyDeviceScreen />)
-      expect(screen.getByText(/Bitwarden/)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
+
+      await waitFor(() =>
+        expect(screen.getByPlaceholderText(/recovery key/i)).toBeInTheDocument(),
+      )
+      expect(screen.getByText(/can't unlock TideWork/i)).toBeInTheDocument()
     })
 
-    it('offers to set up a passkey, or skip into the app', () => {
+    it('does NOT route a cancellation — retrying the passkey is right there', async () => {
+      h.unlockSessionWithPasskey.mockRejectedValueOnce(new Error('Passkey unlock was cancelled'))
       render(<VerifyDeviceScreen />)
-      expect(screen.getByRole('heading', { name: /add a passkey/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /set up a passkey/i })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /not now/i })).toBeInTheDocument()
-    })
+      fireEvent.click(screen.getByRole('button', { name: /unlock with passkey/i }))
 
-    it('runs the migration when accepted', async () => {
-      h.migrateToPasskey.mockResolvedValue(undefined)
-      render(<VerifyDeviceScreen />)
-      fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
-      await waitFor(() => expect(h.migrateToPasskey).toHaveBeenCalledTimes(1))
-    })
-
-    it('skips into the app when declined', () => {
-      render(<VerifyDeviceScreen />)
-      fireEvent.click(screen.getByRole('button', { name: /not now/i }))
-      expect(h.dismissRecoveryPrompt).toHaveBeenCalledTimes(1)
-    })
-
-    it('surfaces a migration failure without leaving the screen', async () => {
-      h.migrateToPasskey.mockRejectedValue(new Error('PRF unavailable'))
-      render(<VerifyDeviceScreen />)
-      fireEvent.click(screen.getByRole('button', { name: /set up a passkey/i }))
-      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('PRF unavailable'))
+      await waitFor(() =>
+        expect(screen.getByText(/Passkey unlock was cancelled/)).toBeInTheDocument(),
+      )
+      expect(screen.getByRole('button', { name: /unlock with passkey/i })).toBeInTheDocument()
+      expect(screen.queryByPlaceholderText(/recovery key/i)).not.toBeInTheDocument()
     })
   })
 

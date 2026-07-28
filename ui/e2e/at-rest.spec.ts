@@ -23,12 +23,17 @@ test(
     const page = await ctx.newPage()
     await addPrfAuthenticator(page)
 
-    // ── Provision: register → enroll passkey → save break-glass key ─────────────
+    // ── Provision: register → SAVE the recovery key (this is what re-keys the
+    //    device to an encrypted store) → skip the optional passkey ─────────────
     await registerDevice(page, url, user)
     const dialog = page.getByRole('dialog')
-    await expect(dialog.getByRole('button', { name: /set up a passkey/i })).toBeVisible({
-      timeout: 90_000,
-    })
+    const keyText = page.locator('.verify__key-text')
+    await expect(keyText).toBeVisible({ timeout: 90_000 })
+    const recoveryKey = ((await keyText.textContent()) ?? '').trim()
+    await dialog.getByRole('checkbox').check()
+    await dialog.getByRole('button', { name: /continue/i }).click()
+    // Enrol the passkey: that is what re-keys this device to an ENCRYPTED
+    // store, so it is a precondition of everything this spec asserts.
     await dialog.getByRole('button', { name: /set up a passkey/i }).click()
     await expect(dialog.getByRole('heading', { name: /passkey ready/i })).toBeVisible({
       timeout: 90_000,
@@ -40,12 +45,29 @@ test(
     //    disk, but the master secret does not — so cold start must prompt. ───────
     await page.reload()
 
-    // NEW behavior (Stages 3–5): a locked gate appears instead of a silent
-    // restore, because the encrypted store can't be opened without the passkey.
+    // A locked gate appears instead of a silent restore, because the encrypted
+    // store cannot be opened without the master secret.
+    //
+    // UNLOCK WITH THE PASSKEY. This is the gap stage 2 left and stage 3 closes:
+    // the gate runs before any Matrix client exists, so the account-data copy of
+    // the wrap is unreachable — it unwraps from the LOCAL copy instead, and the
+    // recovery key inside derives the at-rest keys that open this store.
     await expect(dialog.getByRole('button', { name: /unlock with passkey/i })).toBeVisible({
       timeout: 90_000,
     })
     await dialog.getByRole('button', { name: /unlock with passkey/i }).click()
+    await expect(dialog).toBeHidden({ timeout: 90_000 })
+    await expect(page).toHaveURL(/workspaces/, { timeout: 30_000 })
+
+    // …and the TYPED key opens the same store, because both paths converge on
+    // one master secret. Two independent secrets would derive two different store
+    // passphrases and only one could ever open it.
+    await page.reload()
+    await dialog.getByRole('button', { name: /use your recovery key/i }).click()
+    const keyInput = dialog.getByRole('textbox')
+    await expect(keyInput).toBeVisible({ timeout: 90_000 })
+    await keyInput.fill(recoveryKey)
+    await dialog.getByRole('button', { name: /unlock|restore|continue/i }).first().click()
     await expect(dialog).toBeHidden({ timeout: 90_000 })
     await expect(page).toHaveURL(/workspaces/, { timeout: 30_000 })
 

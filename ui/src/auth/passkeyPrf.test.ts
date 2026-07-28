@@ -5,6 +5,8 @@ import {
   isPasskeyPrfSupported,
   registerPasskeyPrf,
   unlockPasskeyPrf,
+  isPrfCapabilityError,
+  PRF_UNSUPPORTED_MESSAGE,
 } from './passkeyPrf'
 
 /** A fake PublicKeyCredential carrying given extension results. */
@@ -76,8 +78,11 @@ describe('passkeyPrf', () => {
   describe('registerPasskeyPrf', () => {
     it('uses the PRF result evaluated at create() time (single prompt)', async () => {
       create.mockResolvedValue(fakeCred({ enabled: true, results: { first: PRF_FIRST } }))
-      const secret = await registerPasskeyPrf('@me:tidework.io', 'Me')
-      expect(secret).toBe(PRF_SECRET)
+      const registered = await registerPasskeyPrf('@me:tidework.io', 'Me')
+      expect(registered.secret).toBe(PRF_SECRET)
+      // The credential id comes back too, so a wrap can be attached to THIS
+      // passkey and removed later without disturbing others (issue 63dc1339).
+      expect(registered.credentialId).toBeTruthy()
       expect(get).not.toHaveBeenCalled() // no fallback assertion needed
     })
 
@@ -116,8 +121,11 @@ describe('passkeyPrf', () => {
     it('falls back to a get() when create() does not evaluate the PRF', async () => {
       create.mockResolvedValue(fakeCred({ enabled: true })) // no results at create
       get.mockResolvedValue(fakeCred({ results: { first: PRF_FIRST } }))
-      const secret = await registerPasskeyPrf('@me:tidework.io', 'Me')
-      expect(secret).toBe(PRF_SECRET)
+      const registered = await registerPasskeyPrf('@me:tidework.io', 'Me')
+      expect(registered.secret).toBe(PRF_SECRET)
+      // The credential id comes back too, so a wrap can be attached to THIS
+      // passkey and removed later without disturbing others (issue 63dc1339).
+      expect(registered.credentialId).toBeTruthy()
       // The fallback targets the just-created credential.
       expect(get.mock.calls[0][0].publicKey.allowCredentials).toHaveLength(1)
     })
@@ -151,6 +159,24 @@ describe('passkeyPrf', () => {
     it('throws when WebAuthn is unsupported', async () => {
       delete (window as { PublicKeyCredential?: unknown }).PublicKeyCredential
       await expect(registerPasskeyPrf('@me:tidework.io', 'Me')).rejects.toThrow(/not supported/i)
+    })
+  })
+
+  describe('isPrfCapabilityError', () => {
+    it('recognises a provider that cannot do what we need', () => {
+      // Drives ROUTING, not wording: these have no retry that will ever work, so
+      // the unlock screens send the user straight to the recovery key.
+      expect(isPrfCapabilityError(PRF_UNSUPPORTED_MESSAGE)).toBe(true)
+      expect(isPrfCapabilityError('This passkey does not support PRF')).toBe(true)
+      expect(isPrfCapabilityError("That passkey can't unlock TideWork")).toBe(true)
+    })
+
+    it('does NOT claim a cancellation or a network error is a capability problem', () => {
+      // Retrying those IS the right move, so they must stay on the passkey screen.
+      expect(isPrfCapabilityError('Passkey unlock was cancelled')).toBe(false)
+      expect(isPrfCapabilityError('error sending request for url')).toBe(false)
+      expect(isPrfCapabilityError(undefined)).toBe(false)
+      expect(isPrfCapabilityError('')).toBe(false)
     })
   })
 

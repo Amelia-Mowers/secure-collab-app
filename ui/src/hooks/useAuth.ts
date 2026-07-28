@@ -7,13 +7,20 @@ import {
   hasPlatformAuthenticator,
   registerPasskeyPrf,
   unlockPasskeyPrf,
-  confirmPasskeyPrf,
 } from '../auth/passkeyPrf'
 import { sharedWorkerEnabled } from '../worker/flag'
 import { connectWorker } from '../worker/client'
 import { openWorkerSession } from '../worker/workerSession'
 import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
 import { setSnapshotKey } from '../lib/atRestSession'
+import {
+  addPasskeyWrap,
+  loadWrapRecord,
+  saveWrapRecord,
+  unwrapRecoveryKey,
+  hasEnrolledPasskey,
+  parseWrapRecord,
+} from '../lib/passkeyWrap'
 import { fetchPortalUrl } from '../lib/billing'
 import { isSessionRejected } from '../lib/authErrors'
 
@@ -121,10 +128,14 @@ export interface InvitedRoom {
  *  with another device (SAS) or entering its master key. There is deliberately
  *  no bypass (ADR 0001 Phase D-3). */
 export type RecoveryPrompt =
-  /** First device, passkey-capable browser: choose how to protect history —
-   *  a passkey (WebAuthn-PRF, biometric) or a saved recovery key. Shown before
-   *  recovery is enabled, so the choice doesn't re-key secret storage. */
-  | { kind: 'setup' }
+  /** After the key is saved: offer a passkey as a faster way to unlock. Purely
+   *  additive — it wraps `recoveryKey` rather than replacing it, so declining
+   *  or failing changes nothing about the account. (issue 63dc1339) */
+  | { kind: 'speedup'; recoveryKey: string }
+  /** A legacy passkey-custody account whose master secret is the PRF output and
+   *  which therefore has a key the user has never seen. Prompt them to reveal
+   *  and save it, so losing the passkey stops meaning losing the account. */
+  | { kind: 'save-legacy-key' }
   /** Save the recovery key. `viaPasskey` means a passkey already unlocks this
    *  account, so the key is a break-glass backup rather than the only way in. */
   | { kind: 'save'; recoveryKey: string; viaPasskey?: boolean }
@@ -137,7 +148,6 @@ export type RecoveryPrompt =
   /** A legacy account (raw recovery key) just unlocked with its master key on a
    *  passkey-capable device — offer to protect it with a passkey so future
    *  devices need no typed key. Optional: declining proceeds into the app. */
-  | { kind: 'offer-passkey' }
   /** Recovery bootstrap failed on a first device even after retries. This is
    *  a blocking state (not a silent warn): the account works but NO recovery
    *  key exists, so a lost device would mean unrecoverable history — the user
@@ -173,6 +183,19 @@ export interface AccountSession {
   v?: 2
   /** v2: which unlock method the account uses (drives the unlock gate UI). */
   custody?: 'passkey' | 'manual'
+  /** The user has confirmed they saved their master key. Legacy passkey-custody
+   *  accounts predate this and are prompted once to save theirs (63dc1339). */
+  keySaved?: boolean
+  /**
+   * A LOCAL copy of the passkey wrap record (the same JSON stored in account
+   * data). Duplicated on purpose: at-rest cold start is circular otherwise —
+   * reading account data needs a client, a client needs the encrypted store, and
+   * the store needs the master secret the wrap contains. This copy breaks the
+   * cycle. The account-data copy is still the portable one a NEW device reads.
+   *
+   * Ciphertext, so it is no more sensitive at rest than `secrets`.
+   */
+  passkeyWrap?: string
   /** v1 only: opaque JSON blob from MatrixSession.sessionData() (PLAINTEXT). */
   matrixSessionData?: string
   /** v2 only: AES-GCM(tokenKey) over the sessionData() blob (base64url). */
@@ -254,13 +277,19 @@ interface AuthState {
    *  "Unlock with passkey" option on the verify gate — legacy accounts (raw
    *  recovery key) are never offered a passkey they don't have. */
   passkeyEnrolled: boolean
-  /** First device (`setup` prompt): protect history with a passkey — registers
-   *  a passkey, derives its PRF secret, and keys secure backup with it. Still
-   *  yields a break-glass recovery key to save. */
-  setupPasskeyRecovery: () => Promise<void>
-  /** First device (`setup` prompt): protect history with a generated recovery
-   *  key (the classic path). */
-  setupKeyRecovery: () => Promise<void>
+  /** `speedup` prompt: enrol a passkey that unlocks WITHOUT replacing the
+   *  recovery key — it wraps it. Throws on a PRF-less provider, which is safe
+   *  to surface because nothing about the account has changed. */
+  addPasskeySpeedup: (recoveryKey: string) => Promise<void>
+  /** `save` prompt: the user confirmed they stored the key. Moves on to the
+   *  optional passkey step (or straight into the app without passkeys). */
+  confirmKeySaved: (recoveryKey: string) => Promise<void>
+  /** `save-legacy-key` prompt: reveal a legacy passkey account's master secret
+   *  so the user can finally save it. Requires a passkey gesture — the tap IS
+   *  the re-auth, and nothing is retained afterwards. */
+  revealLegacyKey: () => Promise<string>
+  /** Record that the master key has been saved, so the prompt does not return. */
+  markKeySaved: () => void
   /** New device (`verify` prompt): unlock history with the account's passkey
    *  instead of typing the master key. */
   unlockWithPasskey: () => Promise<void>
@@ -270,10 +299,6 @@ interface AuthState {
   /** `unlock` prompt: manual recovery-key path — derive the at-rest keys, decrypt
    *  the v2 session, open the encrypted store, restore, then unlock secret storage. */
   submitUnlockKey: (key: string) => Promise<void>
-  /** `offer-passkey` prompt: a legacy account that just unlocked with its master
-   *  key adds passkey custody — registers a passkey, re-keys secure backup to
-   *  its PRF secret, and surfaces a fresh break-glass key. */
-  migrateToPasskey: () => Promise<void>
   /** Account view (d00dda45): re-derive and reveal the account's master unlock
    *  key (the passkey's PRF secret) so it can be used to sign in on another
    *  device or with the CLI. Requires a fresh passkey gesture — the tap IS the
@@ -594,41 +619,132 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // On a passkey-capable browser, let the user choose passkey vs recovery key
   // BEFORE secure backup is enabled (so the choice never re-keys it). Without
   // passkeys, go straight to the classic recovery-key bootstrap.
+  /**
+   * EVERY first device bootstraps a random recovery key and is shown it. There
+   * is no longer a passkey-vs-key fork here: a passkey is offered afterwards, as
+   * a speed-up that wraps this key rather than replacing it (issue 63dc1339).
+   */
   const bootstrapRecovery = useCallback(
     async (ms: any) => {
-      if (passkeyAvailableRef.current) {
-        setRecoveryPrompt({ kind: 'setup' })
-      } else {
-        await bootstrapWithKey(ms)
-      }
+      await bootstrapWithKey(ms)
     },
     [bootstrapWithKey],
   )
 
-  /** `setup` prompt: protect history with a generated recovery key. */
-  const setupKeyRecovery = useCallback(async () => {
-    const ms = matrixSessionRef.current
-    if (!ms) return
-    setRecoveryPrompt(null)
-    await bootstrapWithKey(ms)
-  }, [bootstrapWithKey])
+  /**
+   * The user has confirmed they saved their recovery key. Offer the passkey as
+   * a SPEED-UP, carrying the key so it can be wrapped (issue 63dc1339).
+   *
+   * The order is the point. Previously a passkey-capable browser was asked to
+   * CHOOSE between a passkey and a recovery key, and choosing the passkey keyed
+   * secret storage with the PRF secret — so the passkey was the primary custody
+   * and a PRF-less provider was a mid-flow dead end. Now everyone leaves setup
+   * with a saved key that always works, and the passkey is strictly additive.
+   */
+  const offerPasskeySpeedup = useCallback(
+    (recoveryKey: string) => {
+      if (passkeyAvailableRef.current) {
+        setRecoveryPrompt({ kind: 'speedup', recoveryKey })
+      } else {
+        setRecoveryPrompt(null)
+      }
+    },
+    [],
+  )
 
-  /** `setup` prompt: register a passkey and key secure backup with its PRF
-   *  secret; returns a break-glass recovery key to save. Throws on failure so
-   *  the screen can surface it and let the user retry or pick the key path. */
-  const setupPasskeyRecovery = useCallback(async () => {
+  /** Persist the wrap record locally on the active account. Also re-persists the
+   *  session blob so the entry is written as v2 with the current custody. */
+  const persistPasskeyWrap = useCallback((json: string) => {
+    const uid: string | undefined = matrixSessionRef.current?.userId?.()
+    if (!uid) return
+    setAccounts(prev => {
+      const updated = prev.map(a =>
+        a.userId === uid ? { ...a, passkeyWrap: json, custody: 'passkey' as const } : a,
+      )
+      saveAccounts(updated)
+      return updated
+    })
+  }, [])
+
+  /**
+   * `speedup` prompt: enrol a passkey that unlocks WITHOUT replacing the key.
+   *
+   * Wraps the recovery key under the passkey's PRF output and stores that in
+   * account data. Secret storage is not touched at all, which is what makes a
+   * PRF-less provider harmless here: nothing about the account has changed, so
+   * "no harm done" is a fact rather than a reassurance.
+   */
+  const addPasskeySpeedup = useCallback(async (recoveryKey: string) => {
     const ms = matrixSessionRef.current
     if (!ms) throw new Error('Not signed in')
     const uid = (typeof ms.userId === 'function' ? ms.userId() : null) ?? 'tidework'
-    const secret = await registerPasskeyPrf(uid, uid)
-    const recoveryKey: string = await ms.enableRecoveryWithPassphrase(secret)
+    const { secret, credentialId } = await registerPasskeyPrf(uid, uid)
+    const record = await addPasskeyWrap(await loadWrapRecord(ms), {
+      credentialId,
+      prfSecret: secret,
+      recoveryKey,
+    })
+    await saveWrapRecord(ms, record)
+    // Custody is now 'passkey': the unlock gate should LEAD with the passkey for
+    // this account. It still offers the typed key — that is the whole point —
+    // this only picks the default. Set BEFORE the re-key below, so the v2 entry
+    // that re-key writes records the right custody.
+    custodyRef.current = 'passkey'
     passkeyEnrolledRef.current = true
     setPasskeyEnrolled(true)
-    custodyRef.current = 'passkey'
-    // Re-key this just-registered device to an ENCRYPTED store now that the
-    // master secret exists (at-rest, c72ec5df). No-op if creds aren't held.
-    await rekeyRef.current?.(secret)
-    setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
+    // Re-key this device to an ENCRYPTED store (at-rest, c72ec5df), exactly
+    // where the old passkey path did it. Deliberately NOT on the key-only path:
+    // that never re-keyed either, and putting a fresh login on every first
+    // device's critical path is both slow and a behaviour change this stage did
+    // not set out to make. Widening at-rest to key-only accounts is its own
+    // piece of work. No-op when credentials aren't held (e.g. OAuth).
+    await rekeyRef.current?.(recoveryKey)
+    // Store the wrap locally LAST. The re-key rebuilds the account entry, so
+    // writing it earlier only survives because that rebuild now merges it
+    // forward — doing it after removes the dependence on that ordering
+    // altogether. This local copy is what makes cold-start unlock possible; see
+    // `passkeyWrap` on AccountSession for why it is unavoidable.
+    persistPasskeyWrap(JSON.stringify(record))
+  }, [persistPasskeyWrap])
+
+  /** Record that this account's key has been saved, so neither the legacy
+   *  migration nor the save step nags again. Defined before its consumers: a
+   *  `useCallback` named in a dependency array is evaluated at render, so a
+   *  later definition is a TDZ crash rather than a hoisted reference. */
+  const markKeySaved = useCallback(() => {
+    const uid: string | undefined = matrixSessionRef.current?.userId?.()
+    if (!uid) return
+    setAccounts(prev => {
+      const updated = prev.map(a => (a.userId === uid ? { ...a, keySaved: true } : a))
+      saveAccounts(updated)
+      return updated
+    })
+  }, [])
+
+  /** `save` prompt: the user says they stored the key. Hand off to the optional
+   *  passkey step. */
+  const confirmKeySaved = useCallback(
+    async (recoveryKey: string) => {
+      markKeySaved()
+      offerPasskeySpeedup(recoveryKey)
+    },
+    [offerPasskeySpeedup, markKeySaved],
+  )
+
+  /**
+   * `save-legacy-key`: reveal the master secret of an account enrolled under the
+   * OLD passkey-first custody, where secret storage was keyed WITH the PRF
+   * output. Those users have a working master key they have never seen, and can
+   * only obtain via their passkey — so losing the passkey loses the account.
+   *
+   * Revealing it is the whole migration. Nothing is rotated: the PRF secret
+   * already IS the master key, so writing it down makes the account match the
+   * new model (a manual key that always works, plus a passkey that unlocks)
+   * without touching secret storage or invalidating the at-rest store — which a
+   * rotation would, since the local caches are keyed by the old secret.
+   */
+  const revealLegacyKey = useCallback(async (): Promise<string> => {
+    return await unlockPasskeyPrf()
   }, [])
 
   /** Retry the recovery bootstrap from the `kind: 'error'` screen. */
@@ -658,21 +774,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (status === 'needs_bootstrap') {
           await bootstrapRecovery(ms)
+        } else if (status === 'ready') {
+          // A ready account under the OLD passkey-first custody: secret storage
+          // is keyed with the PRF output, so a working master key exists that
+          // the user has never seen and can only get from the passkey. Losing
+          // the passkey therefore loses the account. Prompt once to save it —
+          // see `revealLegacyKey` for why this needs no rotation. (63dc1339)
+          const uid: string | undefined = ms.userId?.()
+          const account = uid ? loadAccounts().find(a => a.userId === uid) : undefined
+          if (account?.custody === 'passkey' && !account.keySaved) {
+            setRecoveryPrompt({ kind: 'save-legacy-key' })
+          }
         } else if (status === 'needs_recovery') {
           // Offer passkey unlock only if the account actually has a passkey —
           // i.e. secure backup is passphrase-keyed (our PRF). Legacy accounts
           // (raw recovery key) would only see a dead-end button, so detect this
           // before showing the gate. Guard for older bindings / mocks.
-          if (typeof ms.recoveryUsesPassphrase === 'function') {
-            try {
-              const enrolled = await ms.recoveryUsesPassphrase()
-              passkeyEnrolledRef.current = enrolled
-              setPasskeyEnrolled(enrolled)
-            } catch (e) {
-              console.warn('[auth] passkey-enrollment check failed:', e)
-              passkeyEnrolledRef.current = false
-              setPasskeyEnrolled(false)
+          // Does this account have a passkey? Under the new model that question
+          // is answered by the WRAP RECORD, not by whether secret storage is
+          // passphrase-keyed: a wrapped account's 4S key is random, so the old
+          // probe now says "no passkey" for every account that has one, and the
+          // unlock option would never appear. The probe is still consulted as a
+          // fallback, because a legacy account genuinely IS passphrase-keyed and
+          // has no wrap. (issue 63dc1339)
+          try {
+            let enrolled = hasEnrolledPasskey(await loadWrapRecord(ms))
+            if (!enrolled && typeof ms.recoveryUsesPassphrase === 'function') {
+              enrolled = await ms.recoveryUsesPassphrase()
             }
+            passkeyEnrolledRef.current = enrolled
+            setPasskeyEnrolled(enrolled)
+          } catch (e) {
+            console.warn('[auth] passkey-enrollment check failed:', e)
+            passkeyEnrolledRef.current = false
+            setPasskeyEnrolled(false)
           }
           // New device: must verify (or use its master key) before it can read
           // history. No bypass — only verifying or signing out moves forward.
@@ -711,7 +846,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await rekeyRef.current?.(key)
     }
     if (passkeyAvailableRef.current && !passkeyEnrolledRef.current) {
-      setRecoveryPrompt({ kind: 'offer-passkey' })
+      // Additive, not a rotation: wrap the key they just typed.
+      setRecoveryPrompt({ kind: 'speedup', recoveryKey: key })
     } else {
       setRecoveryPrompt(null)
     }
@@ -722,7 +858,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *  passphrase). Throws on cancel / bad key so the screen surfaces it. */
   const unlockWithPasskey = useCallback(async () => {
     const secret = await unlockPasskeyPrf()
-    await submitRecoveryKey(secret)
+    const ms = matrixSessionRef.current
+    // New model: the passkey WRAPS the recovery key, so the PRF output opens the
+    // wrap and the key inside is what secret storage actually wants.
+    //
+    // Falling back to the raw secret is not defensive padding — it is the whole
+    // migration path for accounts enrolled under the OLD custody, where secret
+    // storage was keyed WITH the PRF output. Those accounts have no wrap, and
+    // for them the PRF secret IS the master key. Both work here, so no account
+    // has to be rotated to move between models. (issue 63dc1339)
+    const unwrapped = ms ? await unwrapRecoveryKey(await loadWrapRecord(ms), secret) : null
+    await submitRecoveryKey(unwrapped ?? secret)
   }, [submitRecoveryKey])
 
   /** Unlock-first cold start (c72ec5df): the master `secret` (passkey-PRF or a
@@ -770,7 +916,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** 'unlock' gate, passkey path: derive the PRF secret, then unlock + restore. */
   const unlockSessionWithPasskey = useCallback(async () => {
     custodyRef.current = 'passkey'
-    await unlockAndRestore(await unlockPasskeyPrf())
+    const secret = await unlockPasskeyPrf()
+    // Unwrap from the LOCAL copy of the wrap record. This is the whole reason a
+    // local copy exists: the master secret is needed to open the encrypted store,
+    // the account-data copy needs a client, and a client needs that store. There
+    // is no client here at all.
+    //
+    // No wrap means a legacy account whose 4S key IS the PRF secret, so the raw
+    // secret is the master secret — the same fallback the verify gate uses, which
+    // keeps both custody models on one code path.
+    const record = parseWrapRecord(pendingUnlockRef.current?.passkeyWrap)
+    const unwrapped = await unwrapRecoveryKey(record, secret)
+    await unlockAndRestore(unwrapped ?? secret)
     // Unlocking via passkey proves the account has one — mark it enrolled so the
     // account view can offer "reveal recovery key" (the cold-start unlock path
     // doesn't run ensureHistoryAccess, which is the other place this is set).
@@ -814,29 +971,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.assign(url)
   }, [])
 
-  /** `offer-passkey` prompt: a legacy account (just unlocked with its master
-   *  key) adds passkey custody — register a passkey, re-key secure backup to its
-   *  PRF secret (the old recovery key stops working), and surface the fresh
-   *  break-glass key to save. Throws on failure so the screen can surface it.
-   *
-   *  CONFIRM BEFORE ROTATE (issue 05a98123): re-keying is destructive — it
-   *  invalidates the user's existing master key. So before rotating, prove the
-   *  passkey actually re-derives the same secret via the real unlock path. A
-   *  PRF-less passkey (e.g. a password manager without PRF) fails this, so we
-   *  abort with the old key intact instead of locking the user out — the exact
-   *  incident this guards against. */
-  const migrateToPasskey = useCallback(async () => {
-    const ms = matrixSessionRef.current
-    if (!ms) throw new Error('Not signed in')
-    const uid = (typeof ms.userId === 'function' ? ms.userId() : null) ?? 'tidework'
-    const secret = await registerPasskeyPrf(uid, uid)
-    await confirmPasskeyPrf(secret) // abort (no rotation) if it can't unlock
-    const recoveryKey: string = await ms.resetRecoveryWithPassphrase(secret)
-    passkeyEnrolledRef.current = true
-    setPasskeyEnrolled(true)
-    custodyRef.current = 'passkey'
-    setRecoveryPrompt({ kind: 'save', recoveryKey, viaPasskey: true })
-  }, [])
+  // NOTE: the old `migrateToPasskey` lived here. It called
+  // `resetRecoveryWithPassphrase`, which ROTATED secret storage onto the PRF
+  // secret and killed the user's existing master key — the very thing this
+  // redesign forbids. It needed a confirm-before-rotate guard (issue 05a98123)
+  // precisely because it was destructive. With the wrap there is nothing to
+  // rotate and nothing to guard: adding a passkey to an account that unlocked
+  // with its typed key is the SAME additive operation as adding one at setup,
+  // so it reuses `addPasskeySpeedup` via the `speedup` prompt.
 
   const dismissRecoveryPrompt = useCallback(() => {
     setRecoveryPrompt(null)
@@ -1122,8 +1264,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Add or update in the account pool
       setAccounts(prev => {
+        // CARRY FORWARD the per-account facts that aren't derivable from a fresh
+        // sign-in: whether the user has saved their key, and the local passkey
+        // wrap. This function rebuilds the entry from scratch, and it runs again
+        // during the at-rest re-key — so without this, enrolling a passkey wiped
+        // `keySaved` and re-raised the "save your key" prompt over the success
+        // screen, and dropped the very wrap just written. (issue 63dc1339)
+        const previous = prev.find(a => a.userId === uid)
+        const merged: AccountSession = {
+          ...account,
+          keySaved: account.keySaved ?? previous?.keySaved,
+          passkeyWrap: account.passkeyWrap ?? previous?.passkeyWrap,
+        }
         const updated = prev.filter(a => a.userId !== uid)
-        updated.push(account)
+        updated.push(merged)
         saveAccounts(updated)
         return updated
       })
@@ -1625,12 +1779,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     retryRecoverySetup,
     passkeyAvailable,
     passkeyEnrolled,
-    setupPasskeyRecovery,
-    setupKeyRecovery,
+    addPasskeySpeedup,
+    confirmKeySaved,
+    revealLegacyKey,
+    markKeySaved,
     unlockWithPasskey,
     unlockSessionWithPasskey,
     submitUnlockKey: unlockAndRestore,
-    migrateToPasskey,
     revealRecoveryKey,
     regenerateRecoveryKey,
     openBillingPortal,

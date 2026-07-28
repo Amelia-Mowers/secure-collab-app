@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import type { VerificationState } from '../hooks/useAuth'
-import { PRF_PROVIDER_HINT } from '../auth/passkeyPrf'
+import { PRF_PROVIDER_HINT, isPrfCapabilityError } from '../auth/passkeyPrf'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './VerifyDeviceScreen.css'
 
@@ -26,12 +26,13 @@ export function VerifyDeviceScreen() {
     retryRecoverySetup,
     passkeyAvailable,
     passkeyEnrolled,
-    setupPasskeyRecovery,
-    setupKeyRecovery,
+    addPasskeySpeedup,
+    confirmKeySaved,
+    revealLegacyKey,
+    markKeySaved,
     unlockWithPasskey,
     unlockSessionWithPasskey,
     submitUnlockKey,
-    migrateToPasskey,
     signOut,
     verification,
     acceptIncomingVerification,
@@ -51,9 +52,25 @@ export function VerifyDeviceScreen() {
     )
   }
 
-  if (recoveryPrompt?.kind === 'setup') {
+  if (recoveryPrompt?.kind === 'speedup') {
     return (
-      <ChooseRecoveryMethod onPasskey={setupPasskeyRecovery} onRecoveryKey={setupKeyRecovery} />
+      <OfferPasskeySpeedup
+        recoveryKey={recoveryPrompt.recoveryKey}
+        onEnrol={addPasskeySpeedup}
+        onSkip={dismissRecoveryPrompt}
+      />
+    )
+  }
+
+  if (recoveryPrompt?.kind === 'save-legacy-key') {
+    return (
+      <SaveLegacyKey
+        onReveal={revealLegacyKey}
+        onDone={() => {
+          markKeySaved()
+          dismissRecoveryPrompt()
+        }}
+      />
     )
   }
 
@@ -61,8 +78,7 @@ export function VerifyDeviceScreen() {
     return (
       <SaveRecoveryKey
         recoveryKey={recoveryPrompt.recoveryKey}
-        viaPasskey={recoveryPrompt.viaPasskey}
-        onDone={dismissRecoveryPrompt}
+        onDone={() => void confirmKeySaved(recoveryPrompt.recoveryKey)}
       />
     )
   }
@@ -90,10 +106,6 @@ export function VerifyDeviceScreen() {
     )
   }
 
-  if (recoveryPrompt?.kind === 'offer-passkey') {
-    return <OfferPasskeyMigration onSetup={migrateToPasskey} onSkip={dismissRecoveryPrompt} />
-  }
-
   if (recoveryPrompt?.kind === 'error') {
     return (
       <RecoverySetupFailed
@@ -107,119 +119,206 @@ export function VerifyDeviceScreen() {
   return null
 }
 
-// ── Legacy account: offer to add a passkey after a master-key unlock ─────────
+// ── After the key is saved: offer a passkey as a faster unlock ──────────────
 
-function OfferPasskeyMigration({
-  onSetup,
+function OfferPasskeySpeedup({
+  recoveryKey,
+  onEnrol,
   onSkip,
 }: {
-  onSetup: () => Promise<void>
+  recoveryKey: string
+  onEnrol: (recoveryKey: string) => Promise<void>
   onSkip: () => void
 }) {
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const [unsupported, setUnsupported] = useState<string | null>(null)
 
-  const handleSetup = async () => {
-    setError(null)
+  const handleEnrol = async () => {
+    setUnsupported(null)
     setBusy(true)
     try {
-      await onSetup()
-      // On success the prompt advances to `save` (the new break-glass key).
+      await onEnrol(recoveryKey)
+      setDone(true)
     } catch (err: any) {
-      setError(err?.message ?? 'Something went wrong. Please try again.')
+      // A provider that can't do PRF is NOT an error state here. The passkey
+      // wraps the recovery key rather than replacing it, so a failure leaves the
+      // account exactly as it was — say so plainly instead of alarming anyone.
+      setUnsupported(err?.message ?? 'That passkey could not be used.')
+    } finally {
       setBusy(false)
     }
   }
 
+  if (done) {
+    return (
+      <Overlay labelledBy="verify-title">
+        <h2 id="verify-title" className="verify__title">
+          Passkey ready
+        </h2>
+        <p className="verify__body">
+          You can now unlock on this device with your passkey. Your recovery key
+          still works too — keep it somewhere safe for a new device.
+        </p>
+        <div className="verify__actions">
+          <button type="button" className="verify__primary" onClick={onSkip}>
+            Done
+          </button>
+        </div>
+      </Overlay>
+    )
+  }
+
   return (
     <Overlay labelledBy="verify-title">
       <h2 id="verify-title" className="verify__title">
-        Add a passkey?
+        Unlock faster with a passkey?
       </h2>
       <p className="verify__body">
-        You unlocked with your master key. Add a passkey (Touch ID / Windows Hello) so your next
-        device unlocks with a tap — nothing to type. You&apos;ll get a fresh backup key to keep, and
-        your old master key stops working.
+        Optional. A passkey lets you unlock with your fingerprint or face instead
+        of typing your recovery key. It does not replace the key — the key keeps
+        working either way.
       </p>
       <p className="verify__hint">{PRF_PROVIDER_HINT}</p>
-      {error && (
-        <p className="verify__error" role="alert">
-          {error}
+      {unsupported && (
+        <p className="verify__note" role="status">
+          {unsupported}
+          <br />
+          <strong>Nothing has changed</strong> — your recovery key still works,
+          and you can add a passkey later from your account settings.
         </p>
       )}
       <div className="verify__actions verify__actions--stacked">
-        <button type="button" className="verify__primary" disabled={busy} onClick={handleSetup}>
-          {busy ? <><Spinner />Setting up…</> : 'Set up a passkey'}
+        <button type="button" className="verify__primary" disabled={busy} onClick={handleEnrol}>
+          {busy ? (
+            <>
+              <Spinner />
+              Setting up…
+            </>
+          ) : (
+            'Set up a passkey'
+          )}
         </button>
         <button type="button" className="verify__link" disabled={busy} onClick={onSkip}>
-          Not now
+          {unsupported ? 'Continue without a passkey' : 'Not now'}
         </button>
       </div>
     </Overlay>
   )
 }
 
-// ── First device: choose how to protect history (passkey vs recovery key) ───
+// ── Legacy passkey account: reveal and save the key they've never seen ──────
 
-function ChooseRecoveryMethod({
-  onPasskey,
-  onRecoveryKey,
+function SaveLegacyKey({
+  onReveal,
+  onDone,
 }: {
-  onPasskey: () => Promise<void>
-  onRecoveryKey: () => Promise<void>
+  onReveal: () => Promise<string>
+  onDone: () => void
 }) {
-  const [busy, setBusy] = useState<null | 'passkey' | 'key'>(null)
+  const [key, setKey] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [acknowledged, setAcknowledged] = useState(false)
+  const [copied, setCopied] = useState(false)
 
-  const run = (which: 'passkey' | 'key', fn: () => Promise<void>) => async () => {
+  const handleReveal = async () => {
     setError(null)
-    setBusy(which)
+    setBusy(true)
     try {
-      await fn()
-      // On success the prompt advances to `save`; leave busy until unmount.
+      setKey(await onReveal())
     } catch (err: any) {
-      setError(err?.message ?? 'Something went wrong. Please try again.')
-      setBusy(null)
+      setError(err?.message ?? 'Could not read your key from the passkey.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleCopy = async () => {
+    if (!key) return
+    try {
+      await navigator.clipboard.writeText(key)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* the key is selectable in the box */
     }
   }
 
   return (
     <Overlay labelledBy="verify-title">
       <h2 id="verify-title" className="verify__title">
-        Protect your history
+        Save your recovery key
       </h2>
       <p className="verify__body">
-        TideWork end-to-end encrypts your workspaces. Choose how to unlock them on a new device. A
-        passkey (Touch ID / Windows Hello) is easiest — nothing to write down — and you&apos;ll still
-        get a recovery key to keep as a backup.
+        This account was set up with a passkey, so it has a recovery key you have
+        never seen. Right now your passkey is the only way in — if you lose it,
+        the account is gone. Reveal the key and save it.
       </p>
-      <p className="verify__hint">{PRF_PROVIDER_HINT}</p>
-      {error && (
-        <p className="verify__error" role="alert">
-          {error}
-        </p>
+      {key ? (
+        <>
+          <div className="verify__key">
+            <code className="verify__key-text">{key}</code>
+            <button type="button" className="verify__copy" onClick={handleCopy}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <p className="verify__warning" role="note">
+            <strong>If you lose both this key and your passkey, your data is
+            gone permanently.</strong> No one — including us — can recover it.
+          </p>
+          <label className="verify__ack">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              onChange={e => setAcknowledged(e.target.checked)}
+            />
+            <span>I have saved my recovery key somewhere safe</span>
+          </label>
+          <div className="verify__actions">
+            <button
+              type="button"
+              className="verify__primary"
+              disabled={!acknowledged}
+              onClick={onDone}
+            >
+              Continue
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {error && (
+            <p className="verify__error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="verify__actions verify__actions--stacked">
+            <button
+              type="button"
+              className="verify__primary"
+              disabled={busy}
+              onClick={handleReveal}
+            >
+              {busy ? (
+                <>
+                  <Spinner />
+                  Checking your passkey…
+                </>
+              ) : (
+                'Reveal my recovery key'
+              )}
+            </button>
+            {/* No skip. The whole point is that these accounts are one lost
+                passkey away from being unrecoverable, and the user cannot know
+                that without being shown. */}
+          </div>
+        </>
       )}
-      <div className="verify__actions verify__actions--stacked">
-        <button
-          type="button"
-          className="verify__primary"
-          disabled={busy !== null}
-          onClick={run('passkey', onPasskey)}
-        >
-          {busy === 'passkey' ? <><Spinner />Setting up…</> : 'Set up a passkey'}
-        </button>
-        <button
-          type="button"
-          className="verify__link"
-          disabled={busy !== null}
-          onClick={run('key', onRecoveryKey)}
-        >
-          {busy === 'key' ? <><Spinner />Working…</> : 'Use a recovery key instead'}
-        </button>
-      </div>
     </Overlay>
   )
 }
+
 
 // ── First device: recovery bootstrap failed — blocking, never silent ────────
 
@@ -272,18 +371,17 @@ function RecoverySetupFailed({
 
 function SaveRecoveryKey({
   recoveryKey,
-  viaPasskey,
   onDone,
 }: {
   recoveryKey: string
-  viaPasskey?: boolean
   onDone: () => void
 }) {
   const [copied, setCopied] = useState(false)
-  // For a passkey account the key is break-glass insurance, not the primary
-  // unlock, so keep it out of the way — revealed only on request (4c). The
-  // classic key-only path always shows it: it's the sole way back into history.
-  const [revealed, setRevealed] = useState(!viaPasskey)
+  // EVERY account now leaves setup having seen its key (issue 63dc1339). There
+  // is no longer a passkey-first path where this is optional break-glass, so it
+  // is always shown and always requires an explicit acknowledgement — this is
+  // the only moment the key exists anywhere we can show it.
+  const [acknowledged, setAcknowledged] = useState(false)
 
   const handleCopy = async () => {
     try {
@@ -298,38 +396,43 @@ function SaveRecoveryKey({
   return (
     <Overlay labelledBy="verify-title">
       <h2 id="verify-title" className="verify__title">
-        {viaPasskey ? 'Passkey ready' : 'Save your master key'}
+        Save your recovery key
       </h2>
       <p className="verify__body">
-        {viaPasskey
-          ? 'Your passkey now unlocks your history on any device — nothing to write down. A one-time backup key also exists, in case you ever lose access to your passkey.'
-          : "This key restores your encrypted history on a new device if you can't verify with an existing one. Store it somewhere safe — it can't be recovered for you."}
+        This key is the only thing that can restore your encrypted data on a new
+        device. Save it in your password manager, or in secure notes.
       </p>
-      {revealed ? (
-        <>
-          <div className="verify__key">
-            <code className="verify__key-text">{recoveryKey}</code>
-            <button type="button" className="verify__copy" onClick={handleCopy}>
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-          <div className="verify__actions">
-            <button type="button" className="verify__primary" onClick={onDone}>
-              {viaPasskey ? 'Done' : <>I&apos;ve saved it</>}
-            </button>
-          </div>
-        </>
-      ) : (
-        // Passkey path, collapsed: proceed by default, reveal the key on demand.
-        <div className="verify__actions verify__actions--stacked">
-          <button type="button" className="verify__primary" onClick={onDone}>
-            Done
-          </button>
-          <button type="button" className="verify__link" onClick={() => setRevealed(true)}>
-            Show backup key
-          </button>
-        </div>
-      )}
+      <div className="verify__key">
+        <code className="verify__key-text">{recoveryKey}</code>
+        <button type="button" className="verify__copy" onClick={handleCopy}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <p className="verify__warning" role="note">
+        <strong>If you lose this key, your data is gone permanently.</strong> No
+        one — including us — can recover it for you, because we never have it.
+      </p>
+      {/* An explicit acknowledgement, not just a button. The cost of clicking
+          past this screen is unbounded and unrecoverable, so it should take a
+          deliberate act rather than a reflex. */}
+      <label className="verify__ack">
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={e => setAcknowledged(e.target.checked)}
+        />
+        <span>I have saved my recovery key somewhere safe</span>
+      </label>
+      <div className="verify__actions">
+        <button
+          type="button"
+          className="verify__primary"
+          disabled={!acknowledged}
+          onClick={onDone}
+        >
+          Continue
+        </button>
+      </div>
     </Overlay>
   )
 }
@@ -365,7 +468,12 @@ function VerifyThisDevice({
     try {
       await fn()
     } catch (err: any) {
-      setError(err?.message ?? 'Something went wrong. Please try again.')
+      const message = err?.message ?? 'Something went wrong. Please try again.'
+      setError(message)
+      // Same routing as the at-rest gate: a passkey that cannot do PRF has no
+      // retry that will work, so move the user to the key rather than leaving
+      // them on a dead button.
+      if (isPrfCapabilityError(message)) setForceKey(true)
     } finally {
       setBusy(false)
     }
@@ -496,8 +604,14 @@ function UnlockSession({
     try {
       await fn()
     } catch (err: any) {
-      setError(err?.message ?? 'Could not unlock. Check your passkey or recovery key.')
+      const message = err?.message ?? 'Could not unlock. Check your passkey or recovery key.'
+      setError(message)
       setBusy(false)
+      // A passkey that CANNOT do PRF will never succeed, however many times it is
+      // tapped — so route to the recovery key rather than leaving the user on a
+      // button that cannot work. Cancellations and network errors stay put,
+      // because for those retrying is the right move.
+      if (isPrfCapabilityError(message)) setForceKey(true)
     }
   }
 
@@ -540,7 +654,15 @@ function UnlockSession({
         </>
       ) : (
         <>
-          <p className="verify__body">Enter your recovery key to unlock this device.</p>
+          {isPrfCapabilityError(error) ? (
+            <p className="verify__note" role="status">
+              That passkey can&apos;t unlock TideWork — its provider doesn&apos;t
+              support the security feature we need. Enter your recovery key
+              instead; it always works.
+            </p>
+          ) : (
+            <p className="verify__body">Enter your recovery key to unlock this device.</p>
+          )}
           <input
             type="text"
             className="verify__input"
