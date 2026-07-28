@@ -486,6 +486,7 @@ async fn login_password(
         })?;
 
     let paths = session::Paths::resolve()?;
+    reset_local_state(&paths)?;
     paths.ensure_dirs()?;
 
     let client = MatrixClient::with_sqlite_store(&homeserver, &paths.store_dir)
@@ -501,6 +502,7 @@ async fn login_password(
 
 async fn login_sso(homeserver: String, recover_key: Option<String>) -> Result<()> {
     let paths = session::Paths::resolve()?;
+    reset_local_state(&paths)?;
     paths.ensure_dirs()?;
 
     let client = MatrixClient::with_sqlite_store(&homeserver, &paths.store_dir)
@@ -521,6 +523,22 @@ async fn login_sso(homeserver: String, recover_key: Option<String>) -> Result<()
         .context("OAuth login failed")?;
 
     finish_login(&client, &homeserver, &paths, None, recover_key).await
+}
+
+/// Start every login from a clean slate, as if `logout` had been run first.
+///
+/// Authenticating mints a brand-new device, but the SQLite crypto store still
+/// holds the previous one — and the SDK refuses to open a store whose account
+/// doesn't match the client it was built for ("the account in the store doesn't
+/// match the account in the constructor"), so a second `login` would fail with
+/// no obvious way out. Nothing unrecoverable is discarded: login already
+/// re-verifies the device from secure backup, which is where the room keys
+/// live.
+fn reset_local_state(paths: &session::Paths) -> Result<()> {
+    if paths.session_file.exists() {
+        println!("Replacing the existing local session.");
+    }
+    paths.clear()
 }
 
 /// Verify the freshly-authenticated device against secure backup, then persist
