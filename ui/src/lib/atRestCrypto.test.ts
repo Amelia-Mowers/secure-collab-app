@@ -5,6 +5,11 @@ import {
   deriveStorePassphrase,
   encryptString,
   decryptString,
+  generateDataKey,
+  deriveAtRestKeysFromDataKey,
+  deriveStorePassphraseFromDataKey,
+  wrapDataKey,
+  unwrapDataKey,
 } from './atRestCrypto'
 
 // jsdom doesn't expose crypto.subtle; the real app runs in-browser where it's
@@ -64,5 +69,81 @@ describe('atRestCrypto', () => {
 
   it('rejects an empty master secret', async () => {
     await expect(deriveAtRestKeys('')).rejects.toThrow()
+  })
+})
+
+describe('data-key envelope (issue 8509dc68)', () => {
+  const MASTER = 'EsTf 7hMs 2Nqk 9wRb 4dLc 8pXv'
+  const OTHER = 'a completely different recovery key'
+
+  it('generates a distinct high-entropy data key each time', () => {
+    const a = generateDataKey()
+    const b = generateDataKey()
+    expect(a).not.toBe(b)
+    // 32 bytes base64url, unpadded.
+    expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  })
+
+  it('round-trips the data key through the master secret', async () => {
+    const dataKey = generateDataKey()
+    const wrapped = await wrapDataKey(MASTER, dataKey)
+    expect(wrapped).not.toContain(dataKey)
+    expect(await unwrapDataKey(MASTER, wrapped)).toBe(dataKey)
+  })
+
+  it('refuses a wrong master secret rather than yielding a plausible key', async () => {
+    // AES-GCM authenticates, so the unlock gate can tell "wrong key" from
+    // "broken store" instead of opening a store with garbage.
+    const wrapped = await wrapDataKey(MASTER, generateDataKey())
+    await expect(unwrapDataKey(OTHER, wrapped)).rejects.toThrow()
+  })
+
+  it('derives at-rest keys deterministically from the data key', async () => {
+    const dataKey = generateDataKey()
+    const a = await deriveAtRestKeysFromDataKey(dataKey)
+    const b = await deriveAtRestKeysFromDataKey(dataKey)
+    expect(a.storePassphrase).toBe(b.storePassphrase)
+    // AES keys are non-extractable; prove equality by cross-decrypting.
+    const blob = await encryptString(a.tokenKey, 'hello')
+    expect(await decryptString(b.tokenKey, blob)).toBe('hello')
+  })
+
+  it('the store passphrase helper agrees with the full derivation', async () => {
+    // Login needs the passphrase before the other keys matter, so the two paths
+    // must not drift.
+    const dataKey = generateDataKey()
+    expect(await deriveStorePassphraseFromDataKey(dataKey)).toBe(
+      (await deriveAtRestKeysFromDataKey(dataKey)).storePassphrase,
+    )
+  })
+
+  it('SURVIVES a master-secret rotation without changing the store passphrase', async () => {
+    // The entire reason for the envelope. Rotating the master secret used to mean
+    // a new store and a fresh login, because the passphrase was derived from the
+    // secret. Now it is a re-wrap.
+    const dataKey = generateDataKey()
+    const before = await deriveAtRestKeysFromDataKey(dataKey)
+
+    const rewrapped = await wrapDataKey(OTHER, await unwrapDataKey(MASTER, await wrapDataKey(MASTER, dataKey)))
+    const after = await deriveAtRestKeysFromDataKey(await unwrapDataKey(OTHER, rewrapped))
+
+    expect(after.storePassphrase).toBe(before.storePassphrase)
+  })
+
+  it('does not collide with the legacy master-secret derivation', async () => {
+    // Existing accounts still derive from the master secret and must keep
+    // working; the two schemes must never produce the same material for the same
+    // input, or one could silently open the other's store.
+    const legacy = await deriveAtRestKeys(MASTER)
+    const viaDataKey = await deriveAtRestKeysFromDataKey(MASTER)
+    expect(viaDataKey.storePassphrase).not.toBe(legacy.storePassphrase)
+  })
+
+  it('rejects an empty data key', async () => {
+    await expect(deriveAtRestKeysFromDataKey('')).rejects.toThrow(/empty data key/)
+  })
+
+  it('rejects an empty master secret when wrapping', async () => {
+    await expect(wrapDataKey('', generateDataKey())).rejects.toThrow(/empty master secret/)
   })
 })
