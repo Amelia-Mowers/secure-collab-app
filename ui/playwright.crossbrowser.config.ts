@@ -35,7 +35,7 @@ import base from './playwright.config'
  */
 export default defineConfig({
   ...base,
-  testMatch: ['worker-boot.spec.ts', 'multi-tab.spec.ts'],
+  testMatch: ['worker-boot.spec.ts', 'multi-tab.spec.ts', 'device-key.spec.ts'],
   projects: [
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
