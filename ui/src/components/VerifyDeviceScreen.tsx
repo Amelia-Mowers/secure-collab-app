@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
-import type { VerificationState } from '../hooks/useAuth'
+import type { VerificationState, ResettableWorkspace, ResetPlan } from '../hooks/useAuth'
 import { PRF_PROVIDER_HINT, isPrfCapabilityError } from '../auth/passkeyPrf'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './VerifyDeviceScreen.css'
@@ -38,7 +38,24 @@ export function VerifyDeviceScreen() {
     acceptIncomingVerification,
     confirmVerification,
     cancelVerification,
+    listResettableWorkspaces,
+    resetAccount,
   } = useAuth()
+
+  // Hoisted here, not inside a gate: the reset takes over the whole screen and
+  // is reachable from more than one dead end.
+  const [resetting, setResetting] = useState(false)
+
+  if (resetting) {
+    return (
+      <ResetAccount
+        onList={listResettableWorkspaces}
+        onReset={resetAccount}
+        onCancel={() => setResetting(false)}
+        onDone={signOut}
+      />
+    )
+  }
 
   // An active verification takes over the screen (emoji / waiting / incoming).
   if (verification) {
@@ -90,6 +107,7 @@ export function VerifyDeviceScreen() {
         canUnlockWithPasskey={passkeyAvailable && passkeyEnrolled}
         onPasskey={unlockWithPasskey}
         onSignOut={signOut}
+        onResetAccount={() => setResetting(true)}
       />
     )
   }
@@ -102,6 +120,7 @@ export function VerifyDeviceScreen() {
         onPasskey={unlockSessionWithPasskey}
         onKey={submitUnlockKey}
         onSignOut={signOut}
+        onResetAccount={() => setResetting(true)}
       />
     )
   }
@@ -444,11 +463,13 @@ function VerifyThisDevice({
   canUnlockWithPasskey,
   onPasskey,
   onSignOut,
+  onResetAccount,
 }: {
   onMasterKey: (key: string) => Promise<void>
   canUnlockWithPasskey: boolean
   onPasskey: () => Promise<void>
   onSignOut: () => void
+  onResetAccount?: () => void
 }) {
   // Passkey or master key — the between-device (SAS) path is gone (issue
   // bef6b220): unlocking imports the cross-signing self-signing key, so the
@@ -564,9 +585,267 @@ function VerifyThisDevice({
           )}
         </>
       )}
-      <EscapeHatch onSignOut={onSignOut}>
+      <EscapeHatch onSignOut={onSignOut} onResetAccount={onResetAccount}>
         <ManageSubscriptionButton className="verify__link" errorClassName="verify__error" />
       </EscapeHatch>
+    </Overlay>
+  )
+}
+
+// ── Nuclear option: reset the account when verification is impossible ────────
+
+/**
+ * The way out of a dead end (issue 63dc1339 stage 4).
+ *
+ * A user who can't verify and has lost their key isn't stuck with a broken
+ * account and no path forward — but the path costs them their history, so every
+ * step is explicit. Three phases: warn, decide each workspace's fate, then show
+ * the fresh key.
+ *
+ * Per workspace the rule is the one the bridge already enforces: hand it to a
+ * successor if anyone else is in it, or delete it. There is no third option —
+ * leaving as the sole admin would strand a workspace nobody can manage.
+ */
+function ResetAccount({
+  onList,
+  onReset,
+  onCancel,
+  onDone,
+}: {
+  onList: () => Promise<ResettableWorkspace[]>
+  onReset: (plan: ResetPlan[]) => Promise<string>
+  onCancel: () => void
+  onDone: () => void
+}) {
+  const [phase, setPhase] = useState<'warn' | 'plan' | 'done'>('warn')
+  const [workspaces, setWorkspaces] = useState<ResettableWorkspace[] | null>(null)
+  const [choices, setChoices] = useState<Record<string, ResetPlan>>({})
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [newKey, setNewKey] = useState<string | null>(null)
+  const [acknowledged, setAcknowledged] = useState(false)
+
+  const loadPlan = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      const list = await onList()
+      setWorkspaces(list)
+      // Default each workspace to the SAFER option where there is one: handing
+      // it to somebody keeps their data, deleting destroys it. With nobody else
+      // present, delete is the only thing that can happen.
+      const defaults: Record<string, ResetPlan> = {}
+      for (const w of list) {
+        defaults[w.id] =
+          w.others.length > 0
+            ? { id: w.id, action: 'handoff', successor: w.others[0].id }
+            : { id: w.id, action: 'delete' }
+      }
+      setChoices(defaults)
+      setPhase('plan')
+    } catch (err: any) {
+      setError(err?.message ?? 'Could not read your workspaces.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const run = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      setNewKey(await onReset(Object.values(choices)))
+      setPhase('done')
+    } catch (err: any) {
+      // Workspaces are processed before the key is rotated, so a failure here
+      // leaves the old key working. Say so — the user has not lost anything yet.
+      setError(
+        `${err?.message ?? 'The reset could not be completed.'} Your existing key still works.`,
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (phase === 'warn') {
+    return (
+      <Overlay labelledBy="verify-title">
+        <h2 id="verify-title" className="verify__title">
+          Reset this account?
+        </h2>
+        <p className="verify__body">
+          Only do this if you can&apos;t unlock and have lost your recovery key.
+          You&apos;ll get a working account with a new key, and can be re-invited to
+          workspaces.
+        </p>
+        <p className="verify__warning" role="note">
+          <strong>Everything already encrypted becomes permanently unreadable.</strong>{' '}
+          Existing workspace data cannot be recovered afterwards, by you or by us.
+        </p>
+        {error && (
+          <p className="verify__error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="verify__actions verify__actions--stacked">
+          <button type="button" className="verify__primary" disabled={busy} onClick={loadPlan}>
+            {busy ? (
+              <>
+                <Spinner />
+                Checking your workspaces…
+              </>
+            ) : (
+              'Continue'
+            )}
+          </button>
+          <button type="button" className="verify__link" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </Overlay>
+    )
+  }
+
+  if (phase === 'plan') {
+    return (
+      <Overlay labelledBy="verify-title">
+        <h2 id="verify-title" className="verify__title">
+          What happens to your workspaces?
+        </h2>
+        {workspaces && workspaces.length === 0 ? (
+          <p className="verify__body">
+            You&apos;re not in any workspaces, so there&apos;s nothing to hand over.
+          </p>
+        ) : (
+          <>
+            <p className="verify__body">
+              You&apos;ll be removed from each of these. Choose one at a time.
+            </p>
+            <ul className="verify__list">
+              {workspaces?.map(w => (
+                <li key={w.id} className="verify__list-item">
+                  <strong>{w.name}</strong>
+                  {w.others.length === 0 ? (
+                    <p className="verify__hint">
+                      Nobody else is in it, so it will be deleted.
+                    </p>
+                  ) : (
+                    <div className="verify__choice">
+                      <label>
+                        <input
+                          type="radio"
+                          name={`ws-${w.id}`}
+                          checked={choices[w.id]?.action === 'handoff'}
+                          onChange={() =>
+                            setChoices(c => ({
+                              ...c,
+                              [w.id]: {
+                                id: w.id,
+                                action: 'handoff',
+                                successor: w.others[0].id,
+                              },
+                            }))
+                          }
+                        />
+                        <span>Make an admin and leave</span>
+                      </label>
+                      {choices[w.id]?.action === 'handoff' && (
+                        <select
+                          aria-label={`Successor for ${w.name}`}
+                          value={(choices[w.id] as { successor: string }).successor}
+                          onChange={e =>
+                            setChoices(c => ({
+                              ...c,
+                              [w.id]: { id: w.id, action: 'handoff', successor: e.target.value },
+                            }))
+                          }
+                        >
+                          {w.others.map(m => (
+                            <option key={m.id} value={m.id}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <label>
+                        <input
+                          type="radio"
+                          name={`ws-${w.id}`}
+                          checked={choices[w.id]?.action === 'delete'}
+                          disabled={!w.amAdmin}
+                          onChange={() =>
+                            setChoices(c => ({ ...c, [w.id]: { id: w.id, action: 'delete' } }))
+                          }
+                        />
+                        <span>
+                          Delete it for everyone
+                          {!w.amAdmin && ' (admins only)'}
+                        </span>
+                      </label>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {error && (
+          <p className="verify__error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="verify__actions verify__actions--stacked">
+          <button type="button" className="verify__primary" disabled={busy} onClick={run}>
+            {busy ? (
+              <>
+                <Spinner />
+                Resetting…
+              </>
+            ) : (
+              'Reset my account'
+            )}
+          </button>
+          <button type="button" className="verify__link" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      </Overlay>
+    )
+  }
+
+  return (
+    <Overlay labelledBy="verify-title">
+      <h2 id="verify-title" className="verify__title">
+        Save your new recovery key
+      </h2>
+      <p className="verify__body">
+        Your account has a fresh key. Save it in your password manager or secure
+        notes — you&apos;ll need it to sign in again.
+      </p>
+      <div className="verify__key">
+        <code className="verify__key-text">{newKey}</code>
+      </div>
+      <p className="verify__warning" role="note">
+        <strong>If you lose this key, your data is gone permanently.</strong>
+      </p>
+      <label className="verify__ack">
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={e => setAcknowledged(e.target.checked)}
+        />
+        <span>I have saved my new recovery key somewhere safe</span>
+      </label>
+      <div className="verify__actions">
+        <button
+          type="button"
+          className="verify__primary"
+          disabled={!acknowledged}
+          onClick={onDone}
+        >
+          Sign in again
+        </button>
+      </div>
     </Overlay>
   )
 }
@@ -580,12 +859,14 @@ function UnlockSession({
   onPasskey,
   onKey,
   onSignOut,
+  onResetAccount,
 }: {
   custody?: 'passkey' | 'manual'
   passkeyAvailable: boolean
   onPasskey: () => Promise<void>
   onKey: (key: string) => Promise<void>
   onSignOut: () => void
+  onResetAccount?: () => void
 }) {
   const canPasskey = passkeyAvailable && custody !== 'manual'
   // Derive the view from canPasskey (it flips true asynchronously once
@@ -702,7 +983,7 @@ function UnlockSession({
           </div>
         </>
       )}
-      <EscapeHatch onSignOut={onSignOut} />
+      <EscapeHatch onSignOut={onSignOut} onResetAccount={onResetAccount} />
     </Overlay>
   )
 }
@@ -711,12 +992,27 @@ function UnlockSession({
 //    prompt and returns to sign-in, even when unlock/verify can't succeed
 //    (lost or rotated key, PRF-less passkey). Always enabled — including mid
 //    busy state — so a hung passkey prompt is still escapable. (issue 7495dd9a)
-function EscapeHatch({ onSignOut, children }: { onSignOut: () => void; children?: ReactNode }) {
+function EscapeHatch({
+  onSignOut,
+  onResetAccount,
+  children,
+}: {
+  onSignOut: () => void
+  /** Offered only where the gate can genuinely be a dead end: a user with no
+   *  key and no working passkey needs a way forward, not just a way out. */
+  onResetAccount?: () => void
+  children?: ReactNode
+}) {
   return (
     <div className="verify__escape">
       <button type="button" className="verify__link" onClick={() => onSignOut()}>
         Sign out
       </button>
+      {onResetAccount && (
+        <button type="button" className="verify__link" onClick={onResetAccount}>
+          Reset my account
+        </button>
+      )}
       {children}
     </div>
   )

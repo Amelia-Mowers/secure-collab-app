@@ -12,11 +12,12 @@ import { sharedWorkerEnabled } from '../worker/flag'
 import { connectWorker } from '../worker/client'
 import { openWorkerSession } from '../worker/workerSession'
 import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
-import { setSnapshotKey } from '../lib/atRestSession'
+import { setSnapshotKey, getSnapshotKey } from '../lib/atRestSession'
 import {
   addPasskeyWrap,
   loadWrapRecord,
   saveWrapRecord,
+  emptyWrapRecord,
   unwrapRecoveryKey,
   hasEnrolledPasskey,
   parseWrapRecord,
@@ -202,6 +203,30 @@ export interface AccountSession {
   secrets?: string
 }
 
+/**
+ * A workspace the reset flow has to dispose of (issue 63dc1339 stage 4).
+ *
+ * `others` is what makes the decision possible: with members present the
+ * workspace can be handed on, and without them there is nobody to hand it to.
+ */
+export interface ResettableWorkspace {
+  id: string
+  name: string
+  /** Whether this user can delete it / change roles at all. */
+  amAdmin: boolean
+  /** Active members other than this user. */
+  others: Array<{ id: string; label: string; role: string }>
+}
+
+/** What to do with one workspace during a reset. */
+export type ResetPlan =
+  /** Promote `successor` to admin, then leave. The workspace and its data
+   *  survive for everyone else. */
+  | { id: string; action: 'handoff'; successor: string }
+  /** Remove every member and leave — the workspace is gone. The only option
+   *  when nobody else is in it. */
+  | { id: string; action: 'delete' }
+
 interface AuthState {
   // Active account state
   username: string | null
@@ -253,6 +278,22 @@ interface AuthState {
 
   /** Nuclear option: clear all stored data and reload the app. */
   resetApp: () => void
+
+  /**
+   * What a full account reset would have to deal with, per workspace (issue
+   * 63dc1339 stage 4). Read BEFORE resetting so the user decides each
+   * workspace's fate explicitly rather than discovering it afterwards.
+   */
+  listResettableWorkspaces: () => Promise<ResettableWorkspace[]>
+  /**
+   * The nuclear option, for a user who cannot verify at all: carry out `plan`
+   * (hand each workspace to a successor, or delete it), then rotate secret
+   * storage to a fresh key and return that key.
+   *
+   * IRREVERSIBLE. Everything encrypted under the old key becomes unreadable, so
+   * this is the way out of a dead end, not a tidy-up.
+   */
+  resetAccount: (plan: ResetPlan[]) => Promise<string>
 
   /** Set when the sign-in flow needs the user to either save a freshly
    *  generated recovery key (`save`) or enter their existing one (`enter`)
@@ -1727,6 +1768,120 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // ── resetApp: clear everything and reload ─────────────────────────────────
+  /**
+   * Open a room for MEMBERSHIP work (roles, leaving) — not for its data.
+   *
+   * Both shapes expose the same four methods, so the caller doesn't branch. It
+   * goes through `ConnectedWorkspace` because that is where the role and leave
+   * rules live, already tested: `leaveWorkspace` refuses a sole-admin departure
+   * and `setUserRole` refuses a last-admin self-demotion. Reimplementing either
+   * at session level would mean a second copy of rules that must not disagree.
+   *
+   * The cost is a history gather per workspace, which is wasteful for an
+   * operation that only touches membership state. Accepted deliberately: a reset
+   * is rare, deliberate and irreversible, so reusing proven code beats saving
+   * seconds.
+   */
+  const openRoomForMembership = useCallback(async (ms: any, roomId: string) => {
+    if (ms?.isWorkerSession) {
+      const worker = await connectWorker()
+      await worker.openWorkspace(ms.userId(), roomId, getSnapshotKey() ?? undefined)
+      return {
+        listMembers: () => worker.roomCall(roomId, 'listMembers') as Promise<string>,
+        myRole: () => worker.roomCall(roomId, 'myRole') as Promise<string>,
+        setUserRole: (u: string, r: string) =>
+          worker.roomCall(roomId, 'setUserRole', u, r) as Promise<void>,
+        leaveWorkspace: (all: boolean) =>
+          worker.roomCall(roomId, 'leaveWorkspace', all) as Promise<void>,
+      }
+    }
+    const wasm = await getWasmModule()
+    return await wasm.ConnectedWorkspace.create(ms, roomId, undefined)
+  }, [])
+
+  const listResettableWorkspaces = useCallback(async (): Promise<ResettableWorkspace[]> => {
+    const ms = matrixSessionRef.current
+    if (!ms) throw new Error('Not signed in')
+    const rooms = parseWorkspaceRooms(await ms.listRooms())
+    const me = ms.userId?.()
+    const out: ResettableWorkspace[] = []
+    for (const room of rooms) {
+      try {
+        const handle = await openRoomForMembership(ms, room.id)
+        const members = JSON.parse(await handle.listMembers()) as Array<{
+          userId: string
+          displayName?: string
+          role?: string
+        }>
+        const myRole = await handle.myRole()
+        out.push({
+          id: room.id,
+          name: room.name,
+          amAdmin: myRole === 'admin',
+          others: members
+            .filter(m => m.userId !== me)
+            .map(m => ({ id: m.userId, label: m.displayName || m.userId, role: m.role ?? 'editor' })),
+        })
+      } catch (e) {
+        // A workspace we cannot even inspect must not block the reset — report it
+        // as "nobody else here", which offers delete, and let the attempt fail
+        // loudly later if it really can't be left.
+        console.warn(`[reset] could not inspect ${room.id}:`, e)
+        out.push({ id: room.id, name: room.name, amAdmin: false, others: [] })
+      }
+    }
+    return out
+  }, [openRoomForMembership])
+
+  const resetAccount = useCallback(
+    async (plan: ResetPlan[]): Promise<string> => {
+      const ms = matrixSessionRef.current
+      if (!ms) throw new Error('Not signed in')
+
+      // Workspaces first, key last. If a hand-off fails the user still holds
+      // their old key and nothing is lost; rotating first would strand them
+      // mid-way with a new key and workspaces they can no longer manage.
+      for (const item of plan) {
+        const handle = await openRoomForMembership(ms, item.id)
+        if (item.action === 'handoff') {
+          await handle.setUserRole(item.successor, 'admin')
+          await handle.leaveWorkspace(false)
+        } else {
+          await handle.leaveWorkspace(true)
+        }
+      }
+
+      // Rotate secret storage to a fresh random key. Everything encrypted under
+      // the old key is now unreachable — which is the point.
+      const newKey: string = await ms.resetRecovery()
+
+      // Old passkey wraps hold the OLD key, so they are worse than useless:
+      // leaving them would let a passkey "unlock" to a key that opens nothing.
+      try {
+        await saveWrapRecord(ms, emptyWrapRecord())
+      } catch (e) {
+        console.warn('[reset] could not clear passkey wraps:', e)
+      }
+      const uid: string | undefined = ms.userId?.()
+      if (uid) {
+        setAccounts(prev => {
+          const updated = prev.map(a =>
+            a.userId === uid
+              ? { ...a, passkeyWrap: undefined, custody: 'manual' as const, keySaved: false }
+              : a,
+          )
+          saveAccounts(updated)
+          return updated
+        })
+      }
+      custodyRef.current = 'manual'
+      passkeyEnrolledRef.current = false
+      setPasskeyEnrolled(false)
+      return newKey
+    },
+    [openRoomForMembership],
+  )
+
   const resetApp = useCallback(() => {
     // Clear all collab-related localStorage keys
     const keysToRemove: string[] = []
@@ -1773,6 +1928,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     switchAccount,
     removeAccount,
     resetApp,
+    listResettableWorkspaces,
+    resetAccount,
     recoveryPrompt,
     submitRecoveryKey,
     dismissRecoveryPrompt,

@@ -17,6 +17,13 @@ const h = vi.hoisted(() => ({
   unlockSessionWithPasskey: vi.fn(async () => undefined),
   submitUnlockKey: vi.fn(async () => undefined),
   openBillingPortal: vi.fn(async () => undefined),
+  // Annotated: an inferred `never[]` makes every mockResolvedValue below a type error.
+  listResettableWorkspaces: vi.fn(
+    async (): Promise<
+      Array<{ id: string; name: string; amAdmin: boolean; others: Array<{ id: string; label: string; role: string }> }>
+    > => [],
+  ),
+  resetAccount: vi.fn(async () => "NEW-KEY-9999"),
   signOut: vi.fn(),
   acceptIncomingVerification: vi.fn(),
   confirmVerification: vi.fn(),
@@ -40,6 +47,8 @@ vi.mock('../hooks/useAuth', () => ({
     unlockSessionWithPasskey: h.unlockSessionWithPasskey,
     submitUnlockKey: h.submitUnlockKey,
     openBillingPortal: h.openBillingPortal,
+    listResettableWorkspaces: h.listResettableWorkspaces,
+    resetAccount: h.resetAccount,
     signOut: h.signOut,
     acceptIncomingVerification: h.acceptIncomingVerification,
     confirmVerification: h.confirmVerification,
@@ -358,6 +367,122 @@ describe('VerifyDeviceScreen', () => {
       )
       expect(screen.getByRole('button', { name: /unlock with passkey/i })).toBeInTheDocument()
       expect(screen.queryByPlaceholderText(/recovery key/i)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('nuclear reset (cannot verify at all)', () => {
+    const SHARED = {
+      id: '!shared:x',
+      name: 'Team Space',
+      amAdmin: true,
+      others: [
+        { id: '@bob:x', label: 'Bob', role: 'editor' },
+        { id: '@carol:x', label: 'Carol', role: 'admin' },
+      ],
+    }
+    const SOLO = { id: '!solo:x', name: 'Just Me', amAdmin: true, others: [] }
+
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'verify' }
+      h.listResettableWorkspaces.mockResolvedValue([SHARED, SOLO])
+      h.resetAccount.mockResolvedValue('NEW-KEY-9999')
+    })
+
+    const openReset = () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('button', { name: /reset my account/i }))
+    }
+
+    it('is offered as an escape from the verify gate', () => {
+      // A user with no key and no working passkey needs a way FORWARD, not just
+      // a way out — signing out alone leaves the account unusable.
+      openReset()
+      expect(screen.getByRole('heading', { name: /reset this account/i })).toBeInTheDocument()
+    })
+
+    it('is offered from the at-rest unlock gate too', () => {
+      h.recoveryPrompt = { kind: 'unlock', custody: 'manual' }
+      render(<VerifyDeviceScreen />)
+      expect(screen.getByRole('button', { name: /reset my account/i })).toBeInTheDocument()
+    })
+
+    it('states the permanent cost before anything happens', () => {
+      openReset()
+      expect(screen.getByText(/permanently unreadable/i)).toBeInTheDocument()
+      expect(h.listResettableWorkspaces).not.toHaveBeenCalled()
+    })
+
+    it('cancelling returns to the gate, having changed nothing', async () => {
+      openReset()
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: /verify this device/i })).toBeInTheDocument(),
+      )
+      expect(h.resetAccount).not.toHaveBeenCalled()
+    })
+
+    it('defaults a shared workspace to hand-off and a solo one to delete', async () => {
+      // Hand-off is the safer default wherever there is anyone to hand to: it
+      // keeps their data. With nobody else present, delete is the only outcome.
+      openReset()
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+      await waitFor(() => expect(screen.getByText('Team Space')).toBeInTheDocument())
+      expect(screen.getByLabelText(/successor for Team Space/i)).toHaveValue('@bob:x')
+      expect(screen.getByText(/Nobody else is in it, so it will be deleted/i)).toBeInTheDocument()
+    })
+
+    it('carries out the chosen plan', async () => {
+      openReset()
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      await waitFor(() => expect(screen.getByText('Team Space')).toBeInTheDocument())
+
+      // Hand Team Space to Carol instead of the default.
+      fireEvent.change(screen.getByLabelText(/successor for Team Space/i), {
+        target: { value: '@carol:x' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: /reset my account/i }))
+
+      await waitFor(() =>
+        expect(h.resetAccount).toHaveBeenCalledWith([
+          { id: '!shared:x', action: 'handoff', successor: '@carol:x' },
+          { id: '!solo:x', action: 'delete' },
+        ]),
+      )
+    })
+
+    it('shows the fresh key and requires acknowledgement before signing out', async () => {
+      openReset()
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      await waitFor(() => expect(screen.getByText('Team Space')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: /reset my account/i }))
+
+      await waitFor(() => expect(screen.getByText('NEW-KEY-9999')).toBeInTheDocument())
+      const done = screen.getByRole('button', { name: /sign in again/i })
+      expect(done).toBeDisabled()
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(done)
+      expect(h.signOut).toHaveBeenCalledTimes(1)
+    })
+
+    it('a failed reset says the existing key still works', async () => {
+      // Workspaces are processed before the key is rotated, so a failure here has
+      // cost the user nothing — the message must not imply otherwise.
+      h.resetAccount.mockRejectedValueOnce(new Error('Could not remove Bob'))
+      openReset()
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      await waitFor(() => expect(screen.getByText('Team Space')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: /reset my account/i }))
+
+      await waitFor(() => expect(screen.getByText(/existing key still works/i)).toBeInTheDocument())
+      expect(screen.getByText(/Could not remove Bob/)).toBeInTheDocument()
+    })
+
+    it('handles an account with no workspaces', async () => {
+      h.listResettableWorkspaces.mockResolvedValue([])
+      openReset()
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      await waitFor(() => expect(screen.getByText(/not in any workspaces/i)).toBeInTheDocument())
     })
   })
 
