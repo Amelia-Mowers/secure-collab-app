@@ -465,6 +465,20 @@ describe('recovery bootstrap (first device)', () => {
     mockRestore.mockClear()
   })
 
+  // These three tests let `bootstrapWithKey`s real backoff run (0 + 2s + 5s),
+  // which costs ~7s each, rather than faking the clock.
+  //
+  // Fake timers CANNOT work here. That function schedules attempt N+1's
+  // `setTimeout` only after attempt N's promise settles, and since #191 that
+  // path runs real WebCrypto, which resolves off the fake clock. A single
+  // `advanceTimersByTimeAsync` fires only the timers that exist while it
+  // drains, so when the crypto lands after the drain the timer is never fired
+  // and the test hangs — forever, not slowly, so a bigger timeout does not help
+  // (that was the first fix attempted here, and it changed nothing). Pumping
+  // the clock in a loop fails the same way: the loop burns through its steps in
+  // milliseconds of real time, long before the crypto resolves.
+  //
+  // Verified with a scratch repro: fake timers hang, real timers pass in 7.3s.
   function makeRecoverySession(enableRecovery: () => Promise<string>) {
     return {
       ...makeMockSession('@carol:localhost'),
@@ -486,54 +500,40 @@ describe('recovery bootstrap (first device)', () => {
   })
 
   it('retries transient failures, then succeeds', async () => {
-    vi.useFakeTimers()
-    try {
-      let calls = 0
-      const session = makeRecoverySession(async () => {
-        calls += 1
-        if (calls < 2) throw new Error('transient network blip')
-        return 'KEY-EFGH'
-      })
-      mockLogin.mockResolvedValueOnce(session)
+    let calls = 0
+    const session = makeRecoverySession(async () => {
+      calls += 1
+      if (calls < 2) throw new Error('transient network blip')
+      return 'KEY-EFGH'
+    })
+    mockLogin.mockResolvedValueOnce(session)
 
-      const { getState } = renderAuth()
-      await act(async () => {
-        const p = getState().signIn('http://hs', 'carol', 'pw')
-        await vi.advanceTimersByTimeAsync(8000)
-        await p
-      })
+    const { getState } = renderAuth()
+    await act(async () => {
+      await getState().signIn('http://hs', 'carol', 'pw')
+    })
 
-      expect(session.enableRecovery).toHaveBeenCalledTimes(2)
-      expect(getState().recoveryPrompt).toEqual({ kind: 'save', recoveryKey: 'KEY-EFGH' })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
+    expect(session.enableRecovery).toHaveBeenCalledTimes(2)
+    expect(getState().recoveryPrompt).toEqual({ kind: 'save', recoveryKey: 'KEY-EFGH' })
+  }, 30_000)
 
   it('raises a BLOCKING error prompt when every attempt fails (no silent fail-open)', async () => {
-    vi.useFakeTimers()
-    try {
-      const session = makeRecoverySession(async () => {
-        throw new Error('Backup upload failed')
-      })
-      mockLogin.mockResolvedValueOnce(session)
+    const session = makeRecoverySession(async () => {
+      throw new Error('Backup upload failed')
+    })
+    mockLogin.mockResolvedValueOnce(session)
 
-      const { getState } = renderAuth()
-      await act(async () => {
-        const p = getState().signIn('http://hs', 'carol', 'pw')
-        await vi.advanceTimersByTimeAsync(10_000)
-        await p
-      })
+    const { getState } = renderAuth()
+    await act(async () => {
+      await getState().signIn('http://hs', 'carol', 'pw')
+    })
 
-      expect(session.enableRecovery).toHaveBeenCalledTimes(3)
-      expect(getState().recoveryPrompt).toEqual({
-        kind: 'error',
-        message: 'Backup upload failed',
-      })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
+    expect(session.enableRecovery).toHaveBeenCalledTimes(3)
+    expect(getState().recoveryPrompt).toEqual({
+      kind: 'error',
+      message: 'Backup upload failed',
+    })
+  }, 30_000)
 
   it('retryRecoverySetup re-runs the bootstrap from the error state', async () => {
     let fail = true
@@ -543,27 +543,18 @@ describe('recovery bootstrap (first device)', () => {
     })
     mockLogin.mockResolvedValueOnce(session)
 
-    // Phase 1 (all attempts fail) needs fake timers to skip the backoff...
-    vi.useFakeTimers()
+    // Phase 1: every attempt fails, so this walks the full real backoff.
     const { getState } = renderAuth()
-    try {
-      await act(async () => {
-        const p = getState().signIn('http://hs', 'carol', 'pw')
-        await vi.advanceTimersByTimeAsync(10_000)
-        await p
-      })
-    } finally {
-      vi.useRealTimers()
-    }
+    await act(async () => {
+      await getState().signIn('http://hs', 'carol', 'pw')
+    })
     expect(getState().recoveryPrompt?.kind).toBe('error')
 
-    // ...phase 2 (retry succeeds on the first, zero-delay attempt) doesn't.
+    // Phase 2: the retry succeeds on the first, zero-delay attempt.
     fail = false
     await act(async () => {
       await getState().retryRecoverySetup()
     })
     expect(getState().recoveryPrompt).toEqual({ kind: 'save', recoveryKey: 'KEY-IJKL' })
-    // Generous: this test deliberately drives 7s of retry backoff, and real
-    // WebCrypto now runs on the same path (issue 8509dc68).
   }, 30_000)
 })
