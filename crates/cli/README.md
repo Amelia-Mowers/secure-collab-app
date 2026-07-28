@@ -57,6 +57,13 @@ tidework whoami      # show the logged-in user, or report none
 tidework logout      # forget the session and delete the local crypto store
 ```
 
+`login` always starts from a clean slate — it clears any existing session and
+crypto store first, so you never have to `logout` by hand. Each login mints a
+new device, and a store still holding the old one would refuse to open ("the
+account in the store doesn't match the account in the constructor"). The
+trade-off: a login that fails partway leaves you logged out rather than falling
+back to the previous session.
+
 When run inside WSL, the loopback redirect (`http://127.0.0.1:<port>/…`) is
 reachable from the Windows browser via WSL2's localhost forwarding, so `--sso`
 works end to end. If the browser can't be opened automatically, copy the printed
