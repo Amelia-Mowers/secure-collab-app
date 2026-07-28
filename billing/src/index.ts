@@ -12,7 +12,9 @@
  *
  * Invariants (ADR 0002):
  *  - Lock, never deactivate — except never-paid accounts long past trial,
- *    where there is nothing of value to preserve (deletion: tracked TODO).
+ *    where there is nothing of value to preserve. That exception turns on
+ *    only with DELETE_AFTER_DAYS > 0 and DELETE_MODE=apply, and it keys on
+ *    "never had a subscription", so a lapsed customer stays locked forever.
  *  - Stripe is the database: the username lives on subscription metadata,
  *    set programmatically at checkout (client_reference_id + metadata) — no
  *    hand-typed coupling.
@@ -27,6 +29,16 @@ export interface Env {
   TRIAL_DAYS: string
   /** Extra days after the trial ends before the sweep locks. "0" = lock on the dot. */
   GRACE_DAYS: string
+  /**
+   * Days past the lock deadline after which a NEVER-PAID locked account is
+   * deactivated + erased. "0" (or absent) disables deletion entirely.
+   */
+  DELETE_AFTER_DAYS: string
+  /**
+   * "apply" actually deletes. Anything else (default) only logs what it would
+   * have deleted — deletion is irreversible, so it stays opt-in.
+   */
+  DELETE_MODE: string
   EXEMPT_USERNAMES: string
   SITE_URL: string
   APP_URL: string
@@ -49,6 +61,8 @@ interface MasUser {
     username: string
     created_at: string
     locked_at: string | null
+    /** Null unless already deactivated — the deletion sweep skips those. */
+    deactivated_at?: string | null
     admin: boolean
   }
 }
@@ -99,6 +113,25 @@ async function masSetLockById(env: Env, tok: string, id: string, lock: boolean):
   if (!res.ok) throw new Error(`MAS ${lock ? 'lock' : 'unlock'} failed: ${res.status}`)
 }
 
+/**
+ * Deactivate a user and ask the homeserver to GDPR-erase them.
+ *
+ * The ONE exception to lock-never-deactivate (ADR 0002): an account that never
+ * paid and sat locked long past the trial has nothing worth preserving. MAS
+ * invalidates every session, makes the user leave all rooms, and — with
+ * `skip_erase: false` — asks Synapse to erase. Treat as irreversible: MAS has a
+ * `reactivate` endpoint, but it cannot un-erase, and it cannot bring back E2E
+ * history whose keys are gone.
+ */
+async function masDeactivateById(env: Env, tok: string, id: string): Promise<void> {
+  const res = await fetch(`${env.MAS_URL}/api/admin/v1/users/${id}/deactivate`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skip_erase: false }),
+  })
+  if (!res.ok) throw new Error(`MAS deactivate failed: ${res.status}`)
+}
+
 // ── Stripe helpers ───────────────────────────────────────────────────────────
 
 async function activeSubscriptionFor(env: Env, username: string): Promise<boolean> {
@@ -110,9 +143,22 @@ async function activeSubscriptionFor(env: Env, username: string): Promise<boolea
   return found.data.length > 0
 }
 
+interface SubscriptionIndex {
+  /** In good standing right now — `active` or `trialing`. Drives locking. */
+  paying: Set<string>
+  /** Has EVER had a subscription, any status. Drives deletion eligibility. */
+  everPaid: Set<string>
+  /**
+   * False if pagination hit its cap with more to fetch, i.e. `everPaid` is
+   * missing entries. Deletion MUST NOT run on a partial index — an absent
+   * username would read as "never paid" and erase a real customer.
+   */
+  complete: boolean
+}
+
 /**
- * Every username currently in good standing, read from Stripe's `list`
- * endpoint.
+ * Both views of who has a subscription, from one paginated pass over Stripe's
+ * `list` endpoint.
  *
  * `subscriptions.search` (above) runs against Stripe's search index, which is
  * eventually consistent — it can lag a write by up to a minute. That is fine
@@ -120,11 +166,17 @@ async function activeSubscriptionFor(env: Env, username: string): Promise<boolea
  * the cron fired would be invisible to search and get locked out. `list` is
  * strongly consistent, so the sweep reads that instead. It is cheaper too — one
  * paginated pass replaces a per-user search.
+ *
+ * The two sets differ in the case that matters most: someone who paid and then
+ * lapsed is absent from `paying` (so they get locked) but present in
+ * `everPaid` (so they are never deleted — they have data they paid for).
  */
-async function payingUsernames(env: Env): Promise<Set<string>> {
+async function subscriptionIndex(env: Env): Promise<SubscriptionIndex> {
   const stripe = stripeClient(env)
   const paying = new Set<string>()
+  const everPaid = new Set<string>()
   let startingAfter: string | undefined
+  let complete = false
   for (let page = 0; page < 100; page++) {
     const batch = await stripe.subscriptions.list({
       status: 'all',
@@ -133,12 +185,17 @@ async function payingUsernames(env: Env): Promise<Set<string>> {
     })
     for (const sub of batch.data) {
       const username = sub.metadata?.tidework_username
-      if (username && (sub.status === 'active' || sub.status === 'trialing')) paying.add(username)
+      if (!username) continue
+      everPaid.add(username)
+      if (sub.status === 'active' || sub.status === 'trialing') paying.add(username)
     }
-    if (!batch.has_more || batch.data.length === 0) break
+    if (!batch.has_more || batch.data.length === 0) {
+      complete = true
+      break
+    }
     startingAfter = batch.data[batch.data.length - 1].id
   }
-  return paying
+  return { paying, everPaid, complete }
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -342,7 +399,7 @@ async function webhook(env: Env, req: Request): Promise<Response> {
   return new Response('ok')
 }
 
-// ── The sweep: lock unpaid accounts past the trial ───────────────────────────
+// ── The sweep: lock unpaid accounts, then delete never-paid ones ─────────────
 
 /** A knob that must survive a missing/garbled var without locking everyone early. */
 function days(raw: string | undefined, fallback: number): number {
@@ -350,39 +407,70 @@ function days(raw: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback
 }
 
-async function sweep(
-  env: Env,
-  overrideTrialDays?: number,
-  overrideGraceDays?: number,
-): Promise<string> {
+interface SweepOverrides {
+  trialDays?: number
+  graceDays?: number
+  deleteAfterDays?: number
+  deleteMode?: string
+}
+
+async function sweep(env: Env, o: SweepOverrides = {}): Promise<string> {
   const exempt = new Set(
     env.EXEMPT_USERNAMES.split(',').map((u) => u.trim()).filter(Boolean),
   )
-  const trialDays = overrideTrialDays ?? days(env.TRIAL_DAYS, 14)
-  const graceDays = overrideGraceDays ?? days(env.GRACE_DAYS, 0)
+  const trialDays = o.trialDays ?? days(env.TRIAL_DAYS, 14)
+  const graceDays = o.graceDays ?? days(env.GRACE_DAYS, 0)
   // Grace buys back the ambiguity at the boundary: a card that failed once and
   // retries, a renewal in flight, a timezone's worth of drift on `created_at`.
-  const deadlineMs = (trialDays + graceDays) * 86_400_000
+  const lockAfterMs = (trialDays + graceDays) * 86_400_000
+  // 0 = deletion disabled. Deliberately NOT defaulted to something non-zero:
+  // an unset or garbled var must never start deleting accounts.
+  const deleteAfterDays = o.deleteAfterDays ?? days(env.DELETE_AFTER_DAYS, 0)
+  const applyDeletes = (o.deleteMode ?? env.DELETE_MODE) === 'apply'
+  const deleteAfterMs = (trialDays + graceDays + deleteAfterDays) * 86_400_000
+
   const tok = await masAdminToken(env)
   const users = await masListUsers(env, tok)
 
-  const done = (locked: number) =>
-    `sweep complete: ${users.length} users, ${locked} locked ` +
-    `(trial ${trialDays}d + grace ${graceDays}d)`
+  const summary = (locked: number, deleted: number, wouldDelete: number) => {
+    const del = !deleteAfterDays
+      ? 'deletion off'
+      : applyDeletes
+        ? `${deleted} deleted after ${deleteAfterDays}d`
+        : `${wouldDelete} deletable after ${deleteAfterDays}d (report only)`
+    return (
+      `sweep complete: ${users.length} users, ${locked} locked ` +
+      `(trial ${trialDays}d + grace ${graceDays}d), ${del}`
+    )
+  }
 
   const overdue = users.filter((u) => {
     const a = u.attributes
     if (a.admin || a.locked_at || exempt.has(a.username)) return false
-    return Date.now() - Date.parse(a.created_at) >= deadlineMs
+    return Date.now() - Date.parse(a.created_at) >= lockAfterMs
   })
-  if (overdue.length === 0) return done(0)
 
-  // Read who is paying LAST — after the MAS token mint and the (paginated)
-  // user listing, immediately before any lock. Those round-trips are the window
-  // in which a payment can land, and locking a paying customer is the expensive
-  // mistake here. Anything that still slips through self-heals: the
+  // Candidates for deletion: locked, long past the deadline, still around.
+  // `everPaid` is checked below — that needs Stripe.
+  const deletable =
+    deleteAfterDays > 0
+      ? users.filter((u) => {
+          const a = u.attributes
+          if (a.admin || exempt.has(a.username)) return false
+          if (!a.locked_at || a.deactivated_at) return false
+          return Date.now() - Date.parse(a.created_at) >= deleteAfterMs
+        })
+      : []
+
+  if (overdue.length === 0 && deletable.length === 0) return summary(0, 0, 0)
+
+  // Read Stripe LAST — after the MAS token mint and the (paginated) user
+  // listing, immediately before any lock or delete. Those round-trips are the
+  // window in which a payment can land, and locking a paying customer is the
+  // expensive mistake here. Anything that still slips through self-heals: the
   // subscription webhook and /success both unlock within seconds.
-  const paying = await payingUsernames(env)
+  const { paying, everPaid, complete } = await subscriptionIndex(env)
+
   let locked = 0
   for (const u of overdue) {
     if (paying.has(u.attributes.username)) continue
@@ -390,7 +478,34 @@ async function sweep(
     console.log(`sweep: locked '${u.attributes.username}' (trial expired, no subscription)`)
     locked++
   }
-  return done(locked)
+
+  // Deletion is the ONE exception to lock-never-deactivate (ADR 0002), and it
+  // only applies to accounts that NEVER paid — `everPaid`, not `paying`. A
+  // lapsed customer stays locked forever: they have data they paid for, and
+  // paying again must bring it all back.
+  let deleted = 0
+  let wouldDelete = 0
+  if (deletable.length > 0 && !complete) {
+    // Fail closed. A truncated index makes a real customer look like they never
+    // paid, and the erase that follows cannot be undone. Locking already
+    // happened above and is safe — it self-heals via the webhook.
+    console.error('sweep: subscription index incomplete — skipping deletion this run')
+    return summary(locked, 0, 0)
+  }
+  for (const u of deletable) {
+    const name = u.attributes.username
+    if (everPaid.has(name)) continue
+    if (!applyDeletes) {
+      console.log(`sweep: WOULD DELETE '${name}' (never paid, locked, past ${deleteAfterDays}d)`)
+      wouldDelete++
+      continue
+    }
+    await masDeactivateById(env, tok, u.id)
+    console.log(`sweep: DELETED '${name}' (never paid, locked, past ${deleteAfterDays}d)`)
+    deleted++
+  }
+
+  return summary(locked, deleted, wouldDelete)
 }
 
 // ── The post-payment page ────────────────────────────────────────────────────
@@ -444,16 +559,22 @@ export default {
         const auth = req.headers.get('authorization') ?? ''
         if (auth !== `Bearer ${env.MAS_BILLING_CLIENT_SECRET}`)
           return new Response('Forbidden', { status: 403 })
-        // ?trial_days= / ?grace_days= let operations/validation simulate the
-        // deadline without waiting out a real trial.
-        const trial = url.searchParams.get('trial_days')
-        const grace = url.searchParams.get('grace_days')
+        // ?trial_days= / ?grace_days= / ?delete_after_days= let operations and
+        // validation simulate the deadlines without waiting out a real trial.
+        // ?delete_mode=apply is required to actually delete from here, even if
+        // the deployed DELETE_MODE already says apply — a manual sweep defaults
+        // to reporting.
+        const num = (k: string) => {
+          const raw = url.searchParams.get(k)
+          return raw === null ? undefined : parseInt(raw, 10)
+        }
         return new Response(
-          await sweep(
-            env,
-            trial ? parseInt(trial, 10) : undefined,
-            grace ? parseInt(grace, 10) : undefined,
-          ),
+          await sweep(env, {
+            trialDays: num('trial_days'),
+            graceDays: num('grace_days'),
+            deleteAfterDays: num('delete_after_days'),
+            deleteMode: url.searchParams.get('delete_mode') ?? 'report',
+          }),
         )
       }
       if (url.pathname === '/') return Response.redirect(`${env.SITE_URL}/#fares`, 302)
