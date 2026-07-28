@@ -563,5 +563,7 @@ describe('recovery bootstrap (first device)', () => {
       await getState().retryRecoverySetup()
     })
     expect(getState().recoveryPrompt).toEqual({ kind: 'save', recoveryKey: 'KEY-IJKL' })
-  })
+    // Generous: this test deliberately drives 7s of retry backoff, and real
+    // WebCrypto now runs on the same path (issue 8509dc68).
+  }, 30_000)
 })

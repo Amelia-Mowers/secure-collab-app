@@ -11,7 +11,18 @@ import {
 import { sharedWorkerEnabled } from '../worker/flag'
 import { connectWorker } from '../worker/client'
 import { openWorkerSession } from '../worker/workerSession'
-import { deriveAtRestKeys, encryptString, decryptString, type AtRestKeys } from '../lib/atRestCrypto'
+import {
+  deriveAtRestKeys,
+  encryptString,
+  decryptString,
+  generateDataKey,
+  deriveStorePassphraseFromDataKey,
+  deriveAtRestKeysFromDataKey,
+  wrapDataKey,
+  unwrapDataKey,
+  type AtRestKeys,
+} from '../lib/atRestCrypto'
+import { getOrCreateDeviceKey, getDeviceKey, clearDeviceKey } from '../lib/deviceKey'
 import { setSnapshotKey, getSnapshotKey } from '../lib/atRestSession'
 import {
   addPasskeyWrap,
@@ -182,6 +193,21 @@ export interface AccountSession {
   username: string
   /** Format version. Absent = legacy v1 (plaintext `matrixSessionData`). */
   v?: 2
+  /**
+   * The at-rest DATA key, sealed two ways (issue 8509dc68). Everything at rest —
+   * the SDK store, this session blob, the workspace snapshot — is keyed by the
+   * data key; these are the two ways to get it back.
+   *
+   * `deviceKeyWrap` is under this browser's non-extractable device key, so a
+   * page load opens the store with NO user interaction. That is what makes at-rest
+   * usable: the alternative is typing a recovery key on every refresh.
+   *
+   * `dataKeyWrap` is under the master secret, so a NEW device (or this one after
+   * its device key is gone) can still get in. Losing the browser profile is then
+   * recoverable rather than fatal.
+   */
+  deviceKeyWrap?: string
+  dataKeyWrap?: string
   /** v2: which unlock method the account uses (drives the unlock gate UI). */
   custody?: 'passkey' | 'manual'
   /** The user has confirmed they saved their master key. Legacy passkey-custody
@@ -507,6 +533,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Credentials held in memory through sign-in/up so we can re-key the device to
   // an ENCRYPTED store once the master secret exists (register bootstrap / unlock).
   const pendingRekeyRef = useRef<{ homeserver: string; user: string; password: string } | null>(null)
+  // The account data key for this session (issue 8509dc68). Minted at
+  // registration so the SDK store is encrypted from the first login; persisted
+  // only as the two wraps above, never in the clear.
+  const dataKeyRef = useRef<string | null>(null)
   // Forward reference to rekeyToEncryptedStore (defined later) so the recovery
   // callbacks above it can call it without a TDZ / dependency cycle.
   const rekeyRef = useRef<((secret: string) => Promise<void>) | null>(null)
@@ -748,6 +778,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistPasskeyWrap(JSON.stringify(record))
   }, [persistPasskeyWrap])
 
+  /**
+   * Persist both ways back to this session's data key (issue 8509dc68):
+   * `deviceKeyWrap` under this browser's non-extractable device key, and
+   * `dataKeyWrap` under the master secret.
+   *
+   * Both matter, for different failures. Without the DEVICE wrap every page load
+   * would prompt for the master secret, which is what made at-rest unusable.
+   * Without the MASTER wrap, losing this browser profile would be unrecoverable —
+   * the device key cannot be backed up by design.
+   *
+   * Idempotent and safe whenever a master secret becomes known: at setup, after a
+   * typed-key unlock, or after a rotation. With no data key in memory (a legacy
+   * account on the old scheme) it does nothing, so callers never have to know
+   * which scheme an account uses.
+   */
+  const sealDataKey = useCallback(async (masterSecret: string) => {
+    const dataKey = dataKeyRef.current
+    if (!dataKey || !masterSecret) return
+    try {
+      const deviceKey = await getOrCreateDeviceKey()
+      const [dataKeyWrap, deviceKeyWrap, keys] = await Promise.all([
+        wrapDataKey(masterSecret, dataKey),
+        encryptString(deviceKey, dataKey),
+        deriveAtRestKeysFromDataKey(dataKey),
+      ])
+      atRestKeysRef.current = keys
+      setSnapshotKey(keys.snapshotKey)
+      const uid: string | undefined = matrixSessionRef.current?.userId?.()
+      if (!uid) return
+      // Re-encrypt the session blob under the data-key token key in the same pass.
+      // Writing the wraps without it would leave a v2 entry whose `secrets` were
+      // sealed under a different key — openable by nothing.
+      const blob: string | undefined = matrixSessionRef.current?.sessionData?.()
+      const secrets = blob ? await encryptString(keys.tokenKey, blob) : undefined
+      setAccounts(prev => {
+        const updated = prev.map(a =>
+          a.userId === uid
+            ? {
+                ...a,
+                v: 2 as const,
+                custody: custodyRef.current,
+                dataKeyWrap,
+                deviceKeyWrap,
+                ...(secrets ? { secrets, matrixSessionData: undefined } : {}),
+              }
+            : a,
+        )
+        saveAccounts(updated)
+        return updated
+      })
+    } catch (e) {
+      // Best-effort: a failure leaves the account v1 (plaintext at rest) rather
+      // than unopenable. Loud, because it is otherwise a silent downgrade.
+      console.error('[auth] could not seal the data key; staying unencrypted at rest:', e)
+    }
+  }, [])
+
   /** Record that this account's key has been saved, so neither the legacy
    *  migration nor the save step nags again. Defined before its consumers: a
    *  `useCallback` named in a dependency array is evaluated at render, so a
@@ -767,9 +854,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const confirmKeySaved = useCallback(
     async (recoveryKey: string) => {
       markKeySaved()
+      // Seal the data key now that a master secret exists. This REPLACES the old
+      // rekeyToEncryptedStore re-login: the store is already encrypted (opened
+      // with a data-key-derived passphrase at login), so all that is missing is a
+      // record of how to get the data key back. (issue 8509dc68)
+      await sealDataKey(recoveryKey)
       offerPasskeySpeedup(recoveryKey)
     },
-    [offerPasskeySpeedup, markKeySaved],
+    [offerPasskeySpeedup, markKeySaved, sealDataKey],
   )
 
   /**
@@ -881,18 +973,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // future devices need no typed key. Declining proceeds into the app. The
     // passkey-unlock path never reaches here as a legacy account (it's gated on
     // enrollment), so this only fires after a master-key restore.
-    // New-device sign-in (creds held): re-key to an encrypted store now that we
-    // hold the master secret. Cold-start unlock leaves pendingRekey unset (no-op).
-    if (pendingRekeyRef.current) {
-      await rekeyRef.current?.(key)
-    }
+    // New-device sign-in: the store is ALREADY encrypted, so all that is missing
+    // is a record of how to recover its data key — without this the device could
+    // never open its own store again. (issue 8509dc68)
+    await sealDataKey(key)
     if (passkeyAvailableRef.current && !passkeyEnrolledRef.current) {
       // Additive, not a rotation: wrap the key they just typed.
       setRecoveryPrompt({ kind: 'speedup', recoveryKey: key })
     } else {
       setRecoveryPrompt(null)
     }
-  }, [])
+  }, [sealDataKey])
 
   /** `verify` prompt: unlock with the account's passkey — derive its PRF secret
    *  and feed it to the same recover path (`recoverWithKey` accepts a
@@ -917,10 +1008,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *  opens the ENCRYPTED SDK store, restores, then unlocks secret storage with
    *  the same secret. A wrong secret fails at AES-GCM decryption (before we
    *  touch the SDK), so the gate can surface an error and re-prompt. */
+  /**
+   * Restore an at-rest account using THIS BROWSER'S device key — the no-prompt
+   * path (issue 8509dc68). Resolves true when it worked.
+   *
+   * No `recoverWithKey` here, and that is the point rather than an omission: the
+   * SDK store we are opening already holds this device's cross-signing and room
+   * keys from when it was last used. Secret storage only needs to be re-opened on
+   * a device that has never had them. So the master secret is not required to read
+   * your own screen — only to get a NEW device in.
+   *
+   * Returns false rather than throwing on any failure, so the caller falls back to
+   * the unlock prompt. A device key that cannot open this wrap is an ordinary
+   * situation — a cleared profile, a different browser, a re-keyed account — and
+   * must not become an error the user has to interpret.
+   */
+  const restoreWithDeviceKey = useCallback(
+    async (account: AccountSession): Promise<boolean> => {
+      if (!account.deviceKeyWrap || !account.secrets) return false
+      try {
+        const deviceKey = await getDeviceKey()
+        if (!deviceKey) return false
+        const dataKey = await decryptString(deviceKey, account.deviceKeyWrap)
+        const keys = await deriveAtRestKeysFromDataKey(dataKey)
+        const blob = await decryptString(keys.tokenKey, account.secrets)
+
+        dataKeyRef.current = dataKey
+        atRestKeysRef.current = keys
+        setSnapshotKey(keys.snapshotKey)
+
+        const ms = await restoreSession(
+          { ...account, matrixSessionData: blob },
+          keys.storePassphrase,
+        )
+        matrixSessionRef.current = ms
+        setMatrixSession(ms)
+        setLoading(false)
+        console.log('[auth] restored from this device’s key — no unlock needed')
+
+        try {
+          const entries = parseWorkspaceRooms(await ms.listRooms())
+          if (entries.length > 0) {
+            setWorkspaces(entries)
+            saveWorkspaces(account.userId, entries)
+          }
+        } catch (e) {
+          console.warn('[auth] listRooms after device-key restore failed:', e)
+        }
+        return true
+      } catch (e) {
+        console.warn('[auth] device-key restore failed; falling back to unlock:', e)
+        return false
+      }
+    },
+    [restoreSession],
+  )
+
   const unlockAndRestore = useCallback(async (secret: string) => {
     const account = pendingUnlockRef.current
     if (!account?.secrets) throw new Error('No encrypted session awaiting unlock')
-    const keys = await deriveAtRestKeys(secret)
+    // Which at-rest scheme? A `dataKeyWrap` means the envelope: the secret opens
+    // the wrap and the DATA key inside is what everything at rest is keyed by.
+    // Without one it is a legacy account whose store passphrase came straight
+    // from the master secret — still supported, since migrating it would need
+    // the very re-login the envelope exists to avoid. (issue 8509dc68)
+    let keys: AtRestKeys
+    if (account.dataKeyWrap) {
+      const dataKey = await unwrapDataKey(secret, account.dataKeyWrap) // throws on a wrong secret
+      dataKeyRef.current = dataKey
+      keys = await deriveAtRestKeysFromDataKey(dataKey)
+    } else {
+      keys = await deriveAtRestKeys(secret)
+    }
     const blob = await decryptString(keys.tokenKey, account.secrets) // throws on wrong secret
     atRestKeysRef.current = keys
     setSnapshotKey(keys.snapshotKey) // publish for useWorkspace snapshot encryption
@@ -1196,16 +1355,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const accs = loadAccounts()
     const activeId = loadActiveAccountId(accs)
     const account = accs.find(a => a.userId === activeId)
-    // v2 (at-rest): the encrypted SDK store can't be opened without the master
-    // secret, so gate restore behind the unlock prompt — the gesture
-    // (unlockSessionWithPasskey / submitUnlockKey → unlockAndRestore) finishes it.
+    // v2 (at-rest): the encrypted SDK store cannot be opened without the data
+    // key. There are two ways to get it, and the ORDER is the entire UX of this
+    // feature (issue 8509dc68).
     if (account?.v === 2 && account.secrets) {
-      console.log('[auth] Encrypted session — prompting to unlock before restore')
-      pendingUnlockRef.current = account
-      setRecoveryPrompt({ kind: 'unlock', custody: account.custody })
-      setLoading(false)
+      // Async because step 1 reads IndexedDB. Self-invoking rather than making
+      // the whole effect async, so the non-v2 path below stays synchronous.
+      void (async () => {
+        // 1. THIS BROWSER'S DEVICE KEY — no prompt at all. A non-extractable
+        //    CryptoKey in IndexedDB, so the key material is not in the value on
+        //    disk and script can never export it (proved in
+        //    e2e/device-key.spec.ts). Encryption at rest should not cost a
+        //    recovery key on every refresh.
+        if (account.deviceKeyWrap && (await restoreWithDeviceKey(account))) return
+        // 2. Otherwise ask. A new device, or this one after its device key was
+        //    cleared by sign-out — the master secret is what gets in from cold.
+        console.log('[auth] Encrypted session — prompting to unlock before restore')
+        pendingUnlockRef.current = account
+        setRecoveryPrompt({ kind: 'unlock', custody: account.custody })
+        setLoading(false)
+      })()
       return
     }
+
     console.log('[auth] Auto-restore: activeId =', activeId, ', account found =', !!account?.matrixSessionData)
     if (!account?.matrixSessionData) {
       console.log('[auth] No session data to restore, skipping')
@@ -1394,9 +1566,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null)
 
       try {
-        // Hold creds so we can re-key to an encrypted store after unlock.
-        pendingRekeyRef.current = { homeserver, user, password }
-        const ms = await buildSession('login', [homeserver, user, password])
+        // As in signUp: encrypted store from the first login (issue 8509dc68).
+        const dataKey = generateDataKey()
+        dataKeyRef.current = dataKey
+        const ms = await buildSession('login', [
+          homeserver,
+          user,
+          password,
+          await deriveStorePassphraseFromDataKey(dataKey),
+        ])
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
       } catch (err: any) {
@@ -1466,9 +1644,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null)
 
       try {
-        // Hold creds so we can re-key to an encrypted store once recovery boots.
-        pendingRekeyRef.current = { homeserver, user, password }
-        const ms = await buildSession('register', [homeserver, user, password])
+        // Encrypted store from the FIRST login (issue 8509dc68): the data key is
+        // random and independent of any master secret, so it exists before a
+        // recovery key does. This is what retires rekeyToEncryptedStore.
+        const dataKey = generateDataKey()
+        dataKeyRef.current = dataKey
+        const ms = await buildSession('register', [
+          homeserver,
+          user,
+          password,
+          await deriveStorePassphraseFromDataKey(dataKey),
+        ])
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)
       } catch (err: any) {
@@ -1513,7 +1699,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Reset at-rest session state so the next account doesn't inherit keys/custody.
     atRestKeysRef.current = null
     custodyRef.current = 'manual'
+    dataKeyRef.current = null
     setSnapshotKey(null)
+    // Forget this browser's device key. Leaving it would let whoever uses this
+    // browser next open any ciphertext that survived sign-out. The master-secret
+    // wrap is what makes the account recoverable afterwards. (issue 8509dc68)
+    void clearDeviceKey()
     // Dismiss any blocking gate (verify / at-rest unlock / active verification) so
     // signing out from the device-security screen always returns to sign-in instead
     // of leaving the overlay stuck. The auto-restore effect is one-shot, so it won't
