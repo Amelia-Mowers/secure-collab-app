@@ -99,6 +99,105 @@ export async function decryptString(key: CryptoKey, blob: string): Promise<strin
   return dec.decode(pt)
 }
 
+// ── Data key (envelope) — issue 8509dc68 ────────────────────────────────────
+//
+// The problem with deriving the store passphrase straight from the master
+// secret: a matrix-rust-sdk IndexedDB store's passphrase cannot be changed in
+// place. So "encrypt the store" and "rotate the master secret" both mean
+// building a NEW store, which means logging in again as a fresh device. That is
+// why at-rest encryption only ever covered accounts that enrolled a passkey —
+// the re-key had somewhere convenient to hide — and why putting it on the
+// first-device path added a full re-login to every registration.
+//
+// The envelope removes the coupling. A random DATA KEY is generated once, at
+// registration, and everything at rest is derived from IT:
+//
+//     dataKey                      random, per account, never changes
+//     storePassphrase = HKDF(dataKey)   ← what opens the SDK store
+//     tokenKey        = HKDF(dataKey)
+//     snapshotKey     = HKDF(dataKey)
+//     dataKeyWrap     = AES-GCM(HKDF(masterSecret), dataKey)   ← the envelope
+//
+// Two consequences, both of which the old shape could not give:
+//
+//  1. THE STORE CAN BE ENCRYPTED FROM THE FIRST LOGIN. The data key does not
+//     depend on the master secret, so it exists before any recovery key does.
+//  2. ROTATING THE MASTER SECRET IS JUST RE-WRAPPING. The store, the session
+//     blob and the snapshot are all keyed by the data key, which is unchanged —
+//     so no new store, and no re-login, ever.
+//
+// A DISTINCT HKDF SALT keeps this from colliding with the legacy master-secret
+// derivation. Accounts written before this exist and must keep working: they have
+// no `dataKeyWrap`, and for them the old `deriveAtRestKeys(masterSecret)` is
+// still correct. Nothing is migrated eagerly — see the fallback at the call site.
+
+/** Salt for keys derived from the DATA key. Distinct from HKDF_SALT so the two
+ *  schemes can never produce the same material for the same input. */
+const DK_SALT = 'io.tidework.atrest.datakey.v1'
+/** Salt for the key that WRAPS the data key, derived from the master secret. */
+const WRAP_SALT = 'io.tidework.atrest.wrap.v1'
+const WRAP_INFO = 'data-key-wrap'
+
+/** A fresh random data key (base64url). Generated once per account, at
+ *  registration, and never rotated — rotating the MASTER secret only re-wraps
+ *  it, which is the whole point. */
+export function generateDataKey(): string {
+  return b64urlEncode(globalThis.crypto.getRandomValues(new Uint8Array(32)).buffer)
+}
+
+async function hkdfBitsWithSalt(
+  ikmString: string,
+  salt: string,
+  info: string,
+  bytes: number,
+): Promise<ArrayBuffer> {
+  const ikm = await subtle().importKey('raw', enc.encode(ikmString), 'HKDF', false, ['deriveBits'])
+  return subtle().deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: enc.encode(salt), info: enc.encode(info) },
+    ikm,
+    bytes * 8,
+  )
+}
+
+/** At-rest keys derived from the DATA key — the scheme new accounts use. */
+export async function deriveAtRestKeysFromDataKey(dataKey: string): Promise<AtRestKeys> {
+  if (!dataKey) throw new Error('deriveAtRestKeysFromDataKey: empty data key')
+  const [passBits, tokenBits, snapshotBits] = await Promise.all([
+    hkdfBitsWithSalt(dataKey, DK_SALT, INFO.storePassphrase, 32),
+    hkdfBitsWithSalt(dataKey, DK_SALT, INFO.tokenKey, 32),
+    hkdfBitsWithSalt(dataKey, DK_SALT, INFO.snapshotKey, 32),
+  ])
+  const [tokenKey, snapshotKey] = await Promise.all([
+    subtle().importKey('raw', tokenBits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']),
+    subtle().importKey('raw', snapshotBits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']),
+  ])
+  return { storePassphrase: b64urlEncode(passBits), tokenKey, snapshotKey }
+}
+
+/** Just the store passphrase from a data key — needed at login, before the rest
+ *  of the keys matter. */
+export async function deriveStorePassphraseFromDataKey(dataKey: string): Promise<string> {
+  return b64urlEncode(await hkdfBitsWithSalt(dataKey, DK_SALT, INFO.storePassphrase, 32))
+}
+
+async function wrapKeyFor(masterSecret: string): Promise<CryptoKey> {
+  if (!masterSecret) throw new Error('data-key wrap: empty master secret')
+  const bits = await hkdfBitsWithSalt(masterSecret, WRAP_SALT, WRAP_INFO, 32)
+  return subtle().importKey('raw', bits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+}
+
+/** Seal the data key under the master secret. The result is what gets persisted;
+ *  the data key itself is never written anywhere. */
+export async function wrapDataKey(masterSecret: string, dataKey: string): Promise<string> {
+  return encryptString(await wrapKeyFor(masterSecret), dataKey)
+}
+
+/** Recover the data key. Throws on a wrong secret (AES-GCM authenticates), which
+ *  is what lets the unlock gate tell a bad key from a broken one. */
+export async function unwrapDataKey(masterSecret: string, wrapped: string): Promise<string> {
+  return decryptString(await wrapKeyFor(masterSecret), wrapped)
+}
+
 // ── base64url (no padding) ──────────────────────────────────────────────────
 function b64urlEncode(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf)
