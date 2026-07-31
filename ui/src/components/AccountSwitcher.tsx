@@ -2,8 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import type { AccountSession } from '@/hooks/useAuth'
-import { RecoveryKeyModal } from './RecoveryKeyModal'
-import { ManageSubscriptionButton } from './ManageSubscriptionButton'
+import { AccountSettingsModal } from './AccountSettingsModal'
 import './AccountSwitcher.css'
 
 interface AccountSwitcherProps {
@@ -23,7 +22,6 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
     accounts,
     activeAccountId,
     username,
-    matrixSession,
     switchAccount,
     removeAccount,
     signOut,
@@ -31,7 +29,7 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [switching, setSwitching] = useState(false)
-  const [showRecoveryKey, setShowRecoveryKey] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Close on outside click
@@ -96,29 +94,6 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
   const handleAddAccount = () => {
     setOpen(false)
     navigate('/signin?addAccount=1')
-  }
-
-  // Edit the account's global Matrix display name (issue 1c8b3855). Only
-  // offered where a Matrix client exists — the at-rest unlock gate has none,
-  // but this menu only renders signed-in, so checking matrixSession suffices.
-  const [nameError, setNameError] = useState<string | null>(null)
-  const handleEditDisplayName = async () => {
-    if (!matrixSession) return
-    setNameError(null)
-    let current = ''
-    try {
-      current = await matrixSession.getDisplayName()
-    } catch {
-      /* prefill is best-effort */
-    }
-    const next = window.prompt('Display name', current || username || '')
-    if (next === null) return // cancelled
-    try {
-      await matrixSession.setDisplayName(next)
-      setOpen(false)
-    } catch (err: any) {
-      setNameError(typeof err === 'string' ? err : err?.message ?? 'Could not update display name')
-    }
   }
 
   if (accounts.length === 0) return null
@@ -197,38 +172,21 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
             </div>
           ))}
           <div className="account-switcher__divider" />
-          {matrixSession && (
-            <button className="account-switcher__add" onClick={handleEditDisplayName}>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
-                <path d="M8.5 1.5l2 2L4 10l-2.6.6L2 8z" />
-              </svg>
-              Edit display name
-            </button>
-          )}
-          {nameError && <div className="account-switcher__billing-error" role="alert">{nameError}</div>}
+          {/* Profile, keys, billing and deletion all moved into Account
+              settings — this menu is for switching accounts. */}
           <button
             className="account-switcher__add"
             onClick={() => {
               setOpen(false)
-              setShowRecoveryKey(true)
+              setShowSettings(true)
             }}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
-              <circle cx="4.5" cy="4.5" r="2.5" />
-              <path d="M6.3 6.3 L10.5 10.5 M9 9 L10 8" />
+              <circle cx="6" cy="6" r="2" />
+              <path d="M6 1v1.5M6 9.5V11M1 6h1.5M9.5 6H11M2.5 2.5l1 1M8.5 8.5l1 1M9.5 2.5l-1 1M3.5 8.5l-1 1" />
             </svg>
-            Recovery key
+            Account settings
           </button>
-          <ManageSubscriptionButton
-            className="account-switcher__add"
-            errorClassName="account-switcher__billing-error"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
-              <rect x="1.5" y="3" width="9" height="6.5" rx="1" />
-              <path d="M1.5 5.2h9" />
-            </svg>
-            Manage subscription
-          </ManageSubscriptionButton>
           <button
             className="account-switcher__add"
             onClick={handleAddAccount}
@@ -242,7 +200,7 @@ export function AccountSwitcher({ direction = 'up' }: AccountSwitcherProps) {
         </div>
       )}
 
-      {showRecoveryKey && <RecoveryKeyModal onClose={() => setShowRecoveryKey(false)} />}
+      {showSettings && <AccountSettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   )
 }
