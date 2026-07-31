@@ -377,6 +377,7 @@ export const WORKSPACE_METHODS = new Set([
   'addColumn', 'updateColumn', 'deleteColumn', 'reorderColumns',
   'setColumnWidth',
   'updateCell', 'deleteRow', 'applyUpdate', 'importCsv', 'importWorkspaceZip',
+  'importWorkspaceArchive',
   'restorePendingUpdates',
   // membership / roles
   'inviteUser', 'listMembers', 'myRole', 'setUserRole', 'leaveWorkspace',
@@ -399,6 +400,7 @@ export const WORKSPACE_WRITE_METHODS = new Set([
   'createView', 'deleteView',
   'addColumn', 'updateColumn', 'deleteColumn', 'reorderColumns', 'setColumnWidth',
   'updateCell', 'deleteRow', 'applyUpdate', 'importCsv', 'importWorkspaceZip',
+  'importWorkspaceArchive',
   'restorePendingUpdates', 'rollbackTo', 'checkIntegrity',
 ])
 

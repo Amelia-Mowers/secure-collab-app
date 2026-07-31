@@ -100,6 +100,9 @@ export interface WorkspaceHandle {
   checkIntegrity?(): Promise<string>
 
   importWorkspaceZip?(bytes: Uint8Array): Promise<string> | string
+  /** Seed a workspace from a shipped template — a `path -> contents` map of
+   *  CSVs (ADR 0004), the uncompressed sibling of `importWorkspaceZip`. */
+  importWorkspaceArchive?(filesJson: string): Promise<string> | string
   previewCsvImport?(
     tableId: string,
     csv: string,
