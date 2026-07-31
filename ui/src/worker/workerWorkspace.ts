@@ -230,6 +230,8 @@ export function createWorkerWorkspace(
     importCsv: (tableId, tableName, csv, columnsJson) =>
       call('importCsv', tableId, tableName, csv, columnsJson) as Promise<string>,
     importWorkspaceZip: bytes => call('importWorkspaceZip', bytes) as Promise<string>,
+    importWorkspaceArchive: filesJson =>
+      call('importWorkspaceArchive', filesJson) as Promise<string>,
     restorePendingUpdates: json => {
       // Declared sync on the interface but only ever used for its side effect
       // (the count is logged). Fire it and report zero: with the worker owning

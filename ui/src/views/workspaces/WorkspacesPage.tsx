@@ -4,6 +4,9 @@ import { useAuth, InvitedRoom } from '@/hooks/useAuth'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { TrialBadge } from '@/components/TrialStatus'
 import { getWasmModule } from '@/wasm/loader'
+import { connectWorker } from '@/worker/client'
+import { createWorkerWorkspace } from '@/worker/workerWorkspace'
+import { getSnapshotKey } from '@/lib/atRestSession'
 import {
   loadWorkspaceTemplates,
   templateFiles,
@@ -43,10 +46,21 @@ export function WorkspacesPage() {
     }
   }, [])
 
-  /** Open a ConnectedWorkspace for a freshly created room. The room can 404
+  /** Open a workspace handle for a freshly created room. The room can 404
    *  until the SDK cache catches up — same retry shape as useTable's
-   *  initWorkspace. */
-  const connect = async (roomId: string) => {
+   *  initWorkspace.
+   *
+   *  Routed on the SESSION, exactly as useTable does. A worker-backed session
+   *  is not a wasm `MatrixSession`, so handing it to `ConnectedWorkspace.create`
+   *  failed wasm-bindgen's class check — "expected instance of T" once
+   *  minified. That broke seeding a workspace from a template or an archive
+   *  whenever the shared worker was on, which is the default. */
+  const connect = async (roomId: string): Promise<any> => {
+    if (matrixSession?.isWorkerSession) {
+      const worker = await connectWorker()
+      await worker.openWorkspace(matrixSession.userId(), roomId, getSnapshotKey() ?? undefined)
+      return createWorkerWorkspace(worker, roomId)
+    }
     const wasm = await getWasmModule()
     for (let attempt = 0; ; attempt++) {
       try {
