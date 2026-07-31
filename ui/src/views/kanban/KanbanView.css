@@ -286,3 +286,9 @@
   background: var(--bg, #fff);
   color: var(--text, #111);
 }
+
+/* The board already scrolls horizontally; just stop the padding eating a phone
+   screen's width. Columns keep their min-width so a card stays readable. */
+@media (max-width: 768px) {
+  .kanban-board-wrap { padding: 12px; }
+}

@@ -399,3 +399,51 @@
   font-size: 12px;
   color: var(--green, #22c55e);
 }
+
+/* ── Narrow screens: the sidebar becomes a drawer ────────────
+   Above 768px it is a column in the flex row. Below, it leaves the flow
+   entirely and slides over the content, so the grid gets the whole width. */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    /* Not full width: leaving a strip of content visible is what makes it read
+       as a panel over the page rather than a navigation screen. */
+    width: min(82vw, 300px);
+    min-width: 0;
+    height: 100%;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar--open {
+    transform: none;
+  }
+
+  /* The 48px rail is a desktop affordance — collapsing a drawer to a sliver
+     would leave a strip of icons pinned over the content. */
+  .sidebar--collapsed {
+    width: min(82vw, 300px);
+    min-width: 0;
+  }
+
+  /* A drawer that is off-screen must not be reachable by tab or read out. */
+  .sidebar:not(.sidebar--open) {
+    visibility: hidden;
+  }
+  .sidebar--open {
+    visibility: visible;
+  }
+}
+
+/* Someone who has asked for less motion should get the drawer without the
+   slide; it still opens and closes. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}

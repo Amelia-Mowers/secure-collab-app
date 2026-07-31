@@ -100,3 +100,24 @@
   border-color: var(--accent-hover);
   color: #fff;
 }
+
+/* ── Narrow screens ──────────────────────────────────────────
+   The action cluster (filter, sort, new view, add row…) does not fit beside a
+   title on a phone. Let it wrap onto its own line rather than squeeze the
+   title to nothing or overflow the bar. */
+@media (max-width: 768px) {
+  .toolbar {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    row-gap: 8px;
+  }
+
+  .toolbar__left {
+    /* Force the wrap: the actions go to line two instead of competing. */
+    flex-basis: 100%;
+  }
+
+  .toolbar__right {
+    flex-wrap: wrap;
+  }
+}

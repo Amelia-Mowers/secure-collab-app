@@ -38,6 +38,11 @@ interface SidebarProps {
   workspace: any
   workspaceId: string
   syncCount?: number
+  /** Narrow screens render the sidebar as an off-canvas drawer; this is whether
+   *  it is showing. Ignored above the breakpoint, where it is always in flow.
+   *  Closing is driven by the route changing, in the shell — the sidebar
+   *  navigates from eight places and none of them should have to remember. */
+  mobileOpen?: boolean
 }
 
 interface TableInfo {
@@ -386,7 +391,12 @@ function SortableTableItem({
   )
 }
 
-export function Sidebar({ workspace, workspaceId, syncCount }: SidebarProps) {
+export function Sidebar({
+  workspace,
+  workspaceId,
+  syncCount,
+  mobileOpen = false,
+}: SidebarProps) {
   const [tables, setTables] = useState<TableInfo[]>([])
   const [views, setViews] = useState<ViewInfo[]>([])
   const [isCreatingTable, setIsCreatingTable] = useState(false)
@@ -824,7 +834,11 @@ ${r.undecryptable} event(s) could not be decrypted — those are a key problem, 
   }
 
   return (
-    <aside className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''}`}>
+    <aside
+      className={`sidebar ${collapsed ? 'sidebar--collapsed' : ''} ${
+        mobileOpen ? 'sidebar--open' : ''
+      }`}
+    >
       {/* Workspace header / collapse toggle */}
       <div className="sidebar__workspace">
         <div className="sidebar__logo" onClick={() => setCollapsed(c => !c)} />

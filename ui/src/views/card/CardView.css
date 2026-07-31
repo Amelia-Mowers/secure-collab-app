@@ -139,3 +139,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The grid is auto-fill, so it already collapses to one column; this is only
+   the padding. */
+@media (max-width: 768px) {
+  .card-view__content { padding: 12px; }
+  /* 260px is wider than the content box on a 320px phone, which would push the
+     grid into a horizontal scroll. Let a card be as narrow as the column. */
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); }
+}

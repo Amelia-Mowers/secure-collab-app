@@ -156,3 +156,11 @@
   color: inherit;
   line-height: 1;
 }
+
+/* Reclaim the generous desktop padding — on a phone it is most of the width. */
+@media (max-width: 768px) {
+  .entry-view__main { padding: 18px 16px; }
+  .entry-view__toolbar { padding: 8px 12px; }
+  .entry-view__actions { padding: 12px 16px; }
+  .entry-view__title { font-size: 19px; }
+}

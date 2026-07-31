@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Routes, Route, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useWorkspace } from './hooks/useTable'
@@ -54,6 +54,17 @@ function WorkspaceShell() {
   const { matrixSession, resetApp } = useAuth()
   const location = useLocation()
   const decodedWorkspaceId = decodeURIComponent(workspaceId!)
+  // Narrow screens get the sidebar as an off-canvas drawer instead of a
+  // permanent 220px column. The state lives here rather than in Sidebar because
+  // the backdrop and the toggle are siblings of it, not children.
+  const [navOpen, setNavOpen] = useState(false)
+
+  // Close the drawer once the user has gone somewhere — otherwise it stays over
+  // the content they just asked for. Driven by the route rather than by each of
+  // the sidebar's navigation call sites.
+  useEffect(() => {
+    setNavOpen(false)
+  }, [location.pathname])
   const { workspace, loading, error, syncCount } = useWorkspace(decodedWorkspaceId, matrixSession)
 
   if (loading || (!workspace && !error)) {
@@ -89,8 +100,34 @@ function WorkspaceShell() {
   return (
     <div className="app">
       <ConnectionStatus workspace={workspace} />
-      <Sidebar workspace={workspace} workspaceId={decodedWorkspaceId} syncCount={syncCount} />
+      <Sidebar
+        workspace={workspace}
+        workspaceId={decodedWorkspaceId}
+        syncCount={syncCount}
+        mobileOpen={navOpen}
+      />
+      {/* Tapping outside the drawer closes it. Rendered only when open so it
+          never intercepts clicks on a wide screen. */}
+      {navOpen && (
+        <div className="app__nav-backdrop" onClick={() => setNavOpen(false)} aria-hidden="true" />
+      )}
       <div className="app-main">
+        {/* Mobile-only header. Lives in the shell so the hamburger does not have
+            to be threaded through every view's Toolbar. */}
+        <div className="app-mobile-bar">
+          <button
+            className="app-mobile-bar__menu"
+            onClick={() => setNavOpen(o => !o)}
+            aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+            aria-expanded={navOpen}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <line x1="2" y1="4" x2="14" y2="4" />
+              <line x1="2" y1="8" x2="14" y2="8" />
+              <line x1="2" y1="12" x2="14" y2="12" />
+            </svg>
+          </button>
+        </div>
         <ReadOnlyBanner workspace={workspace} syncCount={syncCount} />
         <SendFailureBanner workspace={workspace} workspaceId={decodedWorkspaceId} />
         <EncryptionWarningBanner workspace={workspace} syncCount={syncCount} />
