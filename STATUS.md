@@ -1,70 +1,91 @@
 # Project Status
 
-**As of:** 2026-06-11
-**Supersedes:** `BUILD_STATUS.md` and `docs/SESSION_SUMMARY.md` (both deleted —
-they described the 2026-03-09 scaffold and had drifted badly from reality).
+**As of:** 2026-07-31
 
-This is a point-in-time snapshot. The prioritized backlog is
-**[TODO.md](./TODO.md)**; design decisions are in **[docs/adr/](./docs/adr/)**;
-the structural review that drove the last quarter's work is
+A point-in-time snapshot. The prioritized backlog lives in the product itself (see
+[TODO.md](./TODO.md)); design decisions are in **[docs/adr/](./docs/adr/)**; the
+launch-readiness review is **[LAUNCH_AUDIT.md](./LAUNCH_AUDIT.md)**; the structural
+review behind the current architecture is
 **[ARCHITECTURE_REVIEW.md](./ARCHITECTURE_REVIEW.md)**.
 
 ## What works (implemented and test-verified)
 
 **Core data layer** (`crates/tables-over-matrix`, `crates/app-core`)
 
-- LWW cells/tables with a **hybrid logical clock** (advance-on-receive, seeded
-  from replay, `origin_server_ts` tiebreak) — convergence is property-tested
-  and verified across two real clients via Conduit (review §4.1).
-- **Order-based bumping** wired into the write path; cold start unified on one
-  order-independent engine (§4.3, §4.4).
-- "Everything is tables": schema (`_schema`), views (`_views`), and table
-  definitions (`_tables`) replay through the same `apply_update` path as user
-  data.
+- LWW cells/tables on a **hybrid logical clock** (advance-on-receive, seeded from
+  replay, `origin_server_ts` tiebreak) — convergence is property-tested and verified
+  across two real clients.
+- **Order-based bumping** in the write path; cold start unified on one
+  order-independent engine.
+- "Everything is tables": schema (`_schema`), views (`_views`), table definitions
+  (`_tables`) and history (`_history`) replay through the same `apply_update` path as
+  user data.
+- **CSV archive interchange** (ADR 0004): workspace export/import, shipped templates,
+  and single-table CSV, shared by the app and the CLI.
+- **Formula columns** parsed with the upstream Typst parser and evaluated at read
+  time, so a computed value never fights LWW.
 
 **Encryption & key management** (ADR 0001)
 
-- Rooms are encrypted at creation; sends are **fail-closed** into unencrypted
-  rooms; the UI badge reflects real room state.
-- Auto cross-signing + key backup, recovery-key flow, SAS device verification
-  with a no-bypass new-device gate, undecryptable-history detection + banner.
-- **Per-device persistent IndexedDB stores** (state + crypto), so sessions,
-  Megolm keys, and verification state survive reloads.
+- Rooms encrypted at creation; sends **fail closed** into unencrypted rooms.
+- Auto cross-signing + key backup, recovery-key flow, SAS device verification with a
+  no-bypass new-device gate, undecryptable-history detection + banner.
+- **Passkey/WebAuthn-PRF custody**: a passkey wraps the recovery key, so a biometric
+  tap unlocks keys on a new device; the recovery key remains break-glass.
+- **At-rest encryption of local stores**, with the data key wrapped twice — under a
+  non-extractable device key (so a reload never prompts) and under the master secret
+  (so a new device can recover).
+
+**Hosted service** (ADR 0002)
+
+- Synapse + MAS behind nginx on a managed droplet; OAuth/MAS sign-in, Google SSO.
+- Stripe subscriptions: 14-day trial, lock-on-lapse, unlock-on-payment, billing
+  portal for self-serve cancellation, and a sweep that locks past trial + grace.
+- Healthcheck timer with Resend alerting and MAS self-heal.
 
 **UI** (`ui/`)
 
-- Matrix auth (register/sign-in/multi-account/session restore), workspaces
-  page with invitations, sidebar, sharing.
-- Views: TanStack-virtualized table grid (typed cell registry, commit-on-blur
-  editors, header sort, global filter), entry view, kanban (drag-and-drop),
-  card view; view creation/switching persisted as `_views` data.
+- Auth (register/sign-in/multi-account/session restore), workspaces page with
+  invitations, sidebar, sharing, roles.
+- Views: virtualized table grid (typed cell registry, commit-on-blur editors, sort,
+  filters, multi-cell selection), entry view, kanban with drag-and-drop, card view;
+  views persisted as `_views` data.
+- A **SharedWorker client** so multiple tabs share one Matrix client and one send
+  queue.
 
-**Test pyramid** (counts as of this date)
+**CLI** (`crates/cli`) — password + OAuth/MAS login, workspace/table/row/column CRUD,
+saved-view reads, CSV import/export, against production.
 
-- Rust: ~120 unit/property tests + Conduit integration suites
-  (`scripts/run-integration-tests.sh` — two-client sync, encrypted
-  round-trips, cold start, backup/recovery, SAS).
-- UI: 242 vitest tests (behavior-focused, no snapshots).
-- E2E: two-browser Playwright harness against real WASM + live Conduit
-  (`ui/e2e/` — smoke, recovery, verification, core single-device journey
-  incl. reload persistence).
-- CI: fmt + clippy `-D warnings` + per-feature tests + WASM build + UI
-  typecheck/lint/test/build + Conduit integration + e2e + Pages deploy.
+## Test pyramid (counts as of this date)
+
+- **Rust:** 215 unit/property tests, plus Synapse integration suites
+  (`scripts/run-integration-tests.sh` — two-client sync, encrypted round-trips, cold
+  start, backup/recovery, SAS).
+- **UI:** 626 vitest tests, behaviour-focused, no snapshots.
+- **E2E:** 26 Playwright tests against real WASM + live Synapse — smoke, recovery,
+  verification, collaboration, multi-tab, at-rest, device key, workflows, reconnect,
+  templates, and the core single-device journey including reload persistence. A
+  second suite runs OAuth against Synapse + MAS.
+- **CI:** fmt + clippy `-D warnings` + tests + WASM build + UI typecheck/lint/test/
+  build + Synapse integration + both e2e suites + Pages/Worker deploy.
 
 ## Known gaps (the honest list)
 
-See TODO.md for the full prioritized backlog; the load-bearing items:
+[LAUNCH_AUDIT.md](./LAUNCH_AUDIT.md) has the full assessment. The load-bearing items:
 
-- **Legacy unencrypted rooms** (P0): the fail-closed guard makes them
-  read-only with no migrate path or UI explanation.
-- **At-rest encryption** (P1): the session blob (access token) and IndexedDB
-  stores are plaintext under same-origin protection only.
-- **E2E coverage**: collaboration (two users), workflows, and multi-tab
-  journeys are not yet covered by the browser harness.
-- **Optimistic ↔ LWW reconciliation** (FE): a rejected write can still
-  flash-then-revert.
+- **No Terms of Service, Privacy Policy, or support contact** — blockers for a public
+  paid launch, not engineering work.
+- **No account deletion** in the UI (the MAS capability exists; nothing exposes it).
+- **The app has no mobile layout** — two of twenty-one stylesheets carry a media
+  query, and neither is a core surface.
+- **Search is a non-functional placeholder** in the sidebar.
+- **No comments, attachments, notifications, per-action undo, or trash/restore** —
+  ordinary expectations of this product class.
+- **No demo route**, though ADR 0002 specifies one as the top of the funnel.
+- **Self-hosting works but is not a supported path**: the `infra/` configs are written
+  for our deployment, not parameterised.
 
 ## How to update this file
 
-Replace the snapshot wholesale and bump the date — don't append a changelog
-(git history is the changelog).
+Replace the snapshot wholesale and bump the date — don't append a changelog (git
+history is the changelog).
