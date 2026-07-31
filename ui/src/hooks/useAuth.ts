@@ -33,7 +33,7 @@ import {
   hasEnrolledPasskey,
   parseWrapRecord,
 } from '../lib/passkeyWrap'
-import { fetchPortalUrl } from '../lib/billing'
+import { fetchPortalUrl, requestAccountDeletion } from '../lib/billing'
 import { isSessionRejected } from '../lib/authErrors'
 
 /** How long a post-recovery `initialSync` may hold up the UI before it is
@@ -304,6 +304,11 @@ interface AuthState {
 
   /** Nuclear option: clear all stored data and reload the app. */
   resetApp: () => void
+
+  /** Delete this account permanently: cancels any subscription, then
+   *  deactivates and erases it server-side. Throws with a user-facing message
+   *  on failure, leaving the session intact so it can be retried. */
+  deleteAccount: () => Promise<void>
 
   /**
    * What a full account reset would have to deal with, per workspace (issue
@@ -1170,6 +1175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const url = await fetchPortalUrl(await ms.requestOpenIdToken())
     window.location.assign(url)
   }, [])
+
 
   // NOTE: the old `migrateToPasskey` lived here. It called
   // `resetRecoveryWithPassphrase`, which ROTATED secret storage onto the PRF
@@ -2092,6 +2098,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.replace('/signin')
   }, [])
 
+  /** Delete this account for good: the billing Worker cancels any subscription,
+   *  then deactivates and erases it. Irreversible.
+   *
+   *  Local state is cleared only AFTER the server confirms, so a failed attempt
+   *  leaves the user signed in and able to retry rather than stranded in a
+   *  half-deleted app.
+   *
+   *  `resetApp` clears the account pool and every `collab:` key, then reloads.
+   *  It does NOT drop this device's IndexedDB store — that is issue f6901da6,
+   *  and it applies here too: the leftover store is encrypted at rest and its
+   *  account no longer exists, but on a shared machine it should still go. */
+  const deleteAccount = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms || typeof ms.requestOpenIdToken !== 'function') {
+      throw new Error('Please sign in again to delete your account.')
+    }
+    await requestAccountDeletion(await ms.requestOpenIdToken())
+    resetApp()
+  }, [resetApp])
+
   const value: AuthState = {
     username,
     userId,
@@ -2119,6 +2145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     switchAccount,
     removeAccount,
     resetApp,
+    deleteAccount,
     listResettableWorkspaces,
     resetAccount,
     recoveryPrompt,

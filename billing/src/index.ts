@@ -7,6 +7,8 @@
  *   GET  /success              → confirmation page (no tokens — the account
  *                                already exists; payment just unlocks/keeps it)
  *   GET  /status?username=     → coarse {status, days_left} for the app badge
+ *   POST /portal               → Stripe billing portal (manage / CANCEL)
+ *   POST /delete-account       → cancel billing, then deactivate + erase
  *   POST /webhook              → lock on lapse/unpaid, unlock on active
  *   cron (and guarded /__sweep)→ lock unpaid accounts past the trial + grace
  *
@@ -309,14 +311,26 @@ const corsHeaders = (env: Env) => ({
  * this exposes PII and cancellation. Account-level, so it works while the app's
  * E2E is locked (the whole point: a locked-out user must still be able to cancel).
  */
-async function portal(env: Env, req: Request): Promise<Response> {
-  const cors = corsHeaders(env)
-  const json = (status: number, obj: unknown) =>
-    new Response(JSON.stringify(obj), {
-      status,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    })
+/** JSON responder bound to this Worker's CORS headers. */
+const jsonWith = (env: Env) => (status: number, obj: unknown) =>
+  new Response(JSON.stringify(obj), {
+    status,
+    headers: { ...corsHeaders(env), 'Content-Type': 'application/json' },
+  })
 
+/**
+ * Establish WHO is calling, from a Matrix OpenID token.
+ *
+ * The token is minted by the user's own client and verified against the
+ * homeserver's federation userinfo endpoint, so it proves identity without the
+ * caller ever handing us an access token — and it keeps working while the app's
+ * E2E is locked, which is the point: a locked-out user must still be able to
+ * cancel or delete.
+ *
+ * Returns the localpart, or a Response to return as-is.
+ */
+async function authenticate(env: Env, req: Request): Promise<string | Response> {
+  const json = jsonWith(env)
   let body: { access_token?: string; matrix_server_name?: string }
   try {
     body = (await req.json()) as typeof body
@@ -328,7 +342,6 @@ async function portal(env: Env, req: Request): Promise<Response> {
     return json(401, { error: 'invalid_token' })
   }
 
-  // Verify the OpenID token with the (pinned) homeserver → the real user id.
   const info = await fetch(
     `${env.HOMESERVER_URL}/_matrix/federation/v1/openid/userinfo?access_token=${encodeURIComponent(body.access_token)}`,
   )
@@ -336,6 +349,14 @@ async function portal(env: Env, req: Request): Promise<Response> {
   const sub = ((await info.json()) as { sub?: string }).sub
   const username = sub?.replace(/^@/, '').split(':')[0]
   if (!username) return json(401, { error: 'verification_failed' })
+  return username
+}
+
+async function portal(env: Env, req: Request): Promise<Response> {
+  const json = jsonWith(env)
+  const who = await authenticate(env, req)
+  if (typeof who !== 'string') return who
+  const username = who
 
   // Find the Stripe customer behind this user's subscription (any status, so a
   // lapsed/cancelled one can still be managed).
@@ -353,6 +374,67 @@ async function portal(env: Env, req: Request): Promise<Response> {
     return_url: env.APP_URL,
   })
   return json(200, { url: session.url })
+}
+
+/**
+ * Delete the caller's own account: cancel billing, then deactivate + erase.
+ *
+ * This lives in the Worker rather than the app because **both halves have to
+ * happen together**. Deactivating the MAS account from the client would leave a
+ * live Stripe subscription billing a user who no longer has an account — the
+ * app has no Stripe credentials to cancel with, and the sweep would never
+ * notice, because the sweep only ever locks.
+ *
+ * Order matters: cancel first. A failed cancel aborts before anything
+ * irreversible happens; a failed deactivate after a successful cancel leaves
+ * the user with an account and no subscription, which is recoverable and which
+ * the error tells them about.
+ *
+ * Irreversible, by request of the person making it. Identity comes from a
+ * Matrix OpenID token (see `authenticate`), so it works while E2E is locked and
+ * cannot be triggered by knowing a username.
+ */
+async function deleteAccount(env: Env, req: Request): Promise<Response> {
+  const json = jsonWith(env)
+  const who = await authenticate(env, req)
+  if (typeof who !== 'string') return who
+  const username = who
+
+  const stripe = stripeClient(env)
+  // Cancel EVERY subscription, not just the first: a resubscribe can leave more
+  // than one on the account, and leaving one live would keep charging.
+  let cancelled = 0
+  try {
+    const found = await stripe.subscriptions.search({
+      query: `metadata['tidework_username']:'${username.replace(/'/g, '')}'`,
+      limit: 100,
+    })
+    for (const sub of found.data) {
+      if (sub.status === 'canceled' || sub.status === 'incomplete_expired') continue
+      await stripe.subscriptions.cancel(sub.id)
+      cancelled++
+    }
+  } catch (err) {
+    console.error(`delete-account: cancel failed for '${username}':`, err)
+    return json(502, { error: 'cancel_failed' })
+  }
+
+  try {
+    const tok = await masAdminToken(env)
+    const user = await masGetUser(env, tok, username)
+    if (!user) return json(404, { error: 'no_account' })
+    if (!user.attributes.deactivated_at) {
+      await masDeactivateById(env, tok, user.id)
+    }
+  } catch (err) {
+    console.error(`delete-account: deactivate failed for '${username}':`, err)
+    // The subscription IS cancelled at this point — say so, so the user knows
+    // they are not still being billed while they retry.
+    return json(502, { error: 'deactivate_failed', subscriptions_cancelled: cancelled })
+  }
+
+  console.log(`delete-account: deleted '${username}' (${cancelled} subscription(s) cancelled)`)
+  return json(200, { deleted: true, subscriptions_cancelled: cancelled })
 }
 
 async function webhook(env: Env, req: Request): Promise<Response> {
@@ -549,9 +631,11 @@ export default {
       if (req.method === 'GET' && url.pathname === '/subscribe') return await subscribe(env, url)
       if (req.method === 'GET' && url.pathname === '/success') return await success(env, url)
       if (req.method === 'GET' && url.pathname === '/status') return await status(env, url)
-      if (req.method === 'OPTIONS' && url.pathname === '/portal')
+      if (req.method === 'OPTIONS' && (url.pathname === '/portal' || url.pathname === '/delete-account'))
         return new Response(null, { status: 204, headers: corsHeaders(env) })
       if (req.method === 'POST' && url.pathname === '/portal') return await portal(env, req)
+      if (req.method === 'POST' && url.pathname === '/delete-account')
+        return await deleteAccount(env, req)
       if (req.method === 'POST' && url.pathname === '/webhook') return await webhook(env, req)
       // Manually triggerable sweep for operations/validation — guarded by the
       // billing client secret.
