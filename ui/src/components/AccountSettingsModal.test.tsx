@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 const h = vi.hoisted(() => ({
   deleteAccount: vi.fn(async () => undefined),
-  setDisplayName: vi.fn(async (_name: string) => undefined),
+  setDisplayName: vi.fn(async () => undefined),
   getDisplayName: vi.fn(async () => 'Ada L'),
 }))
 
@@ -34,7 +34,7 @@ const deleteButton = () => screen.getByRole('button', { name: /^delete account$/
 describe('AccountSettingsModal', () => {
   beforeEach(() => {
     h.deleteAccount = vi.fn(async () => undefined)
-    h.setDisplayName = vi.fn(async (_name: string) => undefined)
+    h.setDisplayName = vi.fn(async () => undefined)
     h.getDisplayName = vi.fn(async () => 'Ada L')
   })
 
