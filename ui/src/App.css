@@ -2,8 +2,24 @@
 .app {
   display: flex;
   height: 100vh;
+  /* Mobile browsers report 100vh as the height WITHOUT the collapsing URL bar,
+     so a fixed 100vh leaves the bottom of the app under it. `dvh` tracks the
+     visible viewport; the vh line above stays as the fallback. */
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg);
+}
+
+/* ── Mobile navigation ───────────────────────────────────────
+   The sidebar is a permanent column on a wide screen and an off-canvas drawer
+   on a narrow one. Both are hidden here and switched on at the breakpoint at
+   the bottom of this file, so the desktop layout carries no mobile weight. */
+.app-mobile-bar {
+  display: none;
+}
+
+.app__nav-backdrop {
+  display: none;
 }
 
 .app-main {
@@ -179,4 +195,50 @@
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+/* ── Narrow screens ──────────────────────────────────────────
+   One breakpoint, 768px: below it the sidebar stops being a column and
+   becomes a drawer over the content, and a slim bar appears to open it.
+
+   768 rather than a phone width because the squeeze starts well before a
+   phone: a 220px sidebar out of a 700px viewport is a third of the screen
+   spent on navigation. */
+@media (max-width: 768px) {
+  .app-mobile-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+
+  .app-mobile-bar__menu {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* 40px: a touch target, not a mouse target. */
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .app-mobile-bar__menu:hover,
+  .app-mobile-bar__menu:focus-visible {
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .app__nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 59;
+    background: rgba(0, 0, 0, 0.45);
+  }
 }

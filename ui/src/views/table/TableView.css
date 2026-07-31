@@ -642,3 +642,32 @@
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* ── Narrow screens ──────────────────────────────────────────
+   The grid itself already scrolls (.table-scroll), so this is the chrome
+   around it: padding that costs too much width, and modals that must fit a
+   short screen with the keyboard up. */
+@media (max-width: 768px) {
+  .modal {
+    width: calc(100% - 24px);
+    padding: 18px;
+    /* A modal taller than the viewport was unusable: the actions at the bottom
+       could not be reached. Cap it and let the content scroll instead. */
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+  }
+
+  .modal-overlay {
+    /* Top-align rather than centre: with a software keyboard open, a centred
+       dialogue puts its inputs behind the keyboard. */
+    align-items: flex-start;
+    padding: 16px 0;
+    overflow-y: auto;
+  }
+
+  .table-selection-bar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .table-selection-bar__hint { display: none; }
+}

@@ -102,3 +102,20 @@
   resize: vertical;
   line-height: 1.6;
 }
+
+/* ── Narrow screens ──────────────────────────────────────────
+   A 120px label beside a value leaves ~200px for the value on a phone, which
+   is not enough for a date, a set of tags, or a reference pill. Stack instead:
+   the label reads as a caption and the value gets the full width. */
+@media (max-width: 768px) {
+  .field-renderer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .field-label {
+    width: auto;
+    padding-top: 0;
+  }
+}

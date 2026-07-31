@@ -379,3 +379,10 @@
   padding: 6px 12px;
   white-space: nowrap;
 }
+
+/* The card grid is auto-fill and already collapses to one column; this is the
+   page chrome, where 48px of padding is a sixth of a phone screen. */
+@media (max-width: 768px) {
+  .workspaces-page__topbar { padding: 10px 14px; }
+  .workspaces-page__content { padding: 24px 14px; }
+}
