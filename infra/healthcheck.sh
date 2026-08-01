@@ -73,15 +73,37 @@ done
 prev=$(cat "$STATE_FILE" 2>/dev/null || echo "")
 echo "$status" >"$STATE_FILE"
 
-send() { # subject, body
-  local key; key=$(cat "$RESEND_KEY_FILE" 2>/dev/null) || return 0
-  [ -n "$key" ] || return 0
+# send subject body
+#
+# The body is a subshell — `( … )`, not `{ … }` — so the `set +x` below is
+# scoped to this function and cannot leak out. This is the fix for the
+# 2026-07-21 key leak: someone debugging with `bash -x healthcheck.sh` got the
+# Authorization header printed verbatim into the journal, and a journal is not
+# a secret store. Nothing in here may reach stdout, stderr, or a trace.
+#
+# The key also never appears in argv, so it stays out of `ps` and out of any
+# process-accounting log: curl reads the header from a 0600 config file that
+# exists only for the duration of the request.
+send() (
+  set +x
+  key=$(cat "$RESEND_KEY_FILE" 2>/dev/null) || exit 0
+  [ -n "$key" ] || exit 0
+
+  cfg=$(mktemp) || exit 0
+  # Before the write, not after — mktemp is already 0600, but an explicit
+  # chmod means the guarantee doesn't depend on remembering that.
+  chmod 600 "$cfg"
+  trap 'rm -f "$cfg"' EXIT
+  # Resend keys are `re_` + base62, so no quote-escaping is needed here. If
+  # that ever stops being true this needs revisiting.
+  printf 'header = "Authorization: Bearer %s"\n' "$key" >"$cfg"
+
   curl -fsS -m 15 -X POST https://api.resend.com/emails \
-    -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
+    --config "$cfg" -H "Content-Type: application/json" \
     --data @- >/dev/null 2>&1 <<JSON
 {"from":"$ALERT_FROM","to":["$ALERT_TO"],"subject":"$1","text":"$2"}
 JSON
-}
+)
 
 host=$(hostname)
 if [ "$status" = fail ] && [ "$prev" != fail ]; then
