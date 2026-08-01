@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Status — TideWork</title>
+<meta name="description" content="Current operational status of the TideWork hosted service." />
+<link rel="stylesheet" href="/fonts/fonts.css" />
+<style>
+  :root {
+    --abyss:#03101c; --foam:#eaf6f6; --mist:#9fc3cd; --faint:#5c8292;
+    --spray:#67e2d4; --buoy:#ff9e57; --red:#f87171; --amber:#f5c451;
+    --line:rgba(154,203,212,0.16);
+    --serif:'Fraunces', Georgia, serif; --sans:'IBM Plex Sans', system-ui, sans-serif;
+    --mono:'IBM Plex Mono', ui-monospace, monospace;
+  }
+  * { margin:0; box-sizing:border-box; }
+  body {
+    font-family:var(--sans); color:var(--mist); line-height:1.7;
+    background: radial-gradient(120% 60% at 70% -20%, #11597d 0%, transparent 55%), var(--abyss);
+    background-color:var(--abyss); min-height:100vh; padding-bottom:80px;
+  }
+  ::selection { background:var(--spray); color:var(--abyss); }
+  .wrap { max-width:700px; margin:0 auto; padding:0 24px; }
+  header { border-bottom:1px solid var(--line); padding:18px 0; margin-bottom:48px; }
+  header .wrap { display:flex; align-items:center; gap:18px; }
+  .brand { color:var(--foam); text-decoration:none; font-weight:600; }
+  header a { color:var(--mist); text-decoration:none; font-size:14px; }
+  header a:hover { color:var(--foam); }
+  h1 { font-family:var(--serif); font-size:32px; line-height:1.2; color:var(--foam); margin-bottom:6px; }
+  h2 { font-family:var(--serif); font-size:19px; color:var(--foam); margin:40px 0 12px; }
+  p { margin:14px 0; font-size:15px; }
+  a { color:var(--spray); }
+  strong { color:var(--foam); }
+  code { font-family:var(--mono); font-size:13px; background:rgba(154,203,212,0.10); padding:1px 5px; border-radius:4px; }
+
+  /* The banner is the whole page as far as most visitors are concerned. */
+  .banner {
+    display:flex; align-items:center; gap:14px;
+    margin:26px 0 8px; padding:20px 22px;
+    border:1px solid var(--line); border-radius:12px;
+    background:rgba(4,22,35,0.6);
+  }
+  .dot { width:13px; height:13px; border-radius:50%; flex-shrink:0; }
+  .dot--ok { background:var(--spray); box-shadow:0 0 14px rgba(103,226,212,0.5); }
+  .dot--degraded { background:var(--amber); box-shadow:0 0 14px rgba(245,196,81,0.45); }
+  .dot--down { background:var(--red); box-shadow:0 0 14px rgba(248,113,113,0.45); }
+  .banner__text { font-size:17px; color:var(--foam); font-weight:500; }
+  .updated { font-size:12.5px; color:var(--faint); margin-top:0; }
+
+  table { border-collapse:collapse; width:100%; font-size:14px; margin:18px 0; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); }
+  th { color:var(--foam); font-weight:600; font-size:13px; }
+  .state { font-family:var(--mono); font-size:12.5px; }
+  .state--ok { color:var(--spray); }
+  .state--degraded { color:var(--amber); }
+  .state--down { color:var(--red); }
+
+  .note { border-left:2px solid var(--spray); padding-left:16px; margin:22px 0; }
+  footer { margin-top:60px; padding-top:22px; border-top:1px solid var(--line); font-size:13px; color:var(--faint); }
+  footer a { color:var(--mist); text-decoration:none; }
+  @media (max-width:600px) { h1 { font-size:26px; } header { margin-bottom:32px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="/">TideWork</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="https://app.tidework.io">Open app</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Service status</h1>
+
+  <!-- ════════════════ EDIT DURING AN INCIDENT ════════════════
+       1. Swap the dot and text classes below: dot--ok / dot--degraded / dot--down
+       2. Change the banner text.
+       3. Update the "Last checked" date.
+       4. Change any affected row in the components table (state--ok/degraded/down).
+       5. Add an entry to Recent incidents.
+       Commit and push — Pages deploys on merge to main.
+       ═════════════════════════════════════════════════════════ -->
+  <div class="banner">
+    <span class="dot dot--ok" aria-hidden="true"></span>
+    <span class="banner__text">All systems operational</span>
+  </div>
+  <p class="updated">Last checked 1 August 2026.</p>
+
+  <h2>Components</h2>
+  <table>
+    <thead>
+      <tr><th>Component</th><th>What it does</th><th>State</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>App</td><td>app.tidework.io</td><td class="state state--ok">operational</td></tr>
+      <tr><td>Homeserver</td><td>Sync and encrypted storage</td><td class="state state--ok">operational</td></tr>
+      <tr><td>Sign-in</td><td>Accounts, sessions, Google sign-in</td><td class="state state--ok">operational</td></tr>
+      <tr><td>Billing</td><td>Subscriptions and payments</td><td class="state state--ok">operational</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recent incidents</h2>
+  <!-- Newest first. Keep roughly the last six months; a page that has never
+       recorded an incident reads as unmaintained rather than reliable. -->
+  <p>No incidents recorded since this page was published.</p>
+
+  <h2>How this page works</h2>
+
+  <p><strong>It is updated by hand.</strong> There is no automatic feed yet, so during a
+  short outage this page may lag reality. If the app is not working and this page says
+  everything is fine, trust the app and
+  <a href="mailto:tideworksupport@proton.me">tell us</a> — that gap is itself worth
+  knowing about.</p>
+
+  <div class="note">
+    <p>This page is served from Cloudflare's network, while the homeserver runs on
+    separate infrastructure. So it stays up during the failure it most often needs to
+    describe — a homeserver or sign-in outage. If Cloudflare itself is down, this page
+    goes with the app, and there is nothing here that would tell you so.</p>
+  </div>
+
+  <h2>Is it me or is it you?</h2>
+
+  <p>A quick way to tell them apart:</p>
+
+  <p><strong>Probably us</strong> — nothing loads, sign-in hangs, or edits stop syncing
+  for everyone in a workspace.</p>
+
+  <p><strong>Probably your account</strong> — you are told your account is locked (a
+  lapsed trial or subscription: <a href="/reactivate">reactivate it</a>), or a new device
+  asks for a recovery key. Neither is an outage.</p>
+
+  <p>Either way, <a href="mailto:tideworksupport@proton.me">tideworksupport@proton.me</a>
+  reaches a human. Including the build shown under <em>Account settings → Help &amp;
+  legal</em> saves a round trip.</p>
+
+  <footer>
+    <p>© 2026 TideWork · <a href="/">tidework.io</a> · <a href="/terms">Terms</a> ·
+    <a href="/privacy">Privacy</a> ·
+    <a href="mailto:tideworksupport@proton.me">Contact</a></p>
+  </footer>
+</main>
+</body>
+</html>

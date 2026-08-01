@@ -23,8 +23,9 @@ You must be able to form a binding contract to use TideWork. You are responsible
 what happens under your account, including keeping your credentials, recovery key, and
 devices secure.
 
-One person or organisation may hold multiple accounts. You may not share an account in
-a way that circumvents per-account pricing.
+**An account is for one person.** Pricing is per person, so each collaborator needs
+their own account — you may not share one set of credentials between people. One person
+may hold as many accounts as they like.
 
 ## 3. Subscriptions, trials, and billing
 

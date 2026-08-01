@@ -37,6 +37,9 @@ export const TERMS_URL = 'https://tidework.io/terms'
 export const PRIVACY_URL = 'https://tidework.io/privacy'
 /** Public page for restarting a lapsed subscription without signing in. */
 export const REACTIVATE_URL = 'https://tidework.io/reactivate'
+/** Operational status. Served from Cloudflare Pages while the homeserver runs
+ *  elsewhere, so it survives the outage it most often has to describe. */
+export const STATUS_URL = 'https://tidework.io/status'
 
 export const SUBSCRIBE_URL = 'https://billing.tidework.io/subscribe'
 
