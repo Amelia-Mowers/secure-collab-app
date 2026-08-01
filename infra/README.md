@@ -120,6 +120,35 @@ certs) is guarded; re-runs just re-render configs and restart.
   droplet backups. Re-encrypting them into the repo (so a rebuilt droplet
   keeps its identity) is a tracked follow-up.
 
+### Email keys: transactional vs alerting
+
+`infra/secrets/email.sops.env` carries two Resend keys, deliberately separate:
+
+| var | used by | blast radius if leaked |
+|---|---|---|
+| `SMTP_PASSWORD` | MAS transactional email — verification codes, password resets | account email |
+| `ALERT_RESEND_KEY` | `healthcheck.sh` outage alerts | monitoring only |
+
+They were one key, on the reasoning that there was then no second secret to
+manage. The cost of that showed up on 2026-07-21: a single leak took out both
+account email *and* the channel that would have told you about the outage, and
+rotating it meant touching password-reset delivery to fix monitoring.
+
+`remote-setup.sh` prefers `ALERT_RESEND_KEY` and **falls back to
+`SMTP_PASSWORD` with a warning** if it is absent — silently disabling alerts
+would be the worst possible outcome of a monitoring change. To provision it:
+
+```sh
+# 1. Resend dashboard → API Keys → Create, "tidework-alerts", permission:
+#    Sending access only. Do NOT reuse the transactional key.
+# 2. Add it to the encrypted env (opens $EDITOR on the decrypted file):
+sops infra/secrets/email.sops.env      # add: ALERT_RESEND_KEY=re_...
+# 3. Deploy; the warning above disappears when it takes effect.
+pwsh infra/deploy.ps1
+```
+
+Until step 2 is done, alerting keeps working on the shared key.
+
 ## Operating notes
 
 - Synapse config: `/srv/tidework/synapse/homeserver.yaml` (rendered — edit

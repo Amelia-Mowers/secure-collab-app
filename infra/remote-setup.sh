@@ -169,13 +169,31 @@ cd "$SRV" && docker compose pull -q && docker compose up -d --wait --force-recre
 # changes, so recreate to pick up re-rendered configs every deploy.
 
 # ── Monitoring: healthcheck timer that alerts via Resend on failure ─────────
-# Reuses the decrypted $SMTP_PASSWORD (the Resend API key) as the alert creds —
-# no separate secret to manage. Idempotent.
+# Prefers a dedicated ALERT_RESEND_KEY over the transactional SMTP_PASSWORD.
+#
+# They used to be the same key, justified as "no separate secret to manage".
+# The problem with that is what the alerting channel is FOR: one leak took out
+# both MAS transactional email AND the thing that would tell you about it, and
+# rotating the shared key after the 2026-07-21 leak meant touching a path that
+# sends password resets in order to fix monitoring.
+#
+# The fallback is deliberate. Until ALERT_RESEND_KEY exists in email.sops.env
+# this keeps working on the shared key rather than silently disabling alerts,
+# which would be the worst possible failure mode for a monitoring change.
+# Idempotent.
 install -m 0755 "$DEPLOY/healthcheck.sh" /usr/local/bin/tidework-healthcheck.sh
 install -m 0644 "$DEPLOY/systemd/tidework-healthcheck.service" /etc/systemd/system/tidework-healthcheck.service
 install -m 0644 "$DEPLOY/systemd/tidework-healthcheck.timer" /etc/systemd/system/tidework-healthcheck.timer
 mkdir -p /root/.config/tidework-alert
-printf '%s' "$SMTP_PASSWORD" > /root/.config/tidework-alert/resend.key
+if [ -n "${ALERT_RESEND_KEY:-}" ]; then
+  printf '%s' "$ALERT_RESEND_KEY" > /root/.config/tidework-alert/resend.key
+  echo "  alerting: using the dedicated ALERT_RESEND_KEY"
+else
+  printf '%s' "$SMTP_PASSWORD" > /root/.config/tidework-alert/resend.key
+  echo "  alerting: WARNING - falling back to the shared SMTP_PASSWORD."
+  echo "            Add ALERT_RESEND_KEY to infra/secrets/email.sops.env so a"
+  echo "            leak of either key does not take out the other."
+fi
 chmod 600 /root/.config/tidework-alert/resend.key
 systemctl daemon-reload
 systemctl enable --now tidework-healthcheck.timer >/dev/null 2>&1 || true
