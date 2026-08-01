@@ -36,8 +36,12 @@ const renderHarness = () =>
   )
 
 describe('DialogProvider', () => {
-  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }))
-  afterEach(() => vi.useRealTimers())
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
 
   it('resolves confirm true only when confirmed', async () => {
     renderHarness()
