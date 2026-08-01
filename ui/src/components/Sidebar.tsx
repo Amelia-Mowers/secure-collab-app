@@ -16,6 +16,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useTheme } from '@/hooks/useTheme'
+import { useDialogs } from './dialogs/DialogProvider'
 import { useAuth } from '@/hooks/useAuth'
 import { NewViewButton } from '@/components/NewViewDropdown'
 import { NewTableModal } from '@/components/NewTableModal'
@@ -410,6 +411,7 @@ export function Sidebar({
   const navigate = useNavigate()
   const location = useLocation()
   const { theme, toggleTheme } = useTheme()
+  const { confirm, prompt, notify } = useDialogs()
   const { workspaces } = useAuth()
   const workspaceName = workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace'
   /** This user's role — gates the administrative affordances below. */
@@ -460,7 +462,7 @@ export function Sidebar({
       loadMembers()
     } catch (err) {
       console.error('Failed to set role:', err)
-      alert('Failed to change role: ' + (err instanceof Error ? err.message : String(err)))
+      notify('Failed to change role: ' + (err instanceof Error ? err.message : String(err)), 'error')
       setMembers(prev => prev.map(m => (m.id === member.id ? { ...m, role: previous } : m)))
     }
   }
@@ -553,7 +555,7 @@ export function Sidebar({
       // an Error object — otherwise this showed "...: undefined".
       console.error('Failed to create table:', err)
       const msg = err instanceof Error ? err.message : String(err)
-      alert('Failed to create table: ' + msg)
+      notify('Failed to create table: ' + msg, 'error')
     } finally {
       setCreatingTable(false)
     }
@@ -609,7 +611,7 @@ export function Sidebar({
    *  UI mean what it says. */
   const handleRenameTable = async (table: TableInfo) => {
     if (!workspace || typeof workspace.renameTable !== 'function') return
-    const name = window.prompt('Rename table', table.name)?.trim()
+    const name = await prompt({ title: 'Rename table', label: 'Name', initial: table.name })
     if (!name || name === table.name) return
     try {
       await workspace.renameTable(table.id, name)
@@ -617,7 +619,7 @@ export function Sidebar({
       refreshData()
     } catch (err: unknown) {
       console.error('Failed to rename table:', err)
-      alert('Failed to rename table: ' + (err instanceof Error ? err.message : String(err)))
+      notify('Failed to rename table: ' + (err instanceof Error ? err.message : String(err)), 'error')
       refreshData()
     }
   }
@@ -629,7 +631,7 @@ export function Sidebar({
    *  rename looked identical to a successful one until the next reload. */
   const handleRenameView = async (view: ViewInfo) => {
     if (!workspace) return
-    const name = window.prompt('Rename view', view.name)?.trim()
+    const name = await prompt({ title: 'Rename view', label: 'Name', initial: view.name })
     if (!name || name === view.name) return
     try {
       const cfg = JSON.parse(workspace.getView(view.id))
@@ -638,15 +640,22 @@ export function Sidebar({
       refreshData()
     } catch (err: unknown) {
       console.error('Failed to rename view:', err)
-      alert('Failed to rename view: ' + (err instanceof Error ? err.message : String(err)))
+      notify('Failed to rename view: ' + (err instanceof Error ? err.message : String(err)), 'error')
       refreshData()
     }
   }
 
   /** Delete a view. Only the projection goes — the table and its rows stay. */
-  const handleDeleteView = (view: ViewInfo) => {
+  const handleDeleteView = async (view: ViewInfo) => {
     if (!workspace || typeof workspace.deleteView !== 'function') return
-    if (!window.confirm(`Delete view "${view.name}"? The table and its data are not affected.`)) {
+    if (
+      !(await confirm({
+        title: `Delete view "${view.name}"?`,
+        message: 'The table and its data are not affected.',
+        confirmLabel: 'Delete view',
+        danger: true,
+      }))
+    ) {
       return
     }
     setViews(prev => prev.filter(v => v.id !== view.id))
@@ -660,7 +669,7 @@ export function Sidebar({
       })
       .catch((err: unknown) => {
         console.error('Failed to delete view:', err)
-        alert('Failed to delete view: ' + (err instanceof Error ? err.message : String(err)))
+        notify('Failed to delete view: ' + (err instanceof Error ? err.message : String(err)), 'error')
         refreshData()
       })
   }
@@ -686,7 +695,7 @@ export function Sidebar({
       URL.revokeObjectURL(url)
     } catch (err: unknown) {
       console.error('Failed to export table:', err)
-      alert('Failed to export table: ' + (err instanceof Error ? err.message : String(err)))
+      notify('Failed to export table: ' + (err instanceof Error ? err.message : String(err)), 'error')
     }
   }
 
@@ -735,23 +744,22 @@ export function Sidebar({
       if (workspaceId) notifyWorkspaceChanged(workspaceId)
       refreshData()
       const problems = r.missing + r.stale
-      alert(
+      // A notice, not a modal: this result is almost always "fine", and an
+      // alert() froze the tab for the 30+ seconds the check takes.
+      notify(
         problems === 0
           ? `No problems found. ${r.checked} cells checked against the server.` +
               (r.undecryptable > 0
-                ? `
-
-${r.undecryptable} event(s) could not be decrypted — those are a key problem, not a sync gap.`
+                ? ` ${r.undecryptable} event(s) could not be decrypted — those are a key problem, not a sync gap.`
                 : '')
-          : `Repaired ${r.repaired} of ${r.checked} cells.
-
-` +
+          : `Repaired ${r.repaired} of ${r.checked} cells. ` +
               `${r.missing} were missing locally, ${r.stale} were out of date. ` +
               'They are now restored from the server.',
+        problems === 0 ? 'success' : 'info',
       )
     } catch (err: unknown) {
       console.error('Integrity check failed:', err)
-      alert('Integrity check failed: ' + (err instanceof Error ? err.message : String(err)))
+      notify('Integrity check failed: ' + (err instanceof Error ? err.message : String(err)), 'error')
     } finally {
       setCheckingIntegrity(false)
     }
@@ -773,7 +781,7 @@ ${r.undecryptable} event(s) could not be decrypted — those are a key problem, 
       URL.revokeObjectURL(url)
     } catch (err: unknown) {
       console.error('Failed to export workspace:', err)
-      alert('Failed to export workspace: ' + (err instanceof Error ? err.message : String(err)))
+      notify('Failed to export workspace: ' + (err instanceof Error ? err.message : String(err)), 'error')
     }
   }
 
@@ -805,9 +813,17 @@ ${r.undecryptable} event(s) could not be decrypted — those are a key problem, 
     return result
   }
 
-  const handleDeleteTable = (table: TableInfo) => {
+  const handleDeleteTable = async (table: TableInfo) => {
     if (!workspace || typeof workspace.deleteTable !== 'function') return
-    if (!window.confirm(`Delete table "${table.name}"? All of its rows will be removed.`)) return
+    if (
+      !(await confirm({
+        title: `Delete table "${table.name}"?`,
+        message: 'All of its rows will be removed.',
+        confirmLabel: 'Delete table',
+        danger: true,
+      }))
+    )
+      return
 
     // Optimistic removal; if we're viewing it, leave the route now.
     setTables(prev => prev.filter(t => t.id !== table.id))
@@ -821,7 +837,7 @@ ${r.undecryptable} event(s) could not be decrypted — those are a key problem, 
       })
       .catch((err: unknown) => {
         console.error('Failed to delete table:', err)
-        alert('Failed to delete table: ' + (err instanceof Error ? err.message : String(err)))
+        notify('Failed to delete table: ' + (err instanceof Error ? err.message : String(err)), 'error')
         refreshData() // roll back to the real state
       })
   }

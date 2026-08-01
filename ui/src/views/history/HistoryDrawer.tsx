@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMembers, type WorkspaceHandle } from '../../hooks/useTable'
 import { CellDisplay, type CellColumn, type MemberList } from '@/cells/cellRegistry'
 import { makeReferenceLookup, type ReferenceLookup } from '@/lib/referenceLookup'
+import { useDialogs } from '@/components/dialogs/DialogProvider'
 import './HistoryDrawer.css'
 
 /** One entry from `workspace.getChangeLog` — either a cell edit or a revert. */
@@ -94,6 +95,7 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
   const [error, setError] = useState<string | null>(null)
   const [busyTs, setBusyTs] = useState<number | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const { confirm } = useDialogs()
 
   // Schema + members + reference labels, so an entry can say "Sketch landing
   // page hero · Client: Priya Nair" instead of "client row_1785…_1_2".
@@ -170,9 +172,11 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
     async (serverTs: number) => {
       if (!workspace.rollbackTo) return
       if (
-        !window.confirm(
-          'Undo this change and everything after it? This is recorded in history and can itself be reverted.',
-        )
+        !(await confirm({
+          title: 'Undo this change and everything after it?',
+          message: 'This is recorded in history and can itself be reverted.',
+          confirmLabel: 'Undo',
+        }))
       ) {
         return
       }
@@ -194,7 +198,7 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
         setBusyTs(null)
       }
     },
-    [workspace, tableId, onReverted, load],
+    [workspace, tableId, onReverted, load, confirm],
   )
 
   return (

@@ -286,7 +286,6 @@ test('a deleted row stays deleted after reload', async ({ page }) => {
 // cold-start reload (the durability the MockWorkspace unit tests can't cover).
 test('table delete and reorder persist after reload', async ({ page }) => {
   test.setTimeout(300_000)
-  page.on('dialog', dialog => dialog.accept()) // auto-accept the delete confirm
 
   await registerDevice(page, homeserverUrl(), uniqueUser('tbl'))
   await captureMasterKey(page)
@@ -329,7 +328,13 @@ test('table delete and reorder persist after reload', async ({ page }) => {
   await expect(afterReorder.nth(1)).toContainText('Apples')
 
   // Delete 'Apples'; it disappears immediately and stays gone after reload.
+  // The confirm is an in-app dialog, not `window.confirm` — Playwright's
+  // `page.on('dialog')` no longer applies, and a themed dialog is something the
+  // test can actually read, which is the point.
   await page.locator('.sidebar__section', { hasText: 'Tables' }).getByTitle('Delete table Apples').click()
+  const confirmDialog = page.getByRole('alertdialog', { name: /Delete table "Apples"\?/ })
+  await expect(confirmDialog).toBeVisible({ timeout: 30_000 })
+  await confirmDialog.getByRole('button', { name: 'Delete table' }).click()
   await expect(afterReorder).toHaveCount(1, { timeout: 30_000 })
   await expect(afterReorder.nth(0)).toContainText('Bananas')
 
