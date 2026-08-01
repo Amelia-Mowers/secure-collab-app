@@ -28,6 +28,15 @@ function sidebarItem(page: Page, label: string) {
   return page.locator('.sidebar__item-label', { hasText: new RegExp(`^${label}$`) })
 }
 
+/** Fill and submit the themed rename prompt. */
+async function renamePrompt(page: Page, name: string) {
+  const dialog = page.getByRole('dialog').filter({ has: page.locator('.dlg__input') })
+  await expect(dialog).toBeVisible({ timeout: 30_000 })
+  await dialog.locator('.dlg__input').fill(name)
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
+}
+
 test('resource CRUD: rename a table, rename and delete a view, all surviving reload', async ({
   page,
 }) => {
@@ -60,13 +69,16 @@ test('resource CRUD: rename a table, rename and delete a view, all surviving rel
   // The rename is not optimistic: the new name appears only once the write has
   // landed, so these assertions are themselves proof of persistence — and the
   // reload below can't race an in-flight send.
-  page.once('dialog', d => void d.accept('Gadgets'))
+  // An in-app prompt, not `window.prompt` — `page.on('dialog')` stopped
+  // applying when the native dialogs were replaced, and a themed one is
+  // something the test can actually read.
   await page.getByLabel('Rename table').click()
+  await renamePrompt(page, 'Gadgets')
   await expect(sidebarItem(page, 'Gadgets')).toBeVisible({ timeout: 60_000 })
 
   // ── Rename the view ───────────────────────────────────────────────────────
-  page.once('dialog', d => void d.accept('Sprint Board'))
   await page.getByLabel('Rename view').click()
+  await renamePrompt(page, 'Sprint Board')
   await expect(sidebarItem(page, 'Sprint Board')).toBeVisible({ timeout: 60_000 })
 
   // ── The table rename must survive a cold start ────────────────────────────
@@ -79,8 +91,10 @@ test('resource CRUD: rename a table, rename and delete a view, all surviving rel
   await expect(page).toHaveURL(/\/table\/widgets/, { timeout: 60_000 })
 
   // ── Delete the view; the table it projected must remain ───────────────────
-  page.once('dialog', d => void d.accept())
   await page.getByLabel('Delete view').click()
+  const confirmDelete = page.getByRole('alertdialog')
+  await expect(confirmDelete).toBeVisible({ timeout: 30_000 })
+  await confirmDelete.getByRole('button', { name: /delete/i }).click()
   await expect(sidebarItem(page, 'Sprint Board')).toBeHidden({ timeout: 60_000 })
   await expect(sidebarItem(page, 'Gadgets')).toBeVisible()
 
@@ -115,8 +129,8 @@ test('a view rename survives a reload', async ({ page }) => {
   await viewDialog.getByRole('button', { name: 'Create view' }).click()
   await expect(viewDialog).toBeHidden({ timeout: 60_000 })
 
-  page.once('dialog', d => void d.accept('Sprint Board'))
   await page.getByLabel('Rename view').click()
+  await renamePrompt(page, 'Sprint Board')
   await expect(sidebarItem(page, 'Sprint Board')).toBeVisible({ timeout: 60_000 })
 
   await page.reload()

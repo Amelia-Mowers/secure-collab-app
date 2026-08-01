@@ -86,8 +86,10 @@ test('kanban: dragging a card writes the group-by cell, and it survives a reload
     await page.getByRole('button', { name: 'New view' }).click()
     const dialog = page.getByRole('dialog')
     await dialog.getByPlaceholder('My View').fill('Board')
-    // Kanban is the default view type; pick the group/title axes, which are
+    // Kanban is no longer the default (Table is — it needs no configuration),
+    // so pick the type before its config fields exist. The group/title axes are
     // explicit view settings and never inferred.
+    await dialog.locator('.nvm__type-tile', { hasText: 'Kanban' }).first().click()
     await dialog
       .locator('.nvm__form-group', { hasText: 'Group by column' })
       .locator('select')
