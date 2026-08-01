@@ -85,11 +85,23 @@
   .hero { padding: 110px 0 150px; position: relative; }
   .hero h1 {
     font-family: var(--serif); font-optical-sizing: auto;
-    font-size: clamp(42px, 7.2vw, 78px); font-weight: 560;
+    font-size: clamp(38px, 7.2vw, 78px); font-weight: 560;
     line-height: 1.02; letter-spacing: -0.022em; color: var(--foam);
-    max-width: 18ch;
+    max-width: 26ch;
   }
   .hero h1 .cant { font-style: italic; color: var(--spray); }
+  /* "open-source" and "end-to-end" are single words that happen to contain
+     hyphens, and a break at one reads as a different phrase — "The first
+     open- / source," is not a thing anyone wrote. Never split them, at any
+     width; the 38px floor above is what keeps that promise affordable on a
+     320px screen. */
+  .hero h1 .nb { white-space: nowrap; }
+  /* Once there is room for the longest line, take the wrapping decision away
+     from the browser: one clause per line. Below that the spans stay inline
+     and wrap naturally, because a fixed break would overflow a phone. */
+  @media (min-width: 700px) {
+    .hero h1 .l { display: block; }
+  }
   .hero .sub { margin-top: 26px; font-size: 18.5px; max-width: 54ch; }
   .hero .sub strong { color: var(--foam); font-weight: 600; }
   .cta { margin-top: 38px; display: flex; gap: 14px; flex-wrap: wrap; }
@@ -235,7 +247,15 @@
   <div class="hero">
     <div class="wrap">
       <span class="tick">0 m · the surface</span>
-      <h1>The first open-source, <span class="cant">end-to-end encrypted</span> Airtable alternative.</h1>
+      <!-- Three deliberate lines. Left to wrap on its own the headline broke
+           mid-hyphen — "end-" / "to-end" — and split the claim across lines
+           that don't match its clauses. The spans go back to flowing inline on
+           narrow screens, where forced line lengths would overflow instead. -->
+      <h1>
+        <span class="l">The first <span class="nb">open-source,</span></span>
+        <span class="l cant"><span class="nb">end-to-end</span> encrypted</span>
+        <span class="l">Airtable alternative.</span>
+      </h1>
       <p class="sub">
         Linked tables, formulas, kanban boards and documents that sync in real
         time — on the Matrix protocol, with encryption your server cannot bypass.
