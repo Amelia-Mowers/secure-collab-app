@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import type { VerificationState, ResettableWorkspace, ResetPlan } from '../hooks/useAuth'
 import { PRF_PROVIDER_HINT, isPrfCapabilityError } from '../auth/passkeyPrf'
+import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/branding'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './VerifyDeviceScreen.css'
 
@@ -382,6 +383,11 @@ function RecoverySetupFailed({
           Sign out
         </button>
       </div>
+      {/* "It keeps failing" needs somewhere to go. This screen blocks the app,
+          so without this the only options are retry forever or sign out. */}
+      <p className="verify__help">
+        Still failing? <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>
+      </p>
     </Overlay>
   )
 }

@@ -219,3 +219,12 @@
     animation-duration: 1.6s;
   }
 }
+
+/* Support route on the blocking failure screens. Quiet, and below the actions:
+   present without competing with Retry. */
+.verify__help {
+  margin-top: 18px;
+  font-size: 12.5px;
+  color: var(--text-tertiary, #5c8292);
+  text-align: center;
+}
