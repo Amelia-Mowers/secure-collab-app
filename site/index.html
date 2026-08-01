@@ -19,6 +19,7 @@
     --spray: #67e2d4;        /* luminous accent */
     --buoy: #ff9e57;         /* CTA — buoy orange */
     --buoy-deep: #f08236;
+    --reef: #ff7a6b;         /* the negative — coral, not alarm-red */
     --line: rgba(154, 203, 212, 0.16);
     --serif: 'Fraunces', Georgia, serif;
     --sans: 'IBM Plex Sans', system-ui, sans-serif;
@@ -151,23 +152,42 @@
   }
 
 
-  /* Comparison table */
-  .cmp-wrap { margin-top: 34px; overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
-  .cmp { border-collapse: collapse; width: 100%; min-width: 860px; font-size: 14.5px; }
+  /* Comparison table. Tools are COLUMNS and properties are ROWS, which is the
+     shape people expect and which lets a reader scan one property across every
+     tool in a single line. */
+  /* Opaque, so the sticky first column below has something solid to sit on —
+     a translucent panel over the page gradient can't be matched by a fixed
+     colour. */
+  .cmp-wrap { margin-top: 34px; overflow-x: auto; border: 1px solid var(--line);
+    border-radius: 14px; background: #051d2c; }
+  .cmp { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 14px; }
   .cmp th, .cmp td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
   .cmp thead th { color: var(--foam); font-weight: 600; font-size: 13px; background: rgba(4, 22, 35, 0.5); }
-  .cmp tbody th { color: var(--foam); font-weight: 600; white-space: nowrap; }
+  /* The property column stays put while the tools scroll past it. Transposed,
+     the row label is the only thing that tells you what a "Yes" is answering,
+     and on a phone it would otherwise be the first thing off-screen. */
+  .cmp tbody th, .cmp thead th:first-child {
+    position: sticky; left: 0; z-index: 1;
+    background: #051d2c;
+    border-right: 1px solid var(--line);
+  }
+  .cmp tbody th { color: var(--mist); font-weight: 600; }
   .cmp tbody tr:last-child th, .cmp tbody tr:last-child td { border-bottom: none; }
-  /* Our own row is marked, not hidden: a comparison that pretends to be
+  /* Our own column is marked, not hidden: a comparison that pretends to be
      neutral while being written by one of the entrants fools nobody. */
-  .cmp__self th, .cmp__self td { background: rgba(103, 226, 212, 0.06); }
-  .cmp__self th::after { content: " (us)"; color: var(--faint); font-weight: 400; }
+  .cmp tr > *:nth-child(2) { background: rgba(103, 226, 212, 0.06); }
+  .cmp thead th:nth-child(2)::after { content: " (us)"; color: var(--faint); font-weight: 400; }
   .cmp--good { color: var(--spray); }
   .cmp--warn { color: var(--buoy); }
-  .cmp--bad { color: var(--mist); opacity: 0.75; }
+  /* A negative reads as a negative. Grey said "unremarkable" about the one
+     fact this whole page exists to make remarkable. */
+  .cmp--bad { color: var(--reef); }
+  /* The corner cell reads as empty but must not BE empty: a screen reader
+     announcing the row headers needs something to call this column. */
+  .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .cmp__note { margin-top: 18px; font-size: 13.5px; color: var(--faint); max-width: 68ch; }
   .cmp__note a { color: var(--mist); }
-  @media (max-width: 640px) { .cmp { min-width: 760px; font-size: 13px; } }
+  @media (max-width: 640px) { .cmp { min-width: 860px; font-size: 13px; } }
 
   /* ── Sections ─────────────────────────────────────────────────────── */
   section { padding: 96px 0; position: relative; }
@@ -404,69 +424,65 @@
         <table class="cmp">
           <thead>
             <tr>
-              <th scope="col">Tool</th>
-              <th scope="col">Server can read your data</th>
-              <th scope="col">How it syncs</th>
-              <th scope="col">Relational tables</th>
-              <th scope="col">Formulas</th>
-              <th scope="col">Licence</th>
+              <th scope="col"><span class="vh">Property</span></th>
+              <th scope="col">TideWork</th>
+              <th scope="col">Airtable</th>
+              <th scope="col">Anytype</th>
+              <th scope="col">CryptPad</th>
+              <th scope="col">Grist</th>
+              <th scope="col">Baserow</th>
+              <th scope="col">NocoDB</th>
             </tr>
           </thead>
           <tbody>
-            <tr class="cmp__self">
-              <th scope="row">TideWork</th>
-              <td class="cmp--good">No — it only ever holds ciphertext</td>
-              <td class="cmp--good">Any Matrix homeserver — ours or yours</td>
-              <td class="cmp--good">Yes</td>
-              <td class="cmp--good">Yes</td>
-              <td class="cmp--good">Apache-2.0</td>
-            </tr>
             <tr>
-              <th scope="row">Airtable</th>
+              <th scope="row">Server can read your data</th>
+              <td class="cmp--good">No</td>
               <td class="cmp--bad">Yes</td>
-              <td class="cmp--bad">Airtable's cloud, and only theirs</td>
-              <td class="cmp--good">Yes</td>
-              <td class="cmp--good">Yes</td>
-              <td class="cmp--bad">Proprietary</td>
+              <td class="cmp--good">No</td>
+              <td class="cmp--good">No</td>
+              <td class="cmp--bad">Yes</td>
+              <td class="cmp--bad">Yes</td>
+              <td class="cmp--bad">Yes</td>
             </tr>
             <tr>
-              <th scope="row">Anytype</th>
-              <td class="cmp--good">No — end-to-end encrypted</td>
-              <td class="cmp--warn">Peer-to-peer, relayed by its own network</td>
-              <td class="cmp--good">Linked objects, multiple views</td>
-              <td class="cmp--bad">No</td>
-              <td class="cmp--warn">Source-available (its own licence)</td>
-            </tr>
-            <tr>
-              <th scope="row">CryptPad</th>
-              <td class="cmp--good">No — end-to-end encrypted</td>
+              <th scope="row">Where it syncs</th>
+              <td class="cmp--good">Any Matrix homeserver</td>
+              <td class="cmp--bad">Their cloud only</td>
+              <td class="cmp--warn">Peer-to-peer, via their network</td>
               <td class="cmp--good">Any CryptPad instance</td>
-              <td class="cmp--bad">Spreadsheets, not linked tables</td>
-              <td class="cmp--warn">Spreadsheet formulas</td>
-              <td class="cmp--good">AGPL-3.0</td>
+              <td class="cmp--good">Their cloud, or self-hosted</td>
+              <td class="cmp--good">Their cloud, or self-hosted</td>
+              <td class="cmp--good">Their cloud, or self-hosted</td>
             </tr>
             <tr>
-              <th scope="row">Grist</th>
-              <td class="cmp--bad">Yes</td>
-              <td class="cmp--good">Their cloud, or self-hosted</td>
+              <th scope="row">Linked tables</th>
               <td class="cmp--good">Yes</td>
-              <td class="cmp--good">Yes (Python)</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--bad">Spreadsheets only</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+            </tr>
+            <tr>
+              <th scope="row">Formulas</th>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--bad">No</td>
+              <td class="cmp--warn">In-sheet only</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+            </tr>
+            <tr>
+              <th scope="row">Licence</th>
               <td class="cmp--good">Apache-2.0</td>
-            </tr>
-            <tr>
-              <th scope="row">Baserow</th>
-              <td class="cmp--bad">Yes</td>
-              <td class="cmp--good">Their cloud, or self-hosted</td>
-              <td class="cmp--good">Yes</td>
-              <td class="cmp--good">Yes</td>
-              <td class="cmp--good">MIT / premium</td>
-            </tr>
-            <tr>
-              <th scope="row">NocoDB</th>
-              <td class="cmp--bad">Yes</td>
-              <td class="cmp--good">Their cloud, or self-hosted</td>
-              <td class="cmp--good">Yes</td>
-              <td class="cmp--good">Yes</td>
+              <td class="cmp--bad">Proprietary</td>
+              <td class="cmp--warn">Source-available</td>
+              <td class="cmp--good">AGPL-3.0</td>
+              <td class="cmp--good">Apache-2.0</td>
+              <td class="cmp--good">MIT</td>
               <td class="cmp--good">AGPL-3.0</td>
             </tr>
           </tbody>
@@ -474,25 +490,14 @@
       </div>
 
       <p class="cmp__note">
-        &ldquo;Server can read your data&rdquo; means the operator of the server
-        holding your data can see its contents — not whether disks are encrypted
-        at rest, which is true of nearly everyone and protects against a stolen
-        disk rather than against the operator. Self-hosting any of the bottom
-        four makes <em>you</em> that operator, which is a real answer — it is
-        just a different one from &ldquo;nobody can.&rdquo;
-      </p>
-      <p class="cmp__note">
-        Anytype is the closest thing to this, and genuinely end-to-end
-        encrypted; it publishes its source under its own Any Source Available
-        License rather than an OSI-approved one, and has linked objects and
-        views but no formulas. It also syncs differently: devices talk to each
-        other peer-to-peer, relayed through Anytype&rsquo;s own network, rather
-        than through a server you choose — so &ldquo;host it yourself&rdquo;
-        means running their network nodes, not pointing the app at a server you
-        already have. CryptPad&rsquo;s Sheet is a real encrypted spreadsheet —
-        spreadsheets and linked tables are different tools.
-        Corrections welcome: <a href="mailto:tideworksupport@proton.me">tell us</a>
-        and we will fix this table.
+        &ldquo;Can read your data&rdquo; means the operator sees your contents —
+        not whether the disks are encrypted, which nearly everyone does and which
+        protects against a stolen drive rather than against the operator.
+        Self-hosting makes <em>you</em> the operator: a real answer, and a
+        different one from &ldquo;nobody can.&rdquo;
+        Corrections welcome —
+        <a href="mailto:tideworksupport@proton.me">tell us</a> and we will fix
+        this table.
       </p>
     </div>
   </section>
