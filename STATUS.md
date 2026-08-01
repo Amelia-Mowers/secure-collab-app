@@ -73,12 +73,12 @@ saved-view reads, CSV import/export, against production.
 
 [LAUNCH_AUDIT.md](./LAUNCH_AUDIT.md) has the full assessment. The load-bearing items:
 
-- **No Terms of Service, Privacy Policy, or support contact** — blockers for a public
-  paid launch, not engineering work.
-- **No account deletion** in the UI (the MAS capability exists; nothing exposes it).
-- **The app has no mobile layout** — two of twenty-one stylesheets carry a media
-  query, and neither is a core surface.
-- **Search is a non-functional placeholder** in the sidebar.
+- **The published terms and privacy policy have not been reviewed by a lawyer**, and
+  the provider is an individual rather than an entity — so personal liability sits
+  behind the cap. Live at `/terms` and `/privacy`, with acceptance enforced at
+  registration by MAS.
+- **Search does not exist.** The placeholder is gone; the feature is not built, and
+  needs a client-side design (the server cannot index ciphertext).
 - **No comments, attachments, notifications, per-action undo, or trash/restore** —
   ordinary expectations of this product class.
 - **No demo route**, though ADR 0002 specifies one as the top of the funnel.

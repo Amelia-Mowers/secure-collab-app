@@ -1,38 +1,44 @@
-# Legal documents — drafts
+# Legal documents
 
-`terms-of-service.md` and `privacy-policy.md` are **drafts for review**, not published
-text. They are deliberately kept out of `site/` so that merging cannot publish them:
-the Cloudflare Pages deploy ships everything under `site/`, and half-finished legal
-text on a live paid service is worse than none.
+`terms-of-service.md` and `privacy-policy.md` are the **source of truth**.
+`site/terms.html` and `site/privacy.html` are generated from them and committed,
+because the site deploy publishes `site/` as static files with no build step.
 
-## Before publishing
+Edit the Markdown, re-render, commit both:
 
-Four blanks need real answers. They appear as `[BRACKETED]` markers in both files:
+```sh
+node scripts/render-legal.mjs
+```
 
-| Marker | What it needs |
+Two copies of a legal document that can disagree is exactly the failure to avoid, so
+never hand-edit the HTML.
+
+## Where they appear
+
+| Surface | How |
 | --- | --- |
-| `[LEGAL ENTITY]` | The contracting party — a company if one exists, otherwise the individual trading name. This also decides who is liable. |
-| `[JURISDICTION]` | Governing law and venue. Follows from where the entity is established. |
-| `[SUPPORT EMAIL]` | The support/contact address, once it exists. Stripe expects one for dispute handling, and both documents need a route for legal notices and privacy requests. |
-| `[EFFECTIVE DATE]` | The date you publish. |
+| tidework.io footer | `/terms`, `/privacy`, and a `mailto:` support link |
+| Registration | MAS `branding.tos_uri` adds a **mandatory checkbox** and records the accepted document in its `user_terms` table |
+| OIDC metadata | advertised as `op_tos_uri` / `op_policy_uri` |
+| MAS emails | linked in the footer |
 
-## Then
+Because MAS keys consent to the **URL**, changing `tos_uri` re-prompts every existing
+user. That is right for a material change and wrong for fixing a typo — so fix typos in
+place at the same URL, and only move the URL when the terms genuinely change.
 
-1. Fill the blanks.
-2. **Have a lawyer read them.** These are written to be honest and specific about how
-   the product actually works — which is the hard half — but they have not been
-   reviewed by anyone qualified, and the liability and warranty sections in
-   particular are exactly where generic wording fails.
-3. Move both into `site/` as `terms.html` and `privacy.html` (or render them), add
-   footer links, and deploy.
+## Still outstanding
 
-## Why these are unusual
+**Neither document has been reviewed by a lawyer.** They were published deliberately —
+accurate terms live beat none while review is arranged — but the review is still owed,
+and the liability, warranty, and jurisdiction clauses are where generic wording most
+often fails.
 
-Most privacy policies are written to permit as much as possible. This one can be
-narrow and specific, because the service genuinely cannot read user content — the
-homeserver holds ciphertext and the keys never leave the user's devices. That is a
-real competitive asset and worth the effort of saying precisely.
+Two specifics worth raising with whoever reviews them:
 
-The flip side is the data-loss position: because we cannot read the data, we cannot
-recover it either. A lost recovery key with no enrolled passkey means the history is
-gone permanently, and the terms have to say so plainly rather than bury it.
+- **The provider is an individual**, not a company. That puts personal liability behind
+  the cap in §7 and an individual's name in a public document. Forming an entity is the
+  usual fix, and changes the opening line of both documents.
+- **No postal address is published.** Consumer-protection and e-commerce rules in
+  several jurisdictions — including the EU, whose GDPR rights the privacy policy already
+  undertakes to honour — expect a contactable address for the controller, not only an
+  email address.
