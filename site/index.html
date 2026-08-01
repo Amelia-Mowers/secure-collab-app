@@ -79,7 +79,21 @@
     font-weight: 600; transition: background 0.15s ease;
   }
   .nav .go:hover { background: var(--buoy-deep); color: var(--abyss); }
-  @media (max-width: 640px) { .nav a:not(.go):not(.brand) { display: none; } }
+  /* Narrow screens used to drop every section link, leaving the logo and
+     "Open app" with no hamburger to bring them back — so a phone visitor had
+     no way to reach pricing except by scrolling the whole page and hoping.
+     Wrapping to a second row costs nothing and needs no JavaScript, which a
+     hamburger would. */
+  @media (max-width: 640px) {
+    .nav { flex-wrap: wrap; gap: 0 18px; padding-bottom: 12px; }
+    .brand { order: 1; }          /* keeps its margin-right:auto, so ↓ sits right */
+    .nav .go { order: 2; }
+    /* A zero-height full-width break after the CTA, which forces the section
+       links onto their own row. Cheaper than a second container, and it means
+       adding a nav item needs no change here. */
+    .nav::after { content: ""; order: 2; flex: 0 0 100%; height: 0; }
+    .nav a:not(.go):not(.brand) { order: 3; flex: 0 0 auto; font-size: 13.5px; padding-top: 12px; }
+  }
 
   /* ── Hero — the surface ────────────────────────────────────────────── */
   .hero { padding: 110px 0 150px; position: relative; }
@@ -186,10 +200,42 @@
     .row .cell.plain .txt { opacity: 1 !important; filter: none !important; }
     .row .cell.plain .hid { opacity: 0; }
   }
+  /* Copy that only makes sense in one layout. Zero JavaScript on this page, so
+     the swap is CSS: the wide sentence talks about left and right columns and
+     hovering, neither of which exists on a phone. */
+  .only-narrow { display: none; }
   @media (max-width: 640px) {
-    .vault-head div:first-child, .cell.cipher { display: none; }
-    .vault-head, .row { grid-template-columns: 1fr; }
+    /* The comparison IS the section. Hiding the ciphertext column — which is
+       what a one-column collapse used to do — left a panel headed "your
+       device: decrypted" with three plain rows and nothing to compare them
+       against. So stack instead: each row becomes the ciphertext followed by
+       the same row decrypted, and the pair carries its own labels now that the
+       column headings are gone. */
+    .vault-head { display: none; }
+    .row { grid-template-columns: 1fr; padding: 4px 0; }
+    .cell { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+    .cell.cipher, .cell.plain { padding: 6px 18px; }
+    .cell.cipher { font-size: 12px; }
     .cell.plain { border-left: none; }
+    /* The label rides on the cell so the pairing survives without a heading
+       row, and the indent makes "decrypted" read as derived from the line
+       above it rather than as a separate item. */
+    .cell::before {
+      display: block;
+      font-size: 10.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--faint);
+      margin-bottom: 3px;
+    }
+    .cell.cipher::before { content: "server sees"; }
+    .cell.plain::before { content: "you see"; color: var(--spray); }
+    .cell.plain { margin-left: 14px; border-left: 1px solid var(--line); }
+    /* Absolutely positioned over a fixed-height cell in the two-column layout;
+       here the cell grows, so the dots would sit on top of the text. */
+    .cell.plain .hid { display: none; }
+    .only-wide { display: none; }
+    .only-narrow { display: inline; }
   }
 
   /* ── Feature soundings ─────────────────────────────────────────────── */
@@ -278,9 +324,17 @@
       <span class="tick">−40 m · the proof</span>
       <h2>What the server sees. What you see.</h2>
       <p class="lede">
-        The left column is your project board exactly as it crosses the wire
-        and sits at rest on the homeserver. The right column exists only on
-        devices that hold the keys. <b>Hover a row to decrypt it.</b>
+        <span class="only-wide">
+          The left column is your project board exactly as it crosses the wire
+          and sits at rest on the homeserver. The right column exists only on
+          devices that hold the keys. <b>Hover a row to decrypt it.</b>
+        </span>
+        <span class="only-narrow">
+          Each pair below is one row of your project board: first as it crosses
+          the wire and sits at rest on the homeserver, then as it appears on a
+          device that holds the keys. <b>Only your device can get from one to
+          the other.</b>
+        </span>
       </p>
       <div class="vault" role="img" aria-label="Comparison of encrypted server-side data and decrypted client-side data">
         <div class="vault-head"><div>server: ciphertext at rest</div><div>your device: decrypted</div></div>
