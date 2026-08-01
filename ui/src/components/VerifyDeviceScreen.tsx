@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import type { VerificationState, ResettableWorkspace, ResetPlan } from '../hooks/useAuth'
 import { PRF_PROVIDER_HINT, isPrfCapabilityError } from '../auth/passkeyPrf'
 import { SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/branding'
+import { downloadRecoveryKit } from '@/lib/recoveryKit'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './VerifyDeviceScreen.css'
 
@@ -227,6 +228,72 @@ function OfferPasskeySpeedup({
   )
 }
 
+/**
+ * The key, and the two ways to keep it.
+ *
+ * Download is primary and Copy is secondary, which is a reversal. The clipboard
+ * is close to the worst destination for a secret with no recovery path:
+ * clipboard managers keep it in plaintext, any app can read it, synced
+ * clipboards propagate it to devices the user was not thinking about, and the
+ * next copy silently overwrites it. The kit lands in Downloads, gets backed up
+ * with everything else there, and can be printed.
+ *
+ * It also carries what this modal cannot — which account, which server, the
+ * date, what the key opens and where to type it back in. A bare 48-character
+ * string found in a notes app in six months means nothing to the person who
+ * finds it.
+ */
+function RecoveryKeyBlock({ recoveryKey }: { recoveryKey: string }) {
+  const { activeAccountId, homeserverUrl } = useAuth()
+  const [copied, setCopied] = useState(false)
+  const [downloaded, setDownloaded] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(recoveryKey)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* the key is selectable in the box */
+    }
+  }
+
+  const handleDownload = () => {
+    downloadRecoveryKit({
+      userId: activeAccountId ?? 'your TideWork account',
+      homeserver: homeserverUrl ?? '',
+      recoveryKey,
+      appUrl: window.location.origin,
+    })
+    setDownloaded(true)
+  }
+
+  return (
+    <>
+      <div className="verify__key">
+        <code className="verify__key-text">{recoveryKey}</code>
+        <button type="button" className="verify__copy" onClick={handleCopy}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <div className="verify__kit">
+        <button type="button" className="verify__kit-btn" onClick={handleDownload}>
+          {downloaded ? 'Kit downloaded' : 'Download recovery kit (PDF)'}
+        </button>
+        <span className="verify__kit-hint">
+          A one-page sheet with your key, your account, and what to do with it.
+        </span>
+      </div>
+      {/* Free trust with this audience, and true: the 12x4 format IS the Matrix
+          one, so the key is not a TideWork lock-in. */}
+      <p className="verify__note">
+        This is a standard Matrix recovery key — the same secret other Matrix
+        clients call a recovery or security key.
+      </p>
+    </>
+  )
+}
+
 // ── Legacy passkey account: reveal and save the key they've never seen ──────
 
 function SaveLegacyKey({
@@ -240,7 +307,6 @@ function SaveLegacyKey({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [acknowledged, setAcknowledged] = useState(false)
-  const [copied, setCopied] = useState(false)
 
   const handleReveal = async () => {
     setError(null)
@@ -251,17 +317,6 @@ function SaveLegacyKey({
       setError(err?.message ?? 'Could not read your key from the passkey.')
     } finally {
       setBusy(false)
-    }
-  }
-
-  const handleCopy = async () => {
-    if (!key) return
-    try {
-      await navigator.clipboard.writeText(key)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* the key is selectable in the box */
     }
   }
 
@@ -277,12 +332,7 @@ function SaveLegacyKey({
       </p>
       {key ? (
         <>
-          <div className="verify__key">
-            <code className="verify__key-text">{key}</code>
-            <button type="button" className="verify__copy" onClick={handleCopy}>
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
+          <RecoveryKeyBlock recoveryKey={key} />
           <p className="verify__warning" role="note">
             <strong>If you lose both this key and your passkey, your data is
             gone permanently.</strong> No one — including us — can recover it.
@@ -401,22 +451,11 @@ function SaveRecoveryKey({
   recoveryKey: string
   onDone: () => void
 }) {
-  const [copied, setCopied] = useState(false)
   // EVERY account now leaves setup having seen its key (issue 63dc1339). There
   // is no longer a passkey-first path where this is optional break-glass, so it
   // is always shown and always requires an explicit acknowledgement — this is
   // the only moment the key exists anywhere we can show it.
   const [acknowledged, setAcknowledged] = useState(false)
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(recoveryKey)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* the key is selectable in the box */
-    }
-  }
 
   return (
     <Overlay labelledBy="verify-title">
@@ -425,17 +464,19 @@ function SaveRecoveryKey({
       </h2>
       <p className="verify__body">
         This key is the only thing that can restore your encrypted data on a new
-        device. Save it in your password manager, or in secure notes.
+        device. Download the kit, or save the key in your password manager.
       </p>
-      <div className="verify__key">
-        <code className="verify__key-text">{recoveryKey}</code>
-        <button type="button" className="verify__copy" onClick={handleCopy}>
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
+      <RecoveryKeyBlock recoveryKey={recoveryKey} />
       <p className="verify__warning" role="note">
         <strong>If you lose this key, your data is gone permanently.</strong> No
         one — including us — can recover it for you, because we never have it.
+      </p>
+      {/* The backlog asked this screen to say what happens if the tab is
+          closed. It used to be a lockout; it now genuinely is safe, so say so —
+          an unanswered question here reads as a trap. */}
+      <p className="verify__note">
+        Closing this tab is safe — your account keeps working and this same key
+        stays valid. You just will not be shown it again, so save it now.
       </p>
       {/* An explicit acknowledgement, not just a button. The cost of clicking
           past this screen is unbounded and unrecoverable, so it should take a
@@ -825,12 +866,10 @@ function ResetAccount({
         Save your new recovery key
       </h2>
       <p className="verify__body">
-        Your account has a fresh key. Save it in your password manager or secure
-        notes — you&apos;ll need it to sign in again.
+        Your account has a fresh key. Download the kit, or save it in your
+        password manager — you&apos;ll need it to sign in again.
       </p>
-      <div className="verify__key">
-        <code className="verify__key-text">{newKey}</code>
-      </div>
+      <RecoveryKeyBlock recoveryKey={newKey ?? ''} />
       <p className="verify__warning" role="note">
         <strong>If you lose this key, your data is gone permanently.</strong>
       </p>
