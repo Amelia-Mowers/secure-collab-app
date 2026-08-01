@@ -20,6 +20,12 @@ import { ConnectionStatus } from './components/ConnectionStatus'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
 import './App.css'
 
+/** How long the workspace home will promise incoming tables before falling
+ *  back to the ordinary empty state. Long enough for a seeded workspace's
+ *  events to come back around through sync on a slow connection, short enough
+ *  that a failed seeding doesn't leave someone watching a lie. */
+const SEEDED_WAIT_MS = 20_000
+
 /** Guard: redirect to /signin if not authenticated */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { username, accounts, resetApp } = useAuth()
@@ -132,7 +138,17 @@ function WorkspaceShell() {
         <SendFailureBanner workspace={workspace} workspaceId={decodedWorkspaceId} />
         <EncryptionWarningBanner workspace={workspace} syncCount={syncCount} />
         <Routes>
-          <Route path="/" element={<WorkspaceHome syncing={!!matrixSession} />} />
+          <Route
+            path="/"
+            element={
+              <WorkspaceHome
+                syncing={!!matrixSession}
+                workspace={workspace}
+                workspaceId={decodedWorkspaceId}
+                syncCount={syncCount}
+              />
+            }
+          />
           <Route path="/table/:tableId" element={<TableView workspace={workspace} syncCount={syncCount} />} />
           <Route path="/table/:tableId/view/:viewId" element={<ViewRouter workspace={workspace} syncCount={syncCount} />} />
           <Route path="/table/:tableId/cards" element={<CardView workspace={workspace} syncCount={syncCount} />} />
@@ -150,7 +166,66 @@ function WorkspaceShell() {
   )
 }
 
-function WorkspaceHome({ syncing }: { syncing?: boolean }) {
+function WorkspaceHome({
+  syncing,
+  workspace,
+  workspaceId,
+  syncCount,
+}: {
+  syncing?: boolean
+  workspace?: any
+  workspaceId?: string
+  syncCount?: number
+}) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  // Set by the creation flow when the workspace was seeded from a template or
+  // an archive. The seeding happens on a throwaway handle before this shell
+  // exists, so the tables are not here yet when we land — they arrive on a
+  // later sync tick. Until then this route would tell someone who just picked
+  // a pre-filled template that their workspace is empty and they should build
+  // one, which is the opposite of what they asked for.
+  const hinted = (location.state as { seeded?: boolean } | null)?.seeded === true
+  // If the tables never turn up — a seeding that half-failed, or a reload onto
+  // a history entry still carrying the hint — stop promising them and show the
+  // normal empty state, which at least offers a way forward.
+  const [gaveUp, setGaveUp] = useState(false)
+  const seeded = hinted && !gaveUp
+
+  useEffect(() => {
+    if (!hinted) return
+    const t = setTimeout(() => setGaveUp(true), SEEDED_WAIT_MS)
+    return () => clearTimeout(t)
+  }, [hinted])
+
+  useEffect(() => {
+    if (!seeded || !workspace || !workspaceId) return
+    let first: string | undefined
+    try {
+      first = (JSON.parse(workspace.listTables()) as string[])[0]
+    } catch {
+      return // not readable yet; a later sync tick will re-run this
+    }
+    if (!first) return
+    // `replace`, so Back from the table goes to the workspace list rather than
+    // bouncing through a home screen that immediately redirects again.
+    navigate(`/workspace/${encodeURIComponent(workspaceId)}/table/${encodeURIComponent(first)}`, {
+      replace: true,
+    })
+  }, [seeded, workspace, workspaceId, syncCount, navigate])
+
+  if (seeded) {
+    return (
+      <div className="welcome">
+        <div className="welcome-content">
+          <div className="welcome-logo" />
+          <h1 className="welcome-title">Setting up your workspace…</h1>
+          <p className="welcome-subtitle">Your tables are on their way.</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="welcome">
       <div className="welcome-content">
