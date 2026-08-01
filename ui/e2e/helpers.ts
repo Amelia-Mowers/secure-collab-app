@@ -40,6 +40,22 @@ export async function signInDevice(page: Page, url: string, username: string, pa
   await page.locator('button[type="submit"]').click()
 }
 
+/** Answer the "enter these groups of your recovery key" step. Reads the
+ *  requested group numbers off the labels, because they are random. */
+export async function completeKeyChallenge(page: Page, key: string) {
+  const groups = key.trim().split(/\s+/).filter(Boolean)
+  const fields = page.locator('.verify__challenge-field')
+  await expect(fields.first()).toBeVisible({ timeout: 30_000 })
+  const count = await fields.count()
+  for (let i = 0; i < count; i++) {
+    const label = (await fields.nth(i).locator('.verify__challenge-label').textContent()) ?? ''
+    const n = Number(label.replace(/\D/g, ''))
+    if (!n || !groups[n - 1]) throw new Error(`Could not read challenge label: "${label}"`)
+    await fields.nth(i).locator('input').fill(groups[n - 1])
+  }
+  await page.getByRole('button', { name: 'Confirm' }).click()
+}
+
 /**
  * Complete the first-device "Save your recovery key" step and return the key.
  *
@@ -58,6 +74,12 @@ export async function captureMasterKey(page: Page): Promise<string> {
   if (!key) throw new Error('Master key was empty')
   await page.getByRole('checkbox').check()
   await page.getByRole('button', { name: /continue/i }).click()
+
+  // Continue no longer finishes the step: the key is hidden and two of its
+  // groups are asked for back, so the acknowledgement is proof rather than a
+  // promise. Read which groups are wanted rather than assuming — they are
+  // chosen at random each time.
+  await completeKeyChallenge(page, key)
 
   // The speed-up offer only appears where a platform authenticator exists.
   const notNow = page.getByRole('button', { name: /not now/i })

@@ -442,6 +442,101 @@ function RecoverySetupFailed({
   )
 }
 
+/** Pick `count` distinct group positions to ask about. Random rather than
+ *  fixed, so a second run does not have the same answer as the first. */
+function pickChallenge(groupCount: number, count = 2): number[] {
+  const picks = new Set<number>()
+  while (picks.size < Math.min(count, groupCount)) {
+    picks.add(Math.floor(Math.random() * groupCount))
+  }
+  return [...picks].sort((a, b) => a - b)
+}
+
+/**
+ * Prove the key was actually saved, by asking for a couple of groups back with
+ * the key off screen.
+ *
+ * A checkbox is self-attestation, and on this screen self-attestation is what
+ * everyone clicks. Typing two groups back converts "I'll do it later" into
+ * either doing it or consciously choosing not to — which is the whole value.
+ *
+ * The key is HIDDEN here on purpose: with it still visible this is a copying
+ * exercise and proves nothing. "Show the key again" is the deliberate way back,
+ * and it re-rolls the challenge so peeking costs another peek. It is also the
+ * reason this is not a trap — the key is always one click away for as long as
+ * this screen is up, and if it is somehow lost anyway, resetting the account
+ * (sign out → reset) mints a fresh one at the cost of the history.
+ */
+function VerifyKeyStep({
+  recoveryKey,
+  onBack,
+  onVerified,
+}: {
+  recoveryKey: string
+  onBack: () => void
+  onVerified: () => void
+}) {
+  const groups = recoveryKey.trim().split(/\s+/).filter(Boolean)
+  const [challenge] = useState(() => pickChallenge(groups.length))
+  const [answers, setAnswers] = useState<Record<number, string>>({})
+  const [error, setError] = useState<string | null>(null)
+
+  const check = (e: React.FormEvent) => {
+    e.preventDefault()
+    // Case-insensitive: the key is displayed mixed-case and re-typing it
+    // exactly is not the skill being tested.
+    const ok = challenge.every(
+      i => (answers[i] ?? '').trim().toLowerCase() === groups[i].toLowerCase(),
+    )
+    if (ok) {
+      onVerified()
+    } else {
+      setError('That does not match. Check your saved copy and try again.')
+    }
+  }
+
+  return (
+    <form onSubmit={check}>
+      <p className="verify__body">
+        Now check you really have it. Enter these groups from your saved copy —
+        the key is hidden so this actually tests the copy, not the screen.
+      </p>
+      <div className="verify__challenge">
+        {challenge.map(i => (
+          <label key={i} className="verify__challenge-field">
+            <span className="verify__challenge-label">Group {i + 1}</span>
+            <input
+              className="verify__challenge-input"
+              value={answers[i] ?? ''}
+              onChange={e => {
+                setError(null)
+                setAnswers(a => ({ ...a, [i]: e.target.value }))
+              }}
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              aria-label={`Group ${i + 1} of your recovery key`}
+            />
+          </label>
+        ))}
+      </div>
+      {error && (
+        <p className="verify__error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="verify__actions verify__actions--stacked">
+        <button type="submit" className="verify__primary">
+          Confirm
+        </button>
+        <button type="button" className="verify__link" onClick={onBack}>
+          Show the key again
+        </button>
+      </div>
+    </form>
+  )
+}
+
 // ── First device: save the generated recovery (master) key ──────────────────
 
 function SaveRecoveryKey({
@@ -456,6 +551,24 @@ function SaveRecoveryKey({
   // is always shown and always requires an explicit acknowledgement — this is
   // the only moment the key exists anywhere we can show it.
   const [acknowledged, setAcknowledged] = useState(false)
+  // The checkbox says "I saved it"; this makes them show it. See VerifyKeyStep
+  // for why the key is hidden during the check.
+  const [checking, setChecking] = useState(false)
+
+  if (checking) {
+    return (
+      <Overlay labelledBy="verify-title">
+        <h2 id="verify-title" className="verify__title">
+          Check your recovery key
+        </h2>
+        <VerifyKeyStep
+          recoveryKey={recoveryKey}
+          onBack={() => setChecking(false)}
+          onVerified={onDone}
+        />
+      </Overlay>
+    )
+  }
 
   return (
     <Overlay labelledBy="verify-title">
@@ -494,7 +607,7 @@ function SaveRecoveryKey({
           type="button"
           className="verify__primary"
           disabled={!acknowledged}
-          onClick={onDone}
+          onClick={() => setChecking(true)}
         >
           Continue
         </button>
@@ -670,6 +783,7 @@ function ResetAccount({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [newKey, setNewKey] = useState<string | null>(null)
+  const [checkingKey, setCheckingKey] = useState(false)
   const [acknowledged, setAcknowledged] = useState(false)
 
   const loadPlan = async () => {
@@ -860,6 +974,23 @@ function ResetAccount({
     )
   }
 
+  // Same check as first-time setup. This key is just as unrecoverable, and the
+  // user has just destroyed the old one to get it.
+  if (checkingKey && newKey) {
+    return (
+      <Overlay labelledBy="verify-title">
+        <h2 id="verify-title" className="verify__title">
+          Check your new recovery key
+        </h2>
+        <VerifyKeyStep
+          recoveryKey={newKey}
+          onBack={() => setCheckingKey(false)}
+          onVerified={onDone}
+        />
+      </Overlay>
+    )
+  }
+
   return (
     <Overlay labelledBy="verify-title">
       <h2 id="verify-title" className="verify__title">
@@ -886,7 +1017,7 @@ function ResetAccount({
           type="button"
           className="verify__primary"
           disabled={!acknowledged}
-          onClick={onDone}
+          onClick={() => setCheckingKey(true)}
         >
           Sign in again
         </button>

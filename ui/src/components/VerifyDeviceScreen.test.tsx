@@ -103,8 +103,81 @@ describe('VerifyDeviceScreen', () => {
 
       fireEvent.click(screen.getByRole('checkbox'))
       expect(cont).toBeEnabled()
-      fireEvent.click(cont)
-      expect(h.confirmKeySaved).toHaveBeenCalledWith('ABCD-EFGH-IJKL')
+    })
+  })
+
+  // The checkbox is self-attestation, and on this screen self-attestation is
+  // what everybody clicks. This step makes them show the key instead.
+  describe('prove the key was saved', () => {
+    const KEY = 'EsTb 7Kq2 mW9x 4Ldp Rn5J vH8c Zy3T gQ6f Bs1N eK4w Xm2R uP7a'
+    const groups = KEY.split(' ')
+
+    beforeEach(() => {
+      h.recoveryPrompt = { kind: 'save', recoveryKey: KEY }
+    })
+
+    /** Acknowledge, continue, and report which groups were asked for. */
+    const reachChallenge = () => {
+      render(<VerifyDeviceScreen />)
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+      const labels = screen.getAllByText(/^Group \d+$/).map(el => Number(el.textContent!.slice(6)))
+      return labels
+    }
+
+    const fill = (asked: number[], values: (n: number) => string) => {
+      asked.forEach(n => {
+        fireEvent.change(screen.getByLabelText(`Group ${n} of your recovery key`), {
+          target: { value: values(n) },
+        })
+      })
+    }
+
+    it('does not finish setup on the acknowledgement alone', () => {
+      reachChallenge()
+      expect(h.confirmKeySaved).not.toHaveBeenCalled()
+    })
+
+    it('hides the key, so this tests the saved copy and not the screen', () => {
+      reachChallenge()
+      expect(screen.queryByText(KEY)).not.toBeInTheDocument()
+    })
+
+    it('asks for two distinct groups', () => {
+      const asked = reachChallenge()
+      expect(asked).toHaveLength(2)
+      expect(new Set(asked).size).toBe(2)
+      asked.forEach(n => expect(n).toBeGreaterThanOrEqual(1))
+      asked.forEach(n => expect(n).toBeLessThanOrEqual(groups.length))
+    })
+
+    it('completes setup when the groups are right', () => {
+      const asked = reachChallenge()
+      fill(asked, n => groups[n - 1])
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+      expect(h.confirmKeySaved).toHaveBeenCalledWith(KEY)
+    })
+
+    it('accepts a different case — re-typing it exactly is not the skill tested', () => {
+      const asked = reachChallenge()
+      fill(asked, n => groups[n - 1].toUpperCase())
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+      expect(h.confirmKeySaved).toHaveBeenCalledWith(KEY)
+    })
+
+    it('rejects a wrong group and says so, without leaving the step', () => {
+      const asked = reachChallenge()
+      fill(asked, () => 'wrong')
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+      expect(h.confirmKeySaved).not.toHaveBeenCalled()
+      expect(screen.getByRole('alert')).toHaveTextContent(/does not match/i)
+    })
+
+    // Not a trap: the key is one click away for as long as this screen is up.
+    it('can show the key again', () => {
+      reachChallenge()
+      fireEvent.click(screen.getByRole('button', { name: /show the key again/i }))
+      expect(screen.getByText(KEY)).toBeInTheDocument()
     })
   })
 
@@ -462,6 +535,15 @@ describe('VerifyDeviceScreen', () => {
       expect(done).toBeDisabled()
       fireEvent.click(screen.getByRole('checkbox'))
       fireEvent.click(done)
+
+      // The new key is exactly as unrecoverable as a first one, and the user
+      // has just destroyed the old one to get it — so it takes the same proof.
+      // This mock key is a single whitespace-delimited group, so one is asked.
+      expect(h.signOut).not.toHaveBeenCalled()
+      fireEvent.change(screen.getByLabelText('Group 1 of your recovery key'), {
+        target: { value: 'NEW-KEY-9999' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
       expect(h.signOut).toHaveBeenCalledTimes(1)
     })
 

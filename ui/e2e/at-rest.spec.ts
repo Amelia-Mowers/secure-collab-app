@@ -5,6 +5,7 @@ import {
   registerDevice,
   signInDevice,
   uniqueUser,
+  completeKeyChallenge,
 } from './helpers'
 
 /**
@@ -35,8 +36,12 @@ test(
     const dialog = page.getByRole('dialog')
     const keyText = page.locator('.verify__key-text')
     await expect(keyText).toBeVisible({ timeout: 90_000 })
+    // Read it BEFORE continuing: the check step hides the key, which is the
+    // point of the check step.
+    const provisionKey = ((await keyText.textContent()) ?? '').trim()
     await dialog.getByRole('checkbox').check()
     await dialog.getByRole('button', { name: /continue/i }).click()
+    await completeKeyChallenge(page, provisionKey)
     // Enrol the passkey: that is what re-keys this device to an ENCRYPTED
     // store, so it is a precondition of everything this spec asserts.
     await dialog.getByRole('button', { name: /set up a passkey/i }).click()
@@ -119,6 +124,7 @@ test('at-rest: a key-only account is encrypted AND reloads with no prompt', asyn
   expect(recoveryKey).not.toBe('')
   await dialog.getByRole('checkbox').check()
   await dialog.getByRole('button', { name: /continue/i }).click()
+  await completeKeyChallenge(page, recoveryKey)
   await expect(page).toHaveURL(/workspaces/, { timeout: 90_000 })
 
   await test.step('the store IS encrypted, with both wraps recorded', async () => {
