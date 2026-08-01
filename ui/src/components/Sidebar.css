@@ -421,3 +421,17 @@
     transition: none;
   }
 }
+
+/* Spinner for long operations (the integrity check). Honours reduced-motion by
+   holding still — the label already says "Checking…", so the animation is
+   reinforcement rather than the only signal. */
+.sidebar__spinner {
+  animation: sidebar-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes sidebar-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar__spinner { animation: none; }
+}
