@@ -1,4 +1,8 @@
-import { BILLING_DELETE_ACCOUNT_URL, BILLING_PORTAL_URL } from '@/branding'
+import {
+  BILLING_CHECKOUT_URL,
+  BILLING_DELETE_ACCOUNT_URL,
+  BILLING_PORTAL_URL,
+} from '@/branding'
 
 /**
  * Exchange a Matrix OpenID token (the JSON string from the bridge's
@@ -63,4 +67,25 @@ export async function requestAccountDeletion(openIdTokenJson: string): Promise<v
     )
   }
   throw new Error('Could not delete the account. Please try again.')
+}
+
+/**
+ * Exchange a Matrix OpenID token for a Stripe Checkout URL.
+ *
+ * The app used to link straight to `/subscribe?username=…`, which put the
+ * account name in a top-level navigation — browser history, the referrer sent
+ * to Stripe, screenshots, the URL bar. Proving identity instead keeps it out of
+ * all of them, and means the Worker derives the account from the token rather
+ * than trusting whatever the link said.
+ */
+export async function fetchCheckoutUrl(openIdTokenJson: string): Promise<string> {
+  const res = await fetch(BILLING_CHECKOUT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: openIdTokenJson,
+  })
+  if (!res.ok) throw new Error('Could not start checkout. Please try again.')
+  const { url } = (await res.json()) as { url?: string }
+  if (!url) throw new Error('Could not start checkout. Please try again.')
+  return url
 }

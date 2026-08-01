@@ -3,7 +3,8 @@
  *
  * Registration is OPEN with a TRIAL_DAYS trial; this worker enforces the
  * commercial boundary:
- *   GET  /subscribe?username=  → Stripe Checkout, keyed to the account
+ *   GET  /subscribe?username=  → Stripe Checkout (public entry: marketing links)
+ *   POST /checkout             → Stripe Checkout, authenticated; no name in the URL
  *   GET  /success              → confirmation page (no tokens — the account
  *                                already exists; payment just unlocks/keeps it)
  *   GET  /status?username=     → coarse {status, days_left} for the app badge
@@ -236,13 +237,12 @@ async function subscriptionIndex(env: Env): Promise<SubscriptionIndex> {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-async function subscribe(env: Env, url: URL): Promise<Response> {
-  const username = url.searchParams.get('username')?.trim()
-  // No account context → the journey starts with a free account in the app.
-  if (!username) return Response.redirect(env.APP_URL, 302)
-
+/** Create a Checkout session for `username`. Shared by the public GET entry
+ *  (marketing links, where there is no session to authenticate) and the
+ *  authenticated POST the app uses. */
+async function createCheckoutSession(env: Env, username: string) {
   const stripe = stripeClient(env)
-  const session = await stripe.checkout.sessions.create({
+  return await stripe.checkout.sessions.create({
     mode: 'subscription',
     client_reference_id: username,
     line_items: [
@@ -269,7 +269,38 @@ async function subscribe(env: Env, url: URL): Promise<Response> {
     success_url: 'https://billing.tidework.io/success?session_id={CHECKOUT_SESSION_ID}',
     cancel_url: env.APP_URL,
   })
+}
+
+/** Public entry, for links that have no session behind them (the marketing
+ *  site). Still takes ?username= — there is nothing to authenticate against
+ *  out here. The APP does not use this; see `checkout` below. */
+async function subscribe(env: Env, url: URL): Promise<Response> {
+  const username = url.searchParams.get('username')?.trim()
+  // No account context → the journey starts with a free account in the app.
+  if (!username) return Response.redirect(env.APP_URL, 302)
+  const session = await createCheckoutSession(env, username)
   return Response.redirect(session.url!, 303)
+}
+
+/**
+ * The app's entry: prove who you are, get a Checkout URL back.
+ *
+ * The app used to link to `/subscribe?username=…`, which put the account name
+ * in a top-level navigation — so it reached browser history, the referrer sent
+ * to Stripe, screenshots, and anything shoulder-surfing the URL bar. None of
+ * that is needed when the client can prove identity instead: same Matrix
+ * OpenID-token exchange as /portal and /delete-account.
+ *
+ * The username is now derived from the verified token, which also means the app
+ * cannot start a checkout for somebody else's account.
+ */
+async function checkout(env: Env, req: Request): Promise<Response> {
+  const json = jsonWith(env)
+  const who = await authenticate(env, req)
+  if (typeof who !== 'string') return who
+  const session = await createCheckoutSession(env, who)
+  if (!session.url) return json(502, { error: 'checkout_unavailable' })
+  return json(200, { url: session.url })
 }
 
 async function success(env: Env, url: URL): Promise<Response> {
@@ -674,7 +705,13 @@ export default {
       if (req.method === 'GET' && url.pathname === '/subscribe') return await subscribe(env, url)
       if (req.method === 'GET' && url.pathname === '/success') return await success(env, url)
       if (req.method === 'GET' && url.pathname === '/status') return await status(env, url)
-      if (req.method === 'OPTIONS' && (url.pathname === '/portal' || url.pathname === '/delete-account'))
+      if (req.method === 'POST' && url.pathname === '/checkout') return await checkout(env, req)
+      if (
+        req.method === 'OPTIONS' &&
+        (url.pathname === '/portal' ||
+          url.pathname === '/checkout' ||
+          url.pathname === '/delete-account')
+      )
         return new Response(null, { status: 204, headers: corsHeaders(env) })
       if (req.method === 'POST' && url.pathname === '/portal') return await portal(env, req)
       if (req.method === 'POST' && url.pathname === '/delete-account')

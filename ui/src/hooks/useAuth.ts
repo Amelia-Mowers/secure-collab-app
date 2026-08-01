@@ -34,7 +34,7 @@ import {
   parseWrapRecord,
 } from '../lib/passkeyWrap'
 import { retireStore } from '../lib/storeReaper'
-import { fetchPortalUrl, requestAccountDeletion } from '../lib/billing'
+import { fetchCheckoutUrl, fetchPortalUrl, requestAccountDeletion } from '../lib/billing'
 import { isSessionRejected } from '../lib/authErrors'
 
 /** How long a post-recovery `initialSync` may hold up the UI before it is
@@ -399,6 +399,8 @@ interface AuthState {
    *  it works while E2E is locked — e.g. at the verify gate) and exchanges it
    *  for a portal URL. Needs a live Matrix client. */
   openBillingPortal: () => Promise<void>
+  /** Start Stripe Checkout via an authenticated POST (no name in the URL). */
+  openCheckout: () => Promise<void>
 
   /** An in-progress (incoming) device verification, or null. Drives the verify
    *  screen's incoming-request prompt and emoji-compare step. */
@@ -1220,6 +1222,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Please sign in again to manage your subscription.')
     }
     const url = await fetchPortalUrl(await ms.requestOpenIdToken())
+    window.location.assign(url)
+  }, [])
+
+  /** Start Stripe Checkout. Same OpenID proof as the portal, for the same
+   *  reason plus one more: the old link carried ?username= through a top-level
+   *  navigation, so the account name reached history, referrers and
+   *  screenshots. Here the Worker derives it from the verified token. */
+  const openCheckout = useCallback(async () => {
+    const ms = matrixSessionRef.current
+    if (!ms || typeof ms.requestOpenIdToken !== 'function') {
+      throw new Error('Please sign in again to subscribe.')
+    }
+    const url = await fetchCheckoutUrl(await ms.requestOpenIdToken())
     window.location.assign(url)
   }, [])
 
@@ -2255,6 +2270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     revealRecoveryKey,
     regenerateRecoveryKey,
     openBillingPortal,
+    openCheckout,
     verification,
     acceptIncomingVerification,
     confirmVerification,
