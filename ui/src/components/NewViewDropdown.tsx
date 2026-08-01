@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { notifyWorkspaceChanged } from '@/hooks/useTable'
 import './NewViewDropdown.css'
 
@@ -191,7 +191,8 @@ export function KanbanConfigFields({ columns, config, onChange }: KanbanConfigFi
 
 // ── NewViewModal ───────────────────────────────────────────────
 export interface NewViewModalProps {
-  /** If provided, the table selector is pre-set and hidden */
+  /** Preselects the table. The selector stays visible and changeable — this is
+   *  a starting point, not a lock. */
   initialTableId?: string
   workspace: any
   onCreated: (viewId: string, viewType: ViewType, tableId: string) => void
@@ -234,7 +235,10 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
 
   const [selectedTableId, setSelectedTableId] = useState(initialTableId ?? tables[0]?.id ?? '')
   const [columns, setColumns] = useState<ColumnMeta[]>([])
-  const [viewType, setViewType] = useState<ViewType>('kanban')
+  // Table, not Kanban. Kanban is the only type with required configuration, so
+  // defaulting to it opens the dialogue already invalid, and it is not what most
+  // people are making. (issue ae97e19c)
+  const [viewType, setViewType] = useState<ViewType>('table')
   const [viewName, setViewName] = useState('')
   const [kanbanConfig, setKanbanConfig] = useState<KanbanConfig>({
     groupByColumn: '',
@@ -333,8 +337,12 @@ export function NewViewModal({ initialTableId, workspace, onCreated, onClose }: 
         </div>
 
         <form onSubmit={handleSubmit}>
-          {/* Table selector — shown when opened from the sidebar (no pre-selected table) */}
-          {!initialTableId && (
+          {/* Always shown. It used to be hidden whenever a table was
+              pre-selected, which meant the sidebar could not pass the table the
+              user is actually looking at without also taking away their ability
+              to change it. Pre-selecting and locking are different things.
+              (issue ae97e19c) */}
+          {(
             <div className="nvm__form-group">
               <label className="nvm__label">Table</label>
               {tables.length === 0 ? (
@@ -422,6 +430,16 @@ interface NewViewButtonProps {
 export function NewViewButton({ workspace, workspaceId, onCreated }: NewViewButtonProps) {
   const [isOpen, setIsOpen] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
+  // The table the user is looking at, from the route. Without this the dialogue
+  // preselected whichever table happens to be first, so opening "New view" from
+  // Projects offered to build one over Contacts. The route is the only thing
+  // that knows; the sidebar's own selection state is the same information.
+  // (issue ae97e19c)
+  const currentTableId = (() => {
+    const m = location.pathname.match(/\/workspace\/[^/]+\/table\/([^/]+)/)
+    return m ? decodeURIComponent(m[1]) : undefined
+  })()
 
   const handleCreated = (viewId: string, viewType: ViewType, tableId: string) => {
     setIsOpen(false)
@@ -447,6 +465,7 @@ export function NewViewButton({ workspace, workspaceId, onCreated }: NewViewButt
       {isOpen && (
         <NewViewModal
           workspace={workspace}
+          initialTableId={currentTableId}
           onCreated={handleCreated}
           onClose={() => setIsOpen(false)}
         />

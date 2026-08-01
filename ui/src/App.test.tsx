@@ -90,7 +90,9 @@ describe('App shell', () => {
     renderAt('/workspaces')
     await waitFor(() => expect(screen.getByText('Workspaces')).toBeInTheDocument())
     expect(screen.getByText('New workspace')).toBeInTheDocument()
-    expect(screen.getByText('Advanced')).toBeInTheDocument()
+    // Was "Advanced" — an unlabelled disclosure triangle whose only content was
+    // a raw room-ID field. It now says what it does. (issue ae97e19c)
+    expect(screen.getByText('Join a workspace by ID')).toBeInTheDocument()
   })
 
   it('shows the workspace shell (sidebar) when navigating into a workspace', async () => {
