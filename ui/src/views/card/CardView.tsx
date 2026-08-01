@@ -1,6 +1,9 @@
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { useTable } from '@/hooks/useTable'
+import { useTable, useMembers } from '@/hooks/useTable'
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon } from '@/components/Toolbar'
+import { CellDisplay, memberLabel, type CellColumn } from '@/cells/cellRegistry'
+import { makeReferenceLookup } from '@/lib/referenceLookup'
 import './CardView.css'
 
 interface CardViewProps {
@@ -30,6 +33,31 @@ export function CardView({ workspace, syncCount }: CardViewProps) {
   const location = useLocation()
   const { rows, loading, error } = useTable(workspace, tableId!, workspaceId, syncCount)
 
+  // Schema, members and reference labels — everything the shared cell registry
+  // needs. Declared BEFORE the early returns below, because hooks cannot be
+  // called conditionally.
+  const [schema, setSchema] = useState<any>(null)
+  useEffect(() => {
+    if (workspace && tableId) {
+      try {
+        setSchema(JSON.parse(workspace.getTableSchema(tableId)))
+      } catch {
+        /* keep prior */
+      }
+    }
+  }, [workspace, tableId, syncCount])
+
+  const members = useMembers(workspace)
+  const referenceLookup = useMemo(() => makeReferenceLookup(workspace), [workspace])
+
+  /** Schema by column id, minus columns deleted under the decay model whose
+   *  values still linger in row data. */
+  const columnsById = useMemo(() => {
+    const deleted = new Set<string>(schema?.deleted_columns ?? [])
+    const cols = schema?.columns ? (Object.values(schema.columns) as CellColumn[]) : []
+    return new Map(cols.filter(c => !deleted.has(c.id)).map(c => [c.id, c]))
+  }, [schema])
+
   if (!tableId) {
     return <div className="card-view"><div className="state-empty"><p>No table selected</p></div></div>
   }
@@ -56,10 +84,18 @@ export function CardView({ workspace, syncCount }: CardViewProps) {
   const allKeys = new Set<string>()
   rows.forEach(r => Object.keys(r).forEach(k => { if (k !== '_row_id') allKeys.add(k) }))
   const keys = Array.from(allKeys).sort()
-  const titleKey = keys[0]
-  const previewKey = keys[1]
-  const statusKey = keys.find(k => k.toLowerCase().includes('status'))
-  const assigneeKey = keys.find(k => k.toLowerCase().includes('assign'))
+
+  // Title and preview by TYPE, not by alphabetical position. `keys[0]` picked
+  // whatever sorted first — on the demo's Projects table that was `assignee`
+  // for the title and `client` for the preview, so every card was headed
+  // "Untitled" above a raw row id. A title wants text; a preview wants prose.
+  const typed = (k: string) => columnsById.get(k)?.column_type
+  const titleKey = keys.find(k => typed(k) === 'text') ?? keys[0]
+  const previewKey =
+    keys.find(k => k !== titleKey && typed(k) === 'document') ??
+    keys.find(k => k !== titleKey && typed(k) === 'text')
+  const statusKey = keys.find(k => typed(k) === 'select') ?? keys.find(k => k.toLowerCase().includes('status'))
+  const assigneeKey = keys.find(k => typed(k) === 'member') ?? keys.find(k => k.toLowerCase().includes('assign'))
 
   return (
     <div className="card-view">
@@ -88,7 +124,10 @@ export function CardView({ workspace, syncCount }: CardViewProps) {
             const title = titleKey ? (row[titleKey] ?? 'Untitled') : row._row_id
             const preview = previewKey ? (row[previewKey] ?? '') : ''
             const statusVal = statusKey ? row[statusKey] : null
-            const assigneeVal = assigneeKey ? String(row[assigneeKey] ?? '') : null
+            // Resolve to a display name: the avatar letter and its tooltip both
+            // came from a raw MXID otherwise.
+            const assigneeRaw = assigneeKey ? String(row[assigneeKey] ?? '') : ''
+            const assigneeVal = assigneeRaw ? memberLabel(members, assigneeRaw) : null
 
             return (
               <div
@@ -114,9 +153,21 @@ export function CardView({ workspace, syncCount }: CardViewProps) {
                 {/* Title */}
                 <div className="entry-card__title">{String(title)}</div>
 
-                {/* Preview text */}
-                {preview && (
-                  <div className="entry-card__preview">{String(preview)}</div>
+                {/* Preview text — through the registry so a document renders
+                    as its one-line preview rather than raw markdown. */}
+                {preview !== '' && preview != null && (
+                  <div className="entry-card__preview">
+                    {previewKey && columnsById.has(previewKey) ? (
+                      <CellDisplay
+                        column={columnsById.get(previewKey)!}
+                        value={preview}
+                        lookup={referenceLookup}
+                        members={members}
+                      />
+                    ) : (
+                      String(preview)
+                    )}
+                  </div>
                 )}
 
                 {/* Extra fields */}
@@ -124,12 +175,28 @@ export function CardView({ workspace, syncCount }: CardViewProps) {
                   {keys
                     .filter(k => k !== titleKey && k !== previewKey && k !== statusKey && k !== assigneeKey)
                     .slice(0, 2)
-                    .map(k => (
-                      <div key={k} className="entry-card__field">
-                        <span className="entry-card__field-label">{k}</span>
-                        <span className="entry-card__field-value">{String(row[k] ?? '')}</span>
-                      </div>
-                    ))}
+                    .map(k => {
+                      // Same registry as the grid and entry view — hand-rolling
+                      // this is what printed raw row ids and ISO dates.
+                      const column = columnsById.get(k)
+                      return (
+                        <div key={k} className="entry-card__field">
+                          <span className="entry-card__field-label">{column?.name ?? k}</span>
+                          <span className="entry-card__field-value">
+                            {column ? (
+                              <CellDisplay
+                                column={column}
+                                value={row[k]}
+                                lookup={referenceLookup}
+                                members={members}
+                              />
+                            ) : (
+                              String(row[k] ?? '')
+                            )}
+                          </span>
+                        </div>
+                      )
+                    })}
                 </div>
               </div>
             )

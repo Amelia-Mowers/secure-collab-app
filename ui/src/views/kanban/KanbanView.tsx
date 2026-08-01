@@ -26,7 +26,8 @@ import { ViewSettingsModal } from '@/components/ViewSettingsModal'
 import { FilterPanel } from '@/components/FilterPanel'
 import { type FilterColumnMeta } from '@/views/table/FilterBar'
 import { applyFilters, type FilterCondition } from '@/lib/filters'
-import { makeReferenceLookup } from '@/lib/referenceLookup'
+import { makeReferenceLookup, type ReferenceLookup } from '@/lib/referenceLookup'
+import { CellDisplay, type CellColumn, type MemberList } from '@/cells/cellRegistry'
 import { memberLabel } from '@/cells/cellRegistry'
 import { resolveTargetColumn } from './kanbanUtils'
 import './KanbanView.css'
@@ -80,7 +81,26 @@ function statusColor(colTitle: string) {
   return 'var(--text-tertiary)'
 }
 
-function SortableCard({ card, hiddenKeys, person, onOpen }: { card: KanbanCard; hiddenKeys: Set<string>; person: string | null; onOpen: (card: KanbanCard) => void }) {
+function SortableCard({
+  card,
+  hiddenKeys,
+  person,
+  onOpen,
+  columns,
+  lookup,
+  members,
+}: {
+  card: KanbanCard
+  hiddenKeys: Set<string>
+  person: string | null
+  onOpen: (card: KanbanCard) => void
+  /** Schema by column id. Without it a card can only print the raw key and the
+   *  raw value — which is how references rendered as `row_1785…` and dates as
+   *  ISO strings. */
+  columns: Map<string, CellColumn>
+  lookup: ReferenceLookup
+  members: MemberList
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id })
 
   const style = {
@@ -120,12 +140,27 @@ function SortableCard({ card, hiddenKeys, person, onOpen }: { card: KanbanCard; 
       <div className="kcard__title">{card.title || 'Untitled'}</div>
       {extraFields.length > 0 && (
         <div className="kcard__fields">
-          {extraFields.map(([k, v]) => (
-            <div key={k} className="kcard__field">
-              <span className="kcard__field-label">{k}</span>
-              <span className="kcard__field-value">{String(v ?? '')}</span>
-            </div>
-          ))}
+          {extraFields.map(([k, v]) => {
+            // Render through the SAME registry as the grid and entry view.
+            // Hand-rolling it here is what printed raw row ids, ISO dates and
+            // MXIDs — a card is a projection of the same cells, so it should
+            // use the same renderer.
+            const column = columns.get(k)
+            return (
+              <div key={k} className="kcard__field">
+                <span className="kcard__field-label">{column?.name ?? k}</span>
+                <span className="kcard__field-value">
+                  {column ? (
+                    <CellDisplay column={column} value={v} lookup={lookup} members={members} />
+                  ) : (
+                    // No schema entry: a lingering value from a column deleted
+                    // between renders. Show it plainly rather than crash.
+                    String(v ?? '')
+                  )}
+                </span>
+              </div>
+            )
+          })}
         </div>
       )}
       {person && (
@@ -228,6 +263,14 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
   const members = useMembers(workspace)
   const me = useCurrentUserId(workspace)
   const referenceLookup = useMemo(() => makeReferenceLookup(workspace), [workspace])
+
+  /** Schema by column id, for rendering card fields through the shared cell
+   *  registry. Named apart from the filter engine's own columnsById below,
+   *  which carries a different (narrower) shape. */
+  const cellColumnsById = useMemo(
+    () => new Map<string, CellColumn>(availableColumns.map(c => [c.id, c as CellColumn])),
+    [availableColumns],
+  )
   const memberCol = useMemo(() => {
     const configured = viewConfig?.kanban_config?.assignee_column
     if (!configured) return null
@@ -240,6 +283,17 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
     if (first == null || first === '') return null
     return memberLabel(members, String(first))
   }
+
+  /** Keys a card must not list as a field: deleted columns whose values still
+   *  linger, plus the configured assignee — it already has the footer chip, and
+   *  listing it too printed the same person twice on every card. That was
+   *  previously masked because the field list showed a raw MXID while the
+   *  footer showed a name, so they did not look like duplicates. */
+  const cardHiddenKeys = useMemo(() => {
+    const hidden = new Set(deletedCols)
+    if (memberCol) hidden.add(memberCol.id)
+    return hidden
+  }, [deletedCols, memberCol])
 
   // Only select/multiselect columns can serve as the "group by" axis — same
   // rule as NewViewDropdown's kanban config (issue 6e2011e3): grouping by free
@@ -608,8 +662,11 @@ export function KanbanView({ workspace, syncCount }: KanbanViewProps) {
                         <SortableCard
                           key={card.id}
                           card={card}
-                          hiddenKeys={deletedCols}
+                          hiddenKeys={cardHiddenKeys}
                           person={personFor(card)}
+                          columns={cellColumnsById}
+                          lookup={referenceLookup}
+                          members={members}
                           onOpen={(c) => navigate(`/workspace/${workspaceId}/table/${tableId}/entry/${c._row_id ?? c.id}`, { state: { from: location.pathname } })}
                         />
                       ))}
