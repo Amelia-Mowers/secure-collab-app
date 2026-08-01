@@ -126,12 +126,17 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
     // label a row by default.
     const titleCol = [...columnsById.values()].find(c => c.column_type === 'text')
     if (!titleCol) return labels
+    // Only the rows the log actually mentions — which also makes `entries` a
+    // real dependency, so labels refresh when the log reloads after a revert.
+    const wanted = new Set(entries.flatMap(e => (e.kind === 'edit' ? [e.rowId] : [])))
+    if (wanted.size === 0) return labels
     try {
       const rows = JSON.parse(workspace.getTableRows(tableId)) as Array<Record<string, unknown>>
       for (const row of rows) {
         const id = String(row._row_id ?? '')
+        if (!wanted.has(id)) continue
         const label = row[titleCol.id]
-        if (id && typeof label === 'string' && label.trim()) labels.set(id, label.trim())
+        if (typeof label === 'string' && label.trim()) labels.set(id, label.trim())
       }
     } catch {
       /* no rows readable — entries simply go unlabelled */
