@@ -124,7 +124,6 @@
 }
 
 .acm__type-radio {
-  accent-color: var(--accent);
   flex-shrink: 0;
 }
 
