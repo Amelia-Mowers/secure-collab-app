@@ -1,11 +1,8 @@
 # TideWork — Privacy Policy
 
-**DRAFT — not published. See [README.md](./README.md) for the blanks that must be
-filled and the legal review required before this goes live.**
-
-**Effective:** [EFFECTIVE DATE]
-**Controller:** [LEGAL ENTITY], operator of TideWork at tidework.io.
-**Contact:** [SUPPORT EMAIL]
+**Effective:** 1 August 2026
+**Controller:** Amelia Mowers, operator of TideWork at tidework.io.
+**Contact:** tideworksupport@proton.me
 
 ---
 
@@ -135,7 +132,7 @@ Two of these you can exercise yourself, immediately:
   It is a plain, documented format, not a lock-in.
 - **Erasure** — delete your account from *Account settings*.
 
-For anything else, write to [SUPPORT EMAIL].
+For anything else, write to tideworksupport@proton.me.
 
 The honest limit on erasure: we can delete your account and the encrypted content we
 hold. We cannot reach copies already synced to a collaborator's device or to another
@@ -155,7 +152,7 @@ with a key held by your device and, optionally, your passkey. Connections use TL
 Server access is restricted and key-based.
 
 No system is perfectly secure. If you find a vulnerability, please report it to
-[SUPPORT EMAIL] rather than disclosing it publicly, and we will work with you.
+tideworksupport@proton.me rather than disclosing it publicly, and we will work with you.
 
 ## Changes
 

@@ -112,6 +112,21 @@ policy:
     admin_clients:
       - "00000000000000000000STR1PE"
 
+# Terms and privacy. `tos_uri` is not merely a link: MAS adds a MANDATORY
+# checkbox to registration and records which document the user accepted in its
+# `user_terms` table — so consent is captured at the point it is given, on the
+# page where registration actually happens (MAS's, not the app's). Both are also
+# advertised to clients via OIDC metadata (op_tos_uri / op_policy_uri) and
+# appear in the footer of MAS's emails.
+#
+# Changing either URL is not free: a new tos_uri means existing users are asked
+# to accept again, which is the correct behaviour for a material change and the
+# wrong one for a typo fix.
+branding:
+  service_name: TideWork
+  tos_uri: https://tidework.io/terms
+  policy_uri: https://tidework.io/privacy
+
 # Transactional email via Resend (verification codes, password resets).
 # Domain-authenticated (SPF/DKIM on tidework.io); username is literally
 # "resend", the password is the API key (tier-2 sops: email.sops.env).

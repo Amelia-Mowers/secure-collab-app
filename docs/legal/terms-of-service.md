@@ -1,10 +1,7 @@
 # TideWork — Terms of Service
 
-**DRAFT — not published. See [README.md](./README.md) for the blanks that must be
-filled and the legal review required before this goes live.**
-
-**Effective:** [EFFECTIVE DATE]
-**Provider:** [LEGAL ENTITY] ("we", "us"), operator of TideWork at tidework.io.
+**Effective:** 1 August 2026
+**Provider:** Amelia Mowers ("we", "us"), operator of TideWork at tidework.io.
 
 By creating an account or using TideWork, you agree to these terms. If you do not
 agree, do not use the service.
@@ -42,7 +39,7 @@ a way that circumvents per-account pricing.
 - We may change prices with at least 30 days' notice before the change applies to your
   renewal. Continuing to use the service after that is acceptance of the new price.
 - **Refunds** are not automatic. If something has gone wrong, contact
-  [SUPPORT EMAIL] and we will deal with it in good faith. Statutory rights that apply
+  tideworksupport@proton.me and we will deal with it in good faith. Statutory rights that apply
   where you live are unaffected by this paragraph.
 
 ### What happens if you stop paying
@@ -157,10 +154,10 @@ acceptance. The current version is always published at tidework.io.
 
 ## 11. Governing law
 
-These terms are governed by the laws of [JURISDICTION], and the courts of
-[JURISDICTION] have exclusive jurisdiction, except where mandatory consumer-protection
+These terms are governed by the laws of the State of Washington, USA, and the courts of
+the State of Washington, USA have exclusive jurisdiction, except where mandatory consumer-protection
 law in your country of residence gives you the right to bring proceedings locally.
 
 ## 12. Contact
 
-[SUPPORT EMAIL]
+tideworksupport@proton.me
