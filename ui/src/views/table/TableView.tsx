@@ -36,6 +36,7 @@ import { FilterPanel } from '@/components/FilterPanel'
 import { applyFilters, type FilterCondition } from '@/lib/filters'
 import './TableView.css'
 import { makeReferenceLookup } from '@/lib/referenceLookup'
+import { useDialogs } from '@/components/dialogs/DialogProvider'
 
 interface TableViewProps {
   workspace: any
@@ -623,9 +624,17 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     refresh()
   }
 
-  const handleDeleteColumn = (colId: string, colName: string) => {
+  const handleDeleteColumn = async (colId: string, colName: string) => {
     if (!tableId || !workspace) return
-    if (!window.confirm(`Delete column "${colName}"? Its values will stop showing.`)) return
+    if (
+      !(await confirm({
+        title: `Delete column "${colName}"?`,
+        message: 'Its values will stop showing.',
+        confirmLabel: 'Delete column',
+        danger: true,
+      }))
+    )
+      return
     const result = workspace.deleteColumn(tableId, colId)
     try {
       setSchema(JSON.parse(workspace.getTableSchema(tableId)))
@@ -784,6 +793,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
   }
 
   const referenceLookup = useMemo(() => makeReferenceLookup(workspace), [workspace])
+  const { confirm } = useDialogs()
 
   // Latest displayed rows/columns in refs so moveEditing stays stable (it's
   // captured by the memoized cell renderer). tableRowsRef is set after the table

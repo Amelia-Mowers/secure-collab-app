@@ -1,0 +1,127 @@
+/* Themed confirm / prompt / notice. Reuses the shared `.modal-overlay` and
+   `.modal` shell so these sit in the same visual family as the rest. */
+
+.dlg {
+  max-width: 440px;
+  width: 100%;
+  padding: 22px;
+}
+
+.dlg__title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dlg__message {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.dlg__label {
+  display: block;
+  margin: 12px 0 6px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.dlg__input {
+  width: 100%;
+  padding: 8px 11px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg-elevated, var(--bg-surface));
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin-top: 10px;
+}
+.dlg__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.dlg__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.dlg__danger {
+  background: var(--red, #f87171);
+  border: none;
+  color: #fff;
+  border-radius: 7px;
+  padding: 7px 15px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Notices ────────────────────────────────────────────────────
+   Bottom-right, stacked, non-blocking. The whole point is that a result no
+   longer freezes the tab the way `alert()` did. */
+.dlg-notices {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+}
+
+.dlg-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated, var(--bg-surface));
+  box-shadow: var(--shadow-lg, 0 8px 28px rgba(0, 0, 0, 0.35));
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.dlg-notice--error {
+  border-color: var(--red, #f87171);
+  color: var(--red, #f87171);
+}
+.dlg-notice--success {
+  border-color: var(--green, #4ade80);
+}
+
+.dlg-notice__text {
+  flex: 1;
+  min-width: 0;
+  /* A long error must wrap rather than stretch the toast off-screen. */
+  overflow-wrap: anywhere;
+}
+
+.dlg-notice__dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px;
+}
+.dlg-notice__dismiss:hover {
+  opacity: 1;
+}
+
+@media (max-width: 560px) {
+  .dlg-notices {
+    left: 16px;
+    right: 16px;
+    max-width: none;
+  }
+}
