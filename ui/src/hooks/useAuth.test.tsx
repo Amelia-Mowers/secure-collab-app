@@ -2,7 +2,7 @@
  * Tests for the AuthProvider: sign-in, session persistence, session restore,
  * workspace CRUD, sign-out, multi-account, and legacy migration.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import { createElement } from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -50,7 +50,7 @@ vi.mock('@/wasm/generated/app_core.js', () => ({
   },
 }))
 
-import { AuthProvider, useAuth } from './useAuth'
+import { AuthProvider, useAuth, RECOVERY_BOOTSTRAP_DELAYS_MS } from './useAuth'
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 
@@ -465,20 +465,34 @@ describe('recovery bootstrap (first device)', () => {
     mockRestore.mockClear()
   })
 
-  // These three tests let `bootstrapWithKey`s real backoff run (0 + 2s + 5s),
-  // which costs ~7s each, rather than faking the clock.
+  // The backoff is shrunk to near-zero rather than faked, and the reason is
+  // worth keeping: fake timers CANNOT drive this loop. `bootstrapWithKey`
+  // schedules attempt N+1's `setTimeout` only after attempt N's promise
+  // settles, and since #191 that path runs real WebCrypto, which resolves off
+  // the fake clock. A single `advanceTimersByTimeAsync` fires only the timers
+  // that exist while it drains, so when the crypto lands after the drain the
+  // timer is never fired and the test HANGS — forever, not slowly, so a bigger
+  // timeout does not help (that was the first fix attempted, and it changed
+  // nothing). Pumping the clock in a loop fails identically: the loop burns
+  // through its steps in milliseconds of real time, long before the crypto
+  // resolves.
   //
-  // Fake timers CANNOT work here. That function schedules attempt N+1's
-  // `setTimeout` only after attempt N's promise settles, and since #191 that
-  // path runs real WebCrypto, which resolves off the fake clock. A single
-  // `advanceTimersByTimeAsync` fires only the timers that exist while it
-  // drains, so when the crypto lands after the drain the timer is never fired
-  // and the test hangs — forever, not slowly, so a bigger timeout does not help
-  // (that was the first fix attempted here, and it changed nothing). Pumping
-  // the clock in a loop fails the same way: the loop burns through its steps in
-  // milliseconds of real time, long before the crypto resolves.
-  //
-  // Verified with a scratch repro: fake timers hang, real timers pass in 7.3s.
+  // So the delays are real, just small. These three tests used to pay ~7s each
+  // of genuine sleep for the privilege.
+  const realDelays = [...RECOVERY_BOOTSTRAP_DELAYS_MS]
+  beforeEach(() => {
+    RECOVERY_BOOTSTRAP_DELAYS_MS.splice(0, RECOVERY_BOOTSTRAP_DELAYS_MS.length, 0, 1, 1)
+  })
+  afterEach(() => {
+    RECOVERY_BOOTSTRAP_DELAYS_MS.splice(0, RECOVERY_BOOTSTRAP_DELAYS_MS.length, ...realDelays)
+  })
+
+  it('retries with a real backoff, and the shipped policy is three attempts', () => {
+    // Asserted on the restored copy, so this describes what SHIPS rather than
+    // what the tests below run with.
+    expect(realDelays).toEqual([0, 2000, 5000])
+  })
+
   function makeRecoverySession(enableRecovery: () => Promise<string>) {
     return {
       ...makeMockSession('@carol:localhost'),
