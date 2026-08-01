@@ -414,6 +414,18 @@ interface AuthState {
   cancelVerification: () => Promise<void>
 }
 
+/**
+ * Backoff for the first-device recovery bootstrap: try, wait 2s, wait 5s.
+ *
+ * Exported and mutable so tests can shrink it. Fake timers cannot drive this
+ * loop — attempt N+1's timer is only scheduled after attempt N's REAL WebCrypto
+ * settles, so a single `advanceTimersByTimeAsync` misses it and the test hangs
+ * (learned the hard way in PR #194). The choice was therefore between three
+ * tests paying ~16s of real sleep and making the policy injectable; this is the
+ * latter, and it also lets a test assert the policy rather than just outlast it.
+ */
+export const RECOVERY_BOOTSTRAP_DELAYS_MS = [0, 2000, 5000]
+
 // ── Local-storage keys ───────────────────────────────────────────────────────
 
 const ACCOUNTS_KEY = 'collab:accounts'
@@ -703,9 +715,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // know (the old console.warn fail-open silently produced devices whose
   // history could never be restored).
   const bootstrapWithKey = useCallback(async (ms: any) => {
-    const retryDelaysMs = [0, 2000, 5000]
     let lastErr: unknown
-    for (const delay of retryDelaysMs) {
+    for (const delay of RECOVERY_BOOTSTRAP_DELAYS_MS) {
       if (delay > 0) await new Promise(r => setTimeout(r, delay))
       try {
         const recoveryKey: string = await ms.enableRecovery()
