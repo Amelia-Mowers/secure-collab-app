@@ -260,6 +260,25 @@ const ShieldIcon = () => (
   </svg>
 )
 
+/** Motion for a long operation. The integrity check re-walks the room's whole
+ *  history and takes tens of seconds; a label that merely changed to "Checking…"
+ *  is indistinguishable from a frozen button for that entire time. */
+const InlineSpinner = () => (
+  <svg
+    className="sidebar__spinner"
+    width="12"
+    height="12"
+    viewBox="0 0 12 12"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    aria-hidden="true"
+  >
+    <circle cx="6" cy="6" r="4.5" opacity="0.25" />
+    <path d="M6 1.5a4.5 4.5 0 014.5 4.5" strokeLinecap="round" />
+  </svg>
+)
+
 const TrashIcon = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
     <line x1="2" y1="3" x2="10" y2="3" />
@@ -960,7 +979,7 @@ export function Sidebar({
                 disabled={checkingIntegrity}
                 title="Compare this workspace against the server and repair anything missing"
               >
-                <ShieldIcon />
+                {checkingIntegrity ? <InlineSpinner /> : <ShieldIcon />}
                 <span>{checkingIntegrity ? 'Checking…' : 'Check integrity'}</span>
               </button>
             )}

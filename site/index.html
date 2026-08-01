@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>TideWork — the workspace your server can't read</title>
-<meta name="description" content="TideWork is an open-source, end-to-end encrypted collaborative workspace — tables, kanban boards, and documents over the Matrix protocol. Your server stores ciphertext. Only your devices hold the keys." />
+<title>TideWork — the open-source, end-to-end encrypted Airtable alternative</title>
+<meta name="description" content="TideWork is the first open-source, end-to-end encrypted Airtable alternative — linked tables, formulas, kanban boards and documents over the Matrix protocol. Your server stores ciphertext; only your devices hold the keys." />
 <link rel="stylesheet" href="/fonts/fonts.css" />
 <style>
   /* ── Deep-water system ─────────────────────────────────────────────── */
@@ -87,7 +87,7 @@
     font-family: var(--serif); font-optical-sizing: auto;
     font-size: clamp(42px, 7.2vw, 78px); font-weight: 560;
     line-height: 1.02; letter-spacing: -0.022em; color: var(--foam);
-    max-width: 14ch;
+    max-width: 18ch;
   }
   .hero h1 .cant { font-style: italic; color: var(--spray); }
   .hero .sub { margin-top: 26px; font-size: 18.5px; max-width: 54ch; }
@@ -123,6 +123,25 @@
   @media (prefers-reduced-motion: reduce) {
     .wave, .hero > .wrap > * { animation: none !important; }
   }
+
+
+  /* Comparison table */
+  .cmp-wrap { margin-top: 34px; overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+  .cmp { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14.5px; }
+  .cmp th, .cmp td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .cmp thead th { color: var(--foam); font-weight: 600; font-size: 13px; background: rgba(4, 22, 35, 0.5); }
+  .cmp tbody th { color: var(--foam); font-weight: 600; white-space: nowrap; }
+  .cmp tbody tr:last-child th, .cmp tbody tr:last-child td { border-bottom: none; }
+  /* Our own row is marked, not hidden: a comparison that pretends to be
+     neutral while being written by one of the entrants fools nobody. */
+  .cmp__self th, .cmp__self td { background: rgba(103, 226, 212, 0.06); }
+  .cmp__self th::after { content: " (us)"; color: var(--faint); font-weight: 400; }
+  .cmp--good { color: var(--spray); }
+  .cmp--warn { color: var(--buoy); }
+  .cmp--bad { color: var(--mist); opacity: 0.75; }
+  .cmp__note { margin-top: 18px; font-size: 13.5px; color: var(--faint); max-width: 68ch; }
+  .cmp__note a { color: var(--mist); }
+  @media (max-width: 640px) { .cmp { min-width: 620px; font-size: 13.5px; } }
 
   /* ── Sections ─────────────────────────────────────────────────────── */
   section { padding: 96px 0; position: relative; }
@@ -204,6 +223,7 @@
     <a class="brand" href="/"><span class="mark" aria-hidden="true"></span><b>TideWork</b></a>
     <a href="#vault">Proof</a>
     <a href="#charts">How it works</a>
+    <a href="#compare">Compare</a>
     <a href="#fares">Pricing</a>
     <a href="https://github.com/Amelia-Mowers/secure-collab-app">GitHub</a>
     <a class="go" href="https://app.tidework.io">Open app</a>
@@ -215,12 +235,12 @@
   <div class="hero">
     <div class="wrap">
       <span class="tick">0 m · the surface</span>
-      <h1>The workspace your server <span class="cant">can't</span> read.</h1>
+      <h1>The first open-source, <span class="cant">end-to-end encrypted</span> Airtable alternative.</h1>
       <p class="sub">
-        Tables, kanban boards, and documents that sync in real time — built on
-        the Matrix protocol with <strong>genuine end-to-end encryption</strong>.
+        Linked tables, formulas, kanban boards and documents that sync in real
+        time — on the Matrix protocol, with encryption your server cannot bypass.
         Every cell is encrypted on your device before it ever leaves.
-        Your server stores ciphertext. So do we.
+        <strong>Your server stores ciphertext. So do we.</strong>
       </p>
       <div class="cta">
         <a class="btn btn-buoy" href="https://app.tidework.io">Open TideWork</a>
@@ -292,6 +312,102 @@
           whenever you like; it's your data and your identity.</p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- −600 m ─ the fleet -->
+  <section id="compare">
+    <div class="wrap">
+      <span class="tick">−600 m · the fleet</span>
+      <h2>Who else can read your tables?</h2>
+      <p class="lede">
+        Plenty of tools are open source. Plenty are encrypted. The question that
+        matters is narrower: when your data sits on a server, can the operator
+        read it? Here is the honest answer for the nearest alternatives.
+      </p>
+
+      <div class="cmp-wrap">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th scope="col">Tool</th>
+              <th scope="col">Server can read your data</th>
+              <th scope="col">Relational tables</th>
+              <th scope="col">Formulas</th>
+              <th scope="col">Licence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="cmp__self">
+              <th scope="row">TideWork</th>
+              <td class="cmp--good">No — it only ever holds ciphertext</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Apache-2.0</td>
+            </tr>
+            <tr>
+              <th scope="row">Airtable</th>
+              <td class="cmp--bad">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--bad">Proprietary</td>
+            </tr>
+            <tr>
+              <th scope="row">Anytype</th>
+              <td class="cmp--good">No — end-to-end encrypted</td>
+              <td class="cmp--good">Linked objects, multiple views</td>
+              <td class="cmp--bad">No</td>
+              <td class="cmp--warn">Source-available (its own licence)</td>
+            </tr>
+            <tr>
+              <th scope="row">CryptPad</th>
+              <td class="cmp--good">No — end-to-end encrypted</td>
+              <td class="cmp--bad">Spreadsheets, not linked tables</td>
+              <td class="cmp--warn">Spreadsheet formulas</td>
+              <td class="cmp--good">AGPL-3.0</td>
+            </tr>
+            <tr>
+              <th scope="row">Grist</th>
+              <td class="cmp--bad">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes (Python)</td>
+              <td class="cmp--good">Apache-2.0</td>
+            </tr>
+            <tr>
+              <th scope="row">Baserow</th>
+              <td class="cmp--bad">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">MIT / premium</td>
+            </tr>
+            <tr>
+              <th scope="row">NocoDB</th>
+              <td class="cmp--bad">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">Yes</td>
+              <td class="cmp--good">AGPL-3.0</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="cmp__note">
+        &ldquo;Server can read your data&rdquo; means the operator of the server
+        holding your data can see its contents — not whether disks are encrypted
+        at rest, which is true of nearly everyone and protects against a stolen
+        disk rather than against the operator. Self-hosting any of the bottom
+        four makes <em>you</em> that operator, which is a real answer — it is
+        just a different one from &ldquo;nobody can.&rdquo;
+      </p>
+      <p class="cmp__note">
+        Anytype is the closest thing to this, and genuinely end-to-end
+        encrypted; it publishes its source under its own Any Source Available
+        License rather than an OSI-approved one, and has linked objects and
+        views but no formulas. CryptPad&rsquo;s Sheet is a real encrypted
+        spreadsheet — spreadsheets and linked tables are different tools.
+        Corrections welcome: <a href="mailto:tideworksupport@proton.me">tell us</a>
+        and we will fix this table.
+      </p>
     </div>
   </section>
 
