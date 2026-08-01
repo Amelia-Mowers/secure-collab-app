@@ -353,10 +353,18 @@ export function WorkspacesPage() {
             >
               <polyline points="3,2 7,5 3,8" />
             </svg>
-            Advanced
+            Join a workspace by ID
           </button>
           {showAdvanced && (
             <div className="advanced-section__content">
+              {/* Say what this is for. A workspace ID is the protocol showing
+                  through, and the honest framing is that you should not
+                  normally need it — an invitation is the usual route, and
+                  someone who has been handed an ID knows what to do with it. */}
+              <p className="advanced-section__hint">
+                Normally you are invited to a workspace and it appears above.
+                Use this only if someone has sent you a workspace ID directly.
+              </p>
               {isJoining ? (
                 <form className="advanced-join-form" onSubmit={handleJoin}>
                   <input

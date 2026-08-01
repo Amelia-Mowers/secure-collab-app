@@ -435,3 +435,13 @@
 @media (prefers-reduced-motion: reduce) {
   .sidebar__spinner { animation: none; }
 }
+
+/* Funnel on a filtered view. Two views over one table read identically in this
+   list — "Board" and "My Board" both badge as "Projects" — and the filter is
+   the entire difference. Tertiary, so it informs without shouting. */
+.sidebar__item-filter {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}

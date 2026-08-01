@@ -57,6 +57,11 @@ interface ViewInfo {
   view_type: 'table' | 'kanban' | 'calendar' | 'card' | string
   table_id: string
   tableName?: string
+  /** How many filters the view applies. Two views over the same table are
+   *  otherwise indistinguishable in this list — 'Board' and 'My Board' both
+   *  read as 'Projects' — and the filter is the whole difference between them.
+   *  (issue ae97e19c) */
+  filterCount?: number
 }
 
 // ── SVG icon set ────────────────────────────────────────────
@@ -229,6 +234,16 @@ function viewIcon(viewType: string) {
 export function viewPath(view: ViewInfo, workspaceId: string): string {
   return `/workspace/${workspaceId}/table/${view.table_id}/view/${view.id}`
 }
+
+const filterLabel = (n = 0) => `Filtered — ${n} condition${n === 1 ? '' : 's'}`
+
+/** A filtered view shows a funnel. Small and quiet: it distinguishes two views
+ *  over one table without competing with the view's own name. */
+const FunnelIcon = () => (
+  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+    <path d="M1 1.5h8L6 5.2v3.3L4 7.3V5.2z" strokeLinejoin="round" />
+  </svg>
+)
 
 const PencilIcon = () => (
   <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" strokeWidth="1.3">
@@ -548,6 +563,7 @@ export function Sidebar({
                 view_type: v.view_type,
                 table_id: table.id,
                 tableName: table.name,
+                filterCount: Array.isArray(v.filters) ? v.filters.length : 0,
               })
             } catch { /* skip malformed view */ }
           }
@@ -1017,6 +1033,15 @@ export function Sidebar({
                   <span className="sidebar__item-label">{view.name}</span>
                   {view.tableName && (
                     <span className="sidebar__item-badge">{view.tableName}</span>
+                  )}
+                  {!!view.filterCount && (
+                    <span
+                      className="sidebar__item-filter"
+                      title={filterLabel(view.filterCount)}
+                      aria-label={filterLabel(view.filterCount)}
+                    >
+                      <FunnelIcon />
+                    </span>
                   )}
                   {active && (
                     <span className="sidebar__item-settings" title="View settings">

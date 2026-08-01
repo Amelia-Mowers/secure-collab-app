@@ -386,3 +386,12 @@
   .workspaces-page__topbar { padding: 10px 14px; }
   .workspaces-page__content { padding: 24px 14px; }
 }
+
+/* Explains the join-by-ID field rather than leaving it as bare protocol. */
+.advanced-section__hint {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  margin: 0 0 10px;
+  max-width: 56ch;
+}
