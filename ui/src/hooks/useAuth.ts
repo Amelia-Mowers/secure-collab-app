@@ -570,6 +570,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Forward reference to rekeyToEncryptedStore (defined later) so the recovery
   // callbacks above it can call it without a TDZ / dependency cycle.
   const rekeyRef = useRef<((secret: string) => Promise<void>) | null>(null)
+  // Same reason: bootstrapWithKey needs to seal the data key the instant the
+  // recovery key exists, and sealDataKey is defined below it.
+  const sealDataKeyRef = useRef<((secret: string) => Promise<void>) | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>(() =>
     loadWorkspaces(loadActiveAccountId(loadAccounts())),
   )
@@ -704,6 +707,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (delay > 0) await new Promise(r => setTimeout(r, delay))
       try {
         const recoveryKey: string = await ms.enableRecovery()
+        // Seal NOW, not when the user ticks the box.
+        //
+        // The SDK store has been encrypted since login, with a data key that
+        // until this moment exists only in memory (`dataKeyRef`). Sealing was
+        // deferred to `confirmKeySaved`, so anyone who closed the tab on the
+        // "save your key" screen left no on-disk way back to that data key —
+        // and the next load could not open its own store. Server-side the
+        // backup was already Enabled, so bootstrap never ran again and the key
+        // was never re-shown. That is a hard lockout, reached by closing a tab.
+        //
+        // Sealing here discloses nothing: it writes the same two wraps a
+        // confirmation would have, using a key we are about to display anyway.
+        // The user's confirmation is about whether THEY have saved it; it was
+        // never the right gate for whether the BROWSER can reopen its store.
+        await sealDataKeyRef.current?.(recoveryKey)
         setRecoveryPrompt({ kind: 'save', recoveryKey })
         return
       } catch (err) {
@@ -861,9 +879,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       // Best-effort: a failure leaves the account v1 (plaintext at rest) rather
       // than unopenable. Loud, because it is otherwise a silent downgrade.
-      console.error('[auth] could not seal the data key; staying unencrypted at rest:', e)
+      // The account stays v1, which — since the store itself is encrypted from
+      // login — means this browser cannot reopen it. Loud, because it is the
+      // difference between "degraded" and "locked out".
+      console.error('[auth] could not seal the data key; this browser may not reopen the store:', e)
     }
   }, [])
+  sealDataKeyRef.current = sealDataKey
 
   /** Record that this account's key has been saved, so neither the legacy
    *  migration nor the save step nags again. Defined before its consumers: a
