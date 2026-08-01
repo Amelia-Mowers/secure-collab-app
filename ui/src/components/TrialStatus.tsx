@@ -11,13 +11,14 @@
  * see any of this.
  */
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import {
   BILLING_STATUS_URL,
   OFFICIAL_HOMESERVER_URL,
   SUPPORT_EMAIL,
   SUPPORT_MAILTO,
-  subscribeUrlFor,
+
 } from '@/branding'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './TrialStatus.css'
@@ -56,23 +57,65 @@ function useBillingStatus(): { billing: Billing | null; username: string | null 
   return { billing, username }
 }
 
+/**
+ * "Subscribe", as a button rather than a link.
+ *
+ * It used to be an <a> to /subscribe?username=…, which put the account name in
+ * a navigation the browser records — history, the referrer handed to Stripe,
+ * any screenshot of the URL bar. Getting the Checkout URL by an authenticated
+ * POST first costs one round-trip and keeps the name out of all of them.
+ *
+ * Rendered as a link where it needs to look like one; the accessible role is
+ * still a button, because it performs an action before navigating.
+ */
+function SubscribeAction({
+  className,
+  children,
+  title,
+}: {
+  className: string
+  children: ReactNode
+  title?: string
+}) {
+  const { openCheckout } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const onClick = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      await openCheckout() // navigates to Stripe on success
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not start checkout. Please try again.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button type="button" className={className} onClick={onClick} disabled={busy} title={title}>
+        {busy ? 'Opening…' : children}
+      </button>
+      {error && <span className="trial-error">{error}</span>}
+    </>
+  )
+}
+
 /** Compact pill for the sidebar/topbar. Renders nothing unless on trial. */
 export function TrialBadge() {
   const { billing, username } = useBillingStatus()
   if (!billing || billing.status !== 'trial' || !username) return null
   const days = billing.days_left ?? 0
   return (
-    <a
+    <SubscribeAction
       className={`trial-badge ${days <= 3 ? 'trial-badge--urgent' : ''}`}
-      href={subscribeUrlFor(username)}
-      target="_blank"
-      rel="noreferrer"
       title="Subscribe to keep your account after the trial"
     >
       <span className="trial-badge__dot" aria-hidden="true" />
       Trial · {days} day{days === 1 ? '' : 's'} left
       <span className="trial-badge__cta">Subscribe</span>
-    </a>
+    </SubscribeAction>
   )
 }
 
@@ -90,9 +133,9 @@ export function TrialGate() {
           safe and untouched (we couldn&apos;t read them if we tried), but sync is off until
           you subscribe. Pick up exactly where you left off:
         </p>
-        <a className="trial-gate__subscribe" href={subscribeUrlFor(username)}>
+        <SubscribeAction className="trial-gate__subscribe">
           Subscribe — $12/month
-        </a>
+        </SubscribeAction>
         <ManageSubscriptionButton className="trial-gate__manage" errorClassName="trial-gate__error" />
         <button type="button" className="trial-gate__signout" onClick={signOut}>
           Sign out

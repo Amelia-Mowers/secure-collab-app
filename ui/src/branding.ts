@@ -41,7 +41,6 @@ export const REACTIVATE_URL = 'https://tidework.io/reactivate'
  *  elsewhere, so it survives the outage it most often has to describe. */
 export const STATUS_URL = 'https://tidework.io/status'
 
-export const SUBSCRIBE_URL = 'https://billing.tidework.io/subscribe'
 
 /** Billing status endpoint for the trial badge / locked gate. */
 export const BILLING_STATUS_URL = 'https://billing.tidework.io/status'
@@ -50,12 +49,11 @@ export const BILLING_STATUS_URL = 'https://billing.tidework.io/status'
  *  portal URL (issue row_1782751521723). POST, authenticated, CORS. */
 export const BILLING_PORTAL_URL = 'https://billing.tidework.io/portal'
 
+/** Authenticated Stripe Checkout. POST an OpenID token, get a URL back —
+ *  so the account name never appears in a navigation the browser records. */
+export const BILLING_CHECKOUT_URL = 'https://billing.tidework.io/checkout'
+
 /** Account deletion — same OpenID-token proof as the portal. The Worker cancels
  *  billing and then deactivates + erases, because doing only the second half in
  *  the app would leave a live subscription billing a deleted account. */
 export const BILLING_DELETE_ACCOUNT_URL = 'https://billing.tidework.io/delete-account'
-
-/** Checkout for a specific account (trial-first flow — ADR 0002 amended). */
-export function subscribeUrlFor(username: string): string {
-  return SUBSCRIBE_URL + '?username=' + encodeURIComponent(username)
-}
