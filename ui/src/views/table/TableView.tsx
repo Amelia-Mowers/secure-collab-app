@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   useReactTable,
@@ -165,6 +166,9 @@ function SortableHeader({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  // Where to paint the portalled dropdown, in viewport coordinates.
+  const [menuAt, setMenuAt] = useState<{ top: number; right: number } | null>(null)
 
   // Close the ⋯ menu on any click outside it. A document listener is robust to
   // z-index/stacking (a fixed backdrop could sit under the sticky header row),
@@ -172,10 +176,41 @@ function SortableHeader({
   useEffect(() => {
     if (!menuOpen) return
     const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+      const t = e.target as Node
+      // The dropdown is portalled to <body>, so it is NOT inside menuRef —
+      // without checking it too, clicking a menu item would close the menu
+      // before the item's own handler ran.
+      if (menuRef.current?.contains(t) || dropdownRef.current?.contains(t)) return
+      setMenuOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
+
+  // The menu is anchored to a button inside a <th> that clips
+  // (`overflow: hidden`, so header text truncates) and inside `.table-scroll`
+  // (`overflow: auto`). A clipping ancestor cannot be escaped with z-index — the
+  // dropdown was cut off by the grid rather than drawn over it. So it renders in
+  // a portal at <body>, positioned from the button's rect.
+  useEffect(() => {
+    if (!menuOpen) {
+      setMenuAt(null)
+      return
+    }
+    const place = () => {
+      const rect = menuRef.current?.getBoundingClientRect()
+      if (!rect) return
+      setMenuAt({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+    }
+    place()
+    // Scrolling the grid or resizing moves the anchor; the menu must follow it
+    // or close rather than hang in the wrong place.
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
   }, [menuOpen])
 
   const style: React.CSSProperties = {
@@ -213,28 +248,36 @@ function SortableHeader({
         >
           ⋯
         </button>
-        {menuOpen && (
-          <div className="col-menu__dropdown" role="menu">
-            <button
-              className="col-menu__item"
-              onClick={() => { setMenuOpen(false); onEdit() }}
+        {menuOpen &&
+          menuAt &&
+          createPortal(
+            <div
+              className="col-menu__dropdown"
+              role="menu"
+              ref={dropdownRef}
+              style={{ top: menuAt.top, right: menuAt.right }}
             >
-              Edit column…
-            </button>
-            <button
-              className="col-menu__item"
-              onClick={() => { setMenuOpen(false); onHide() }}
-            >
-              Hide column
-            </button>
-            <button
-              className="col-menu__item col-menu__delete"
-              onClick={() => { setMenuOpen(false); onDelete() }}
-            >
-              Delete column
-            </button>
-          </div>
-        )}
+              <button
+                className="col-menu__item"
+                onClick={() => { setMenuOpen(false); onEdit() }}
+              >
+                Edit column…
+              </button>
+              <button
+                className="col-menu__item"
+                onClick={() => { setMenuOpen(false); onHide() }}
+              >
+                Hide column
+              </button>
+              <button
+                className="col-menu__item col-menu__delete"
+                onClick={() => { setMenuOpen(false); onDelete() }}
+              >
+                Delete column
+              </button>
+            </div>,
+            document.body,
+          )}
       </div>
       {/* Resize grip. Pointer capture keeps the drag alive outside the handle,
           and stopPropagation keeps dnd-kit's column reorder from claiming it. */}

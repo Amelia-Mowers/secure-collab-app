@@ -127,13 +127,6 @@ const LockIcon = () => (
   </svg>
 )
 
-const SearchIcon = () => (
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4">
-    <circle cx="5" cy="5" r="3.5" />
-    <line x1="7.5" y1="7.5" x2="11" y2="11" />
-  </svg>
-)
-
 const SettingsIcon = () => (
   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3">
     <circle cx="6" cy="6" r="2" />
@@ -881,15 +874,6 @@ ${r.undecryptable} event(s) could not be decrypted — those are a key problem, 
 
       {!collapsed && (
         <>
-          {/* Search */}
-          <div className="sidebar__search-wrap">
-            <div className="sidebar__search">
-              <SearchIcon />
-              <span className="sidebar__search-placeholder">Search...</span>
-              <span className="sidebar__search-shortcut">⌘K</span>
-            </div>
-          </div>
-
           {/* Tables section */}
           <div className="sidebar__section">
             <div className="sidebar__section-label">Tables</div>

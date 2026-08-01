@@ -355,11 +355,14 @@
 .col-sortable:hover .col-menu-btn { opacity: 0.7; pointer-events: auto; }
 .col-menu-btn:hover { opacity: 1; color: var(--text); background: var(--bg-hover); }
 
+/* Portalled to <body> (see ColumnHeader): the <th> clips with
+   `overflow: hidden` and `.table-scroll` with `overflow: auto`, and a clipping
+   ancestor cannot be escaped with z-index. `top`/`right` come from the anchor
+   button's rect, so this is fixed to the viewport rather than the cell.
+   Above the modal overlay's 1000 so it is never the thing hidden. */
 .col-menu__dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 41;
+  position: fixed;
+  z-index: 1100;
   min-width: 160px;
   margin-top: 4px;
   padding: 4px;

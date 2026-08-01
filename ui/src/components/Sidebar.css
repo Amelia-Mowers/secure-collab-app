@@ -96,32 +96,6 @@
 }
 
 /* ── Search ─────────────────────────────────────────────────── */
-.sidebar__search-wrap {
-  padding: 10px 10px 4px;
-}
-
-.sidebar__search {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.sidebar__search-placeholder {
-  flex: 1;
-}
-
-.sidebar__search-shortcut {
-  font-size: 10px;
-  opacity: 0.5;
-}
-
 /* ── Sections ───────────────────────────────────────────────── */
 .sidebar__section {
   padding: 10px 6px 4px;
