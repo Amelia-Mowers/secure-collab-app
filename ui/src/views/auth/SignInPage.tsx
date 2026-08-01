@@ -407,6 +407,19 @@ export function SignInPage() {
             ? 'Your account will be created on the selected homeserver. You can use it across any Matrix-compatible app.'
             : 'Connect to any Matrix homeserver. Your data stays end-to-end encrypted.'}
         </p>
+
+        {/* A locked account cannot sign in at all — the homeserver refuses
+            before the app is ever reached — so the way back has to be offered
+            HERE, where that user is stuck, rather than behind a session. */}
+        {mode !== 'signup' && (
+          <p className="signin__hint">
+            Account locked after a trial or lapsed subscription?{' '}
+            <a href="https://tidework.io/reactivate" target="_blank" rel="noreferrer">
+              Reactivate it
+            </a>{' '}
+            — no sign-in needed.
+          </p>
+        )}
       </div>
     </div>
   )

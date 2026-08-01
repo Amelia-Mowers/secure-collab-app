@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reactivate your account — TideWork</title>
+<meta name="description" content="Restart a TideWork subscription and unlock an account that was locked when its trial or subscription ended." />
+<link rel="stylesheet" href="/fonts/fonts.css" />
+<style>
+  :root {
+    --abyss:#03101c; --foam:#eaf6f6; --mist:#9fc3cd; --faint:#5c8292;
+    --spray:#67e2d4; --buoy:#ff9e57; --buoy-deep:#f08236; --line:rgba(154,203,212,0.16);
+    --serif:'Fraunces', Georgia, serif; --sans:'IBM Plex Sans', system-ui, sans-serif;
+    --mono:'IBM Plex Mono', ui-monospace, monospace;
+  }
+  * { margin:0; box-sizing:border-box; }
+  body {
+    font-family:var(--sans); color:var(--mist); line-height:1.7;
+    background: radial-gradient(120% 60% at 70% -20%, #11597d 0%, transparent 55%), var(--abyss);
+    background-color:var(--abyss); min-height:100vh; padding-bottom:80px;
+  }
+  ::selection { background:var(--spray); color:var(--abyss); }
+  .wrap { max-width:640px; margin:0 auto; padding:0 24px; }
+  header { border-bottom:1px solid var(--line); padding:18px 0; margin-bottom:56px; }
+  header .wrap { display:flex; align-items:center; gap:18px; }
+  .brand { color:var(--foam); text-decoration:none; font-weight:600; }
+  header a { color:var(--mist); text-decoration:none; font-size:14px; }
+  header a:hover { color:var(--foam); }
+  h1 { font-family:var(--serif); font-size:32px; line-height:1.2; color:var(--foam); margin-bottom:12px; }
+  h2 { font-family:var(--serif); font-size:19px; color:var(--foam); margin:40px 0 10px; }
+  p { margin:14px 0; font-size:15px; }
+  a { color:var(--spray); }
+  strong { color:var(--foam); }
+  code { font-family:var(--mono); font-size:13px; background:rgba(154,203,212,0.10); padding:1px 5px; border-radius:4px; }
+  form {
+    margin:28px 0; padding:22px; border:1px solid var(--line); border-radius:12px;
+    background:rgba(4,22,35,0.55);
+  }
+  label { display:block; font-size:13px; color:var(--foam); margin-bottom:8px; font-weight:500; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  input[type=text] {
+    flex:1; min-width:200px; padding:11px 13px; font-size:15px; font-family:var(--mono);
+    color:var(--foam); background:rgba(3,16,28,0.7); border:1px solid var(--line);
+    border-radius:8px;
+  }
+  input[type=text]:focus { outline:none; border-color:var(--spray); }
+  button {
+    padding:11px 22px; font-size:15px; font-weight:600; font-family:var(--sans);
+    color:var(--abyss); background:var(--buoy); border:none; border-radius:8px; cursor:pointer;
+  }
+  button:hover { background:var(--buoy-deep); }
+  .hint { font-size:12.5px; color:var(--faint); margin-top:10px; }
+  .note { border-left:2px solid var(--spray); padding-left:16px; margin:22px 0; }
+  footer { margin-top:64px; padding-top:22px; border-top:1px solid var(--line); font-size:13px; color:var(--faint); }
+  footer a { color:var(--mist); text-decoration:none; }
+  @media (max-width:600px) { h1 { font-size:26px; } header { margin-bottom:36px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="/">TideWork</a>
+    <a href="/terms">Terms</a>
+    <a href="/privacy">Privacy</a>
+    <a href="https://app.tidework.io">Open app</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Reactivate your account</h1>
+
+  <p>When a trial ends or a subscription lapses, the account is <strong>locked</strong> —
+  not deleted. Your workspaces are all still there, encrypted, exactly as you left them.
+  Paying unlocks them again.</p>
+
+  <p>You do not need to sign in first. A locked account cannot sign in, which is
+  precisely why this page exists.</p>
+
+  <!-- A plain GET form: the browser builds
+       billing.tidework.io/subscribe?username=… itself, so this page keeps the
+       site's promise of loading no JavaScript at all. -->
+  <form action="https://billing.tidework.io/subscribe" method="get">
+    <label for="username">Your TideWork username</label>
+    <div class="row">
+      <input
+        type="text"
+        id="username"
+        name="username"
+        placeholder="ada"
+        autocomplete="username"
+        spellcheck="false"
+        autocapitalize="none"
+        required
+      />
+      <button type="submit">Continue to payment</button>
+    </div>
+    <p class="hint">
+      Just the username — if you sign in as <code>@ada:tidework.io</code>, enter
+      <code>ada</code>.
+    </p>
+  </form>
+
+  <div class="note">
+    <p>Payment unlocks the account automatically, usually within a few seconds. Then sign
+    in as normal at <a href="https://app.tidework.io">app.tidework.io</a>.</p>
+  </div>
+
+  <h2>If you have forgotten your username</h2>
+  <p>Email <a href="mailto:tideworksupport@proton.me">tideworksupport@proton.me</a> from
+  the address you signed up with and we will find it. We cannot read your workspaces —
+  that is the point of the product — but the account itself we can look up.</p>
+
+  <h2>If you would rather not come back</h2>
+  <p>Nothing is required of you. A locked account that never had a subscription is
+  deleted automatically 60 days after its trial ends; one that did is kept, in case you
+  change your mind. Either way you are not charged again. See the
+  <a href="/terms">terms</a> for the specifics.</p>
+
+  <footer>
+    <p>© 2026 TideWork · <a href="/">tidework.io</a> · <a href="/terms">Terms</a> ·
+    <a href="/privacy">Privacy</a> ·
+    <a href="mailto:tideworksupport@proton.me">Contact</a></p>
+  </footer>
+</main>
+</body>
+</html>

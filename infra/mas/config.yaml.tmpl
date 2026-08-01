@@ -94,6 +94,12 @@ upstream_oauth2:
       client_id: "${GOOGLE_OAUTH_CLIENT_ID}"
       client_secret: "${GOOGLE_OAUTH_CLIENT_SECRET}"
       scope: "openid profile email"
+      # Always show Google's account chooser. Without this, Chrome silently
+      # reuses whichever Google session is already signed in, so a user who
+      # lands on "this account is locked" has no way to try a different one —
+      # the upstream never asks. `select_account` makes that a choice.
+      additional_authorization_parameters:
+        prompt: "select_account"
       claims_imports:
         localpart:
           action: ignore
