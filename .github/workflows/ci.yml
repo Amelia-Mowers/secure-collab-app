@@ -11,9 +11,15 @@ env:
 
 # A newer push on the same ref cancels the in-flight run, so we don't pay for
 # two ~10-minute runs when commits land in quick succession.
+#
+# EXCEPT on main, where that run also deploys. Cancelling it throws away a
+# finished build that was about to go live, so a burst of merges left the site
+# on an older commit with every check green — observed 2026-08-01, five merges
+# and one surviving deploy. On main the runs queue instead; everywhere else the
+# saving is real and the cost is nothing.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Gate the expensive jobs (integration + both E2E suites) so doc/markdown-only
@@ -414,6 +420,13 @@ jobs:
 
       # Plain runner node for wrangler — npx inside `nix develop` tries to
       # install into the read-only nix store prefix and fails.
+      # The site has no build step, so it has no version marker. Give it the
+      # same one the app emits, purely so the check below can tell "deployed"
+      # from "still serving the previous commit". Not referenced by any page —
+      # the site loads no JavaScript and that stays true.
+      - name: Stamp the site with this commit
+        run: printf '{"build":"%s"}' "$GITHUB_SHA" > site/version.json
+
       - name: Deploy site (tidework.io apex)
         run: |
           npx wrangler@4 pages project create tidework-site --production-branch=main 2>/dev/null || true
@@ -460,3 +473,34 @@ jobs:
           attach tidework-app app.tidework.io
           record tidework.io tidework-site.pages.dev
           record app.tidework.io tidework-app.pages.dev
+
+      # "Merged" is not "deployed". A green CI run has repeatedly meant a stale
+      # live site — a cancelled deploy, a Pages edge that had not caught up, a
+      # project deployed but not attached to its domain. None of those show up
+      # anywhere unless something looks at the actual URL and compares it to the
+      # commit that was supposed to go out.
+      #
+      # Compare against the SHA, not against page content: a check that greps
+      # for a string the previous build also contained passes against the old
+      # deploy, which is exactly how this went unnoticed.
+      - name: Verify the live deploys are this commit
+        run: |
+          check() { # label, url
+            for attempt in $(seq 1 30); do
+              live=$(curl -fsS --max-time 10 "$2" 2>/dev/null | jq -r ".build // empty" 2>/dev/null || true)
+              # -n on BOTH sides. Without it an unreadable response and an
+              # unset SHA are both "" and compare EQUAL, so the check that
+              # exists to catch a bad deploy would pass on no data at all.
+              if [ -n "$live" ] && [ -n "$GITHUB_SHA" ] && [ "$live" = "$GITHUB_SHA" ]; then
+                echo "  $1: live on $GITHUB_SHA (attempt $attempt)"
+                return 0
+              fi
+              sleep 10
+            done
+            echo "::error::$1 is serving '${live:-<no build id>}', expected $GITHUB_SHA"
+            return 1
+          }
+          failed=0
+          check site https://tidework.io/version.json || failed=1
+          check app https://app.tidework.io/version.json || failed=1
+          exit $failed
