@@ -116,6 +116,40 @@ async function masSetLockById(env: Env, tok: string, id: string, lock: boolean):
 }
 
 /**
+ * Unlink every upstream identity (Google, etc.) from a user.
+ *
+ * Deactivating does NOT do this, and the consequence is severe: MAS keeps the
+ * `provider + subject -> user` mapping, so the next sign-in with that Google
+ * account resolves to the deactivated user and dead-ends on "This account has
+ * been deleted. Contact your server administrator." Permanently, for an
+ * identity the person still owns — and only an operator with admin API access
+ * can undo it.
+ *
+ * So a deletion has to free the identity, or deleting an account silently burns
+ * the Google login the user signed up with. Best-effort per link: freeing three
+ * of four identities is better than aborting the deletion the user asked for.
+ */
+async function masUnlinkUpstream(env: Env, tok: string, userId: string): Promise<number> {
+  const res = await fetch(
+    `${env.MAS_URL}/api/admin/v1/upstream-oauth-links?filter[user]=${encodeURIComponent(userId)}&page[first]=100`,
+    { headers: { Authorization: `Bearer ${tok}` } },
+  )
+  if (!res.ok) throw new Error(`MAS upstream-link list failed: ${res.status}`)
+  const links = ((await res.json()) as { data: Array<{ id: string }> }).data ?? []
+
+  let removed = 0
+  for (const link of links) {
+    const del = await fetch(`${env.MAS_URL}/api/admin/v1/upstream-oauth-links/${link.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tok}` },
+    })
+    if (del.ok) removed++
+    else console.error(`delete-account: unlink ${link.id} failed: ${del.status}`)
+  }
+  return removed
+}
+
+/**
  * Deactivate a user and ask the homeserver to GDPR-erase them.
  *
  * The ONE exception to lock-never-deactivate (ADR 0002): an account that never
@@ -419,10 +453,16 @@ async function deleteAccount(env: Env, req: Request): Promise<Response> {
     return json(502, { error: 'cancel_failed' })
   }
 
+  let unlinked = 0
   try {
     const tok = await masAdminToken(env)
     const user = await masGetUser(env, tok, username)
     if (!user) return json(404, { error: 'no_account' })
+    // Free the upstream identities BEFORE deactivating. Afterwards is also
+    // fine mechanically, but doing it first means a failure here aborts while
+    // the account still works, rather than leaving a deleted account whose
+    // Google login is burned — the worse of the two half-finished states.
+    unlinked = await masUnlinkUpstream(env, tok, user.id)
     if (!user.attributes.deactivated_at) {
       await masDeactivateById(env, tok, user.id)
     }
@@ -433,8 +473,11 @@ async function deleteAccount(env: Env, req: Request): Promise<Response> {
     return json(502, { error: 'deactivate_failed', subscriptions_cancelled: cancelled })
   }
 
-  console.log(`delete-account: deleted '${username}' (${cancelled} subscription(s) cancelled)`)
-  return json(200, { deleted: true, subscriptions_cancelled: cancelled })
+  console.log(
+    `delete-account: deleted '${username}' ` +
+      `(${cancelled} subscription(s) cancelled, ${unlinked} identity link(s) freed)`,
+  )
+  return json(200, { deleted: true, subscriptions_cancelled: cancelled, identities_unlinked: unlinked })
 }
 
 async function webhook(env: Env, req: Request): Promise<Response> {
