@@ -41,7 +41,6 @@
 .nwm__radio {
   grid-row: 1 / span 2;
   margin-top: 2px;
-  accent-color: var(--accent);
   flex-shrink: 0;
 }
 

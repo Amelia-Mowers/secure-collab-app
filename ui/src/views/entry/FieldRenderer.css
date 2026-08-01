@@ -85,14 +85,6 @@
   padding: 4px 0 0;
 }
 
-.field-renderer .cell-checkbox input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-  accent-color: var(--accent);
-  border-radius: 4px;
-}
-
 /* JSON / document textarea */
 .field-renderer .cell-input--json,
 .field-renderer textarea.cell-input {

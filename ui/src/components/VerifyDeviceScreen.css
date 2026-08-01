@@ -228,3 +228,36 @@
   color: var(--text-tertiary, #5c8292);
   text-align: center;
 }
+
+/* The recovery-key acknowledgement. This had no rule at all, so it rendered
+   as a bare checkbox jammed against its text — on the one screen where a
+   misread costs the user every byte they own. It gates the button below it,
+   so it should look like a deliberate act, not a stray control. */
+.verify__ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 16px auto 0;
+  max-width: 44ch;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated, var(--bg-surface));
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.verify__ack:hover {
+  border-color: var(--text-tertiary);
+}
+
+/* Once ticked, it stops being a warning and becomes a confirmation — the
+   colour change is the acknowledgement the user is looking for. */
+.verify__ack:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--text);
+}
