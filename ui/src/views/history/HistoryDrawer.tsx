@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { WorkspaceHandle } from '../../hooks/useTable'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMembers, type WorkspaceHandle } from '../../hooks/useTable'
+import { CellDisplay, type CellColumn, type MemberList } from '@/cells/cellRegistry'
+import { makeReferenceLookup, type ReferenceLookup } from '@/lib/referenceLookup'
 import './HistoryDrawer.css'
 
 /** One entry from `workspace.getChangeLog` — either a cell edit or a revert. */
@@ -40,6 +42,31 @@ function fmtValue(v: unknown): string {
   return JSON.stringify(v)
 }
 
+/**
+ * One side of a change, through the shared cell registry so a reference reads
+ * as a name rather than `row_1785…` and a member as a display name.
+ *
+ * Empty keeps the ∅ glyph rather than rendering nothing: "∅ → In Progress"
+ * says a value was set, which an empty span does not.
+ */
+function HistoryValue({
+  column,
+  value,
+  lookup,
+  members,
+}: {
+  column?: CellColumn
+  value: unknown
+  lookup: ReferenceLookup
+  members: MemberList
+}) {
+  if (value === null || value === undefined || value === '') return <>{fmtValue(value)}</>
+  if (Array.isArray(value) && value.length === 0) return <>{fmtValue(null)}</>
+  // No schema entry — a column deleted since the edit. Fall back to text.
+  if (!column) return <>{fmtValue(value)}</>
+  return <CellDisplay column={column} value={value} lookup={lookup} members={members} />
+}
+
 /** `@alice:server` → `alice` (fall back to the raw id). */
 function fmtUser(id: string): string {
   const m = /^@([^:]+):/.exec(id)
@@ -67,6 +94,50 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
   const [error, setError] = useState<string | null>(null)
   const [busyTs, setBusyTs] = useState<number | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+
+  // Schema + members + reference labels, so an entry can say "Sketch landing
+  // page hero · Client: Priya Nair" instead of "client row_1785…_1_2".
+  const members = useMembers(workspace as any)
+  const referenceLookup = useMemo(() => makeReferenceLookup(workspace as any), [workspace])
+
+  const columnsById = useMemo(() => {
+    try {
+      const schema = JSON.parse(workspace.getTableSchema(tableId))
+      const deleted = new Set<string>(schema?.deleted_columns ?? [])
+      const cols = Object.values(schema?.columns ?? {}) as CellColumn[]
+      return new Map(cols.filter(c => !deleted.has(c.id)).map(c => [c.id, c]))
+    } catch {
+      return new Map<string, CellColumn>()
+    }
+  }, [workspace, tableId])
+
+  /**
+   * Row id → the row's display value, so an entry can name what changed.
+   *
+   * Without this the drawer answered "a status went Todo → In Progress"
+   * without saying whose, which is the only question anyone opens it to ask.
+   * Built from the CURRENT rows, so a row deleted since the edit has no label
+   * — those fall back to nothing rather than showing a raw id, since a bare
+   * `row_1785…` is worse than silence.
+   */
+  const rowLabels = useMemo(() => {
+    const labels = new Map<string, string>()
+    // The first text column is the row's name, matching how reference columns
+    // label a row by default.
+    const titleCol = [...columnsById.values()].find(c => c.column_type === 'text')
+    if (!titleCol) return labels
+    try {
+      const rows = JSON.parse(workspace.getTableRows(tableId)) as Array<Record<string, unknown>>
+      for (const row of rows) {
+        const id = String(row._row_id ?? '')
+        const label = row[titleCol.id]
+        if (id && typeof label === 'string' && label.trim()) labels.set(id, label.trim())
+      }
+    } catch {
+      /* no rows readable — entries simply go unlabelled */
+    }
+    return labels
+  }, [workspace, tableId, columnsById, entries])
 
   const load = useCallback(async () => {
     if (!workspace.getChangeLog) {
@@ -155,12 +226,34 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
                     <>
                       <div className="history-entry__line">
                         <span className="history-entry__who">{fmtUser(e.sender)}</span> changed{' '}
-                        <span className="history-entry__col">{e.columnId}</span>
+                        <span className="history-entry__col">
+                          {columnsById.get(e.columnId)?.name ?? e.columnId}
+                        </span>
+                        {rowLabels.get(e.rowId) && (
+                          <>
+                            {' on '}
+                            <span className="history-entry__row">{rowLabels.get(e.rowId)}</span>
+                          </>
+                        )}
                       </div>
                       <div className="history-entry__change">
-                        <span className="history-entry__prev">{fmtValue(e.prevValue)}</span>
+                        <span className="history-entry__prev">
+                          <HistoryValue
+                            column={columnsById.get(e.columnId)}
+                            value={e.prevValue}
+                            lookup={referenceLookup}
+                            members={members}
+                          />
+                        </span>
                         <span className="history-entry__arrow">→</span>
-                        <span className="history-entry__next">{fmtValue(e.value)}</span>
+                        <span className="history-entry__next">
+                          <HistoryValue
+                            column={columnsById.get(e.columnId)}
+                            value={e.value}
+                            lookup={referenceLookup}
+                            members={members}
+                          />
+                        </span>
                       </div>
                     </>
                   ) : (
