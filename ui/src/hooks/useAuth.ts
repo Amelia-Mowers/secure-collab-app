@@ -33,6 +33,7 @@ import {
   hasEnrolledPasskey,
   parseWrapRecord,
 } from '../lib/passkeyWrap'
+import { retireStore } from '../lib/storeReaper'
 import { fetchPortalUrl, requestAccountDeletion } from '../lib/billing'
 import { isSessionRejected } from '../lib/authErrors'
 
@@ -223,6 +224,17 @@ export interface AccountSession {
    * Ciphertext, so it is no more sensitive at rest than `secrets`.
    */
   passkeyWrap?: string
+  /**
+   * This device's IndexedDB store for the account (`tw-<user>-<millis>`).
+   *
+   * Recorded in PLAINTEXT, deliberately. It is also inside the session blob,
+   * but for a v2 account that blob is encrypted — so an account that is signed
+   * out, or removed while another one is active, has a store whose name nothing
+   * can read, and it is orphaned forever. The name is a sanitized username plus
+   * a timestamp; the contents stay encrypted, and it is already discoverable
+   * via `indexedDB.databases()`. See lib/storeReaper.ts.
+   */
+  storeName?: string
   /** v1 only: opaque JSON blob from MatrixSession.sessionData() (PLAINTEXT). */
   matrixSessionData?: string
   /** v2 only: AES-GCM(tokenKey) over the sessionData() blob (base64url). */
@@ -439,6 +451,19 @@ function loadAccounts(): AccountSession[] {
     return []
   } catch {
     return []
+  }
+}
+
+/** The store name off a LIVE session, for accounts signed in before the name
+ *  was recorded on the entry. Those entries have no `storeName`, and their blob
+ *  is encrypted at rest — but the session in memory is decrypted, so a sign-out
+ *  can still find it. Without this, every account that existed before this
+ *  change would orphan its store exactly once more. */
+function storeNameFromRef(ref: { current: any }): string | undefined {
+  try {
+    return JSON.parse(ref.current?.sessionData?.() ?? '{}').storeName
+  } catch {
+    return undefined
   }
 }
 
@@ -1464,6 +1489,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Persist full session data including tokens. When at-rest keys are set
       // (the re-keyed device), write a v2 entry with the token blob encrypted.
       const matrixSessionData: string = ms.sessionData()
+      // Lift the store name OUT of the blob and onto the entry, in plaintext.
+      // This is the only moment it is legible for a v2 account: from here the
+      // blob is encrypted, so a signed-out account's store could never be
+      // named again — and therefore never deleted. (issue f6901da6)
+      let storeName: string | undefined
+      try {
+        storeName = JSON.parse(matrixSessionData)?.storeName
+      } catch {
+        /* an unparseable blob is the session's problem, not the reaper's */
+      }
       const keys = atRestKeysRef.current
       const account: AccountSession = keys
         ? {
@@ -1472,12 +1507,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             username: usernameHint,
             v: 2,
             custody: custodyRef.current,
+            storeName,
             secrets: await encryptString(keys.tokenKey, matrixSessionData),
           }
         : {
             homeserverUrl: homeserver,
             userId: uid,
             username: usernameHint,
+            storeName,
             matrixSessionData,
           }
 
@@ -1494,6 +1531,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ...account,
           keySaved: account.keySaved ?? previous?.keySaved,
           passkeyWrap: account.passkeyWrap ?? previous?.passkeyWrap,
+          storeName: account.storeName ?? previous?.storeName,
+        }
+        // The at-rest re-key logs in AGAIN as a fresh device, so this entry now
+        // points at a new store and the old one is dead the moment we overwrite
+        // it. rekeyToEncryptedStore deletes that store directly; this catches
+        // any other path that replaces a store name.
+        if (previous?.storeName && merged.storeName && previous.storeName !== merged.storeName) {
+          void retireStore(previous.storeName)
         }
         const updated = prev.filter(a => a.userId !== uid)
         updated.push(merged)
@@ -1679,8 +1724,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const currentId = activeAccountId
 
     setAccounts(prev => {
+      const leaving = currentId ? prev.find(a => a.userId === currentId) : undefined
       const updated = currentId ? prev.filter(a => a.userId !== currentId) : []
       saveAccounts(updated)
+      // The device's store for this account is now unreachable — the entry that
+      // named it is gone. Queue it; the worker probably still has it open, so
+      // the boot sweep is what usually finishes the job. (issue f6901da6)
+      void retireStore(leaving?.storeName ?? storeNameFromRef(matrixSessionRef))
 
       // Switch to next account if available
       const nextId = updated.length > 0 ? updated[0].userId : null
@@ -1772,8 +1822,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const removeAccount = useCallback(
     (targetUserId: string) => {
       setAccounts(prev => {
+        const removed = prev.find(a => a.userId === targetUserId)
         const updated = prev.filter(a => a.userId !== targetUserId)
         saveAccounts(updated)
+        // The removed account may never have been the active one, in which case
+        // its session blob is encrypted and unreadable — which is exactly why
+        // the store name is kept in plaintext on the entry. (issue f6901da6)
+        void retireStore(removed?.storeName)
         return updated
       })
       clearWorkspaces(targetUserId)
@@ -2080,6 +2135,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const resetApp = useCallback(() => {
+    // Read the store names BEFORE the wipe: the entries that name them are
+    // about to be deleted, and after that the stores are unreachable. "Reset
+    // app data" that leaves every account's encrypted history sitting in
+    // IndexedDB is not a reset. (issue f6901da6)
+    const orphans = loadAccounts()
+      .map(a => a.storeName)
+      .filter((n): n is string => !!n)
+
     // Clear all collab-related localStorage keys
     const keysToRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
@@ -2093,6 +2156,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Clear sessionStorage
     sessionStorage.removeItem(ACTIVE_ACCOUNT_KEY)
+
+    // AFTER the wipe — the queue lives under a `collab:` key, so writing it
+    // first would erase it. The reload is what actually collects these: the
+    // worker still holds the stores open right now, and a fresh boot is the one
+    // moment nothing does.
+    orphans.forEach(n => void retireStore(n))
 
     // Reload the page to get a clean state
     window.location.replace('/signin')
