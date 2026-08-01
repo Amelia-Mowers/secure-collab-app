@@ -60,8 +60,10 @@ function toWinAnsi(s: string): string {
     // Non-breaking space, as an escape: an invisible byte in a source file is
     // exactly the kind of thing nobody catches in review.
     .replace(/\u00a0/g, ' ')
-    // eslint-disable-next-line no-control-regex
-    .replace(/[^ -~]/g, '?')
+    // Anything left outside printable ASCII becomes '?'. Written as escapes
+    // because a literal range of "space through tilde" is unreadable, and
+    // silently wrong if someone's editor touches the whitespace.
+    .replace(/[^\x20-\x7e]/g, '?')
 }
 
 type Line =
