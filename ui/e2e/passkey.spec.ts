@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { addPrfAuthenticator, homeserverUrl, registerDevice, signInDevice, uniqueUser } from './helpers'
+import {
+  addPrfAuthenticator,
+  homeserverUrl,
+  registerDevice,
+  signInDevice,
+  uniqueUser,
+  completeKeyChallenge,
+} from './helpers'
 
 /**
  * Passkey / WebAuthn-PRF round-trip (passkey custody, phase 3b). Drives the real
@@ -42,6 +49,7 @@ test('passkey: protect history on setup, then unlock a re-provisioned device', a
   expect(recoveryKey).not.toBe('')
   await dialog.getByRole('checkbox').check()
   await dialog.getByRole('button', { name: /continue/i }).click()
+  await completeKeyChallenge(page, recoveryKey)
 
   // Now the optional passkey step.
   await expect(dialog.getByRole('button', { name: /set up a passkey/i })).toBeVisible({
