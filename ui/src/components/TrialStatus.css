@@ -120,3 +120,12 @@
 .trial-gate__signout:hover {
   color: #9fc3cd;
 }
+
+/* Quiet, below the actions: a way to reach a human without competing with the
+   thing we would rather they do. */
+.trial-gate__help {
+  margin-top: 18px;
+  font-size: 12.5px;
+  color: #5c8292;
+}
+.trial-gate__help a { color: #9fc3cd; }

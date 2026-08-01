@@ -56,6 +56,30 @@ describe('AccountSettingsModal', () => {
     expect(await screen.findByText(/saved\./i)).toBeInTheDocument()
   })
 
+  // Before this section existed there was NO route to a human anywhere in the
+  // app — no mailto, no terms, no privacy link in the whole of ui/src. Every
+  // user who needs support is inside the app when they find that out, so this
+  // asserts the route exists rather than trusting it to survive a refactor.
+  it('offers a way to reach support, and the documents the user agreed to', async () => {
+    render(<AccountSettingsModal onClose={() => {}} />)
+    await screen.findByDisplayValue('Ada L')
+
+    const support = screen.getByRole('link', { name: /tideworksupport@proton\.me/i })
+    expect(support).toHaveAttribute('href', 'mailto:tideworksupport@proton.me')
+
+    expect(screen.getByRole('link', { name: /terms of service/i })).toHaveAttribute(
+      'href',
+      'https://tidework.io/terms',
+    )
+    expect(screen.getByRole('link', { name: /privacy policy/i })).toHaveAttribute(
+      'href',
+      'https://tidework.io/privacy',
+    )
+
+    // The build id is what turns "it's broken" into a reproducible report.
+    expect(screen.getByText(/^Build /)).toBeInTheDocument()
+  })
+
   // The guard that matters: deletion cancels billing and erases the account, so
   // it must be impossible to trigger by clicking around.
   it('keeps delete disabled until the username is typed exactly', async () => {

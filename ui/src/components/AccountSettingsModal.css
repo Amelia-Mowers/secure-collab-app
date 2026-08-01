@@ -111,3 +111,11 @@
     align-items: stretch;
   }
 }
+
+/* The build id is diagnostic, not content — small and selectable so it can be
+   pasted into a support email. */
+.asm__build {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  user-select: all;
+}

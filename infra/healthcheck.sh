@@ -8,7 +8,10 @@
 #   TIDEWORK_ALERT_TO / TIDEWORK_ALERT_FROM    overridable below
 set -uo pipefail
 
-ALERT_TO="${TIDEWORK_ALERT_TO:-mia.mowe@gmail.com}"
+# The support mailbox, not a personal inbox: an outage should reach wherever
+# outage mail is actually read, and one personal Gmail is the whole alerting
+# channel otherwise. Override per-host with TIDEWORK_ALERT_TO.
+ALERT_TO="${TIDEWORK_ALERT_TO:-tideworksupport@proton.me}"
 ALERT_FROM="${TIDEWORK_ALERT_FROM:-noreply@tidework.io}"
 RESEND_KEY_FILE=/root/.config/tidework-alert/resend.key
 STATE_FILE=/run/tidework-health.state

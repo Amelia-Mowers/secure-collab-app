@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { PRIVACY_URL, SUPPORT_EMAIL, SUPPORT_MAILTO, TERMS_URL } from '@/branding'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import { RecoveryKeyModal } from './RecoveryKeyModal'
 import './AccountSettingsModal.css'
@@ -15,6 +16,12 @@ import './AccountSettingsModal.css'
  * Deletion lives at the bottom, behind a typed confirmation, because it is the
  * one action here that cannot be undone.
  */
+/** Baked in at build time (vite.config.ts). Shown in Help & legal so a support
+ *  email can say which build it came from — the first thing you need and the
+ *  last thing a user thinks to include. */
+declare const __BUILD_ID__: string
+const buildId = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'
+
 export function AccountSettingsModal({ onClose }: { onClose: () => void }) {
   const { username, userId, matrixSession, deleteAccount } = useAuth()
 
@@ -158,6 +165,26 @@ export function AccountSettingsModal({ onClose }: { onClose: () => void }) {
               the account locks, and paying again unlocks it.
             </p>
             <ManageSubscriptionButton className="asm__action" errorClassName="asm__error" />
+          </section>
+
+          {/* ── Help & legal ────────────────────────────────────── */}
+          <section className="asm__section">
+            <h3 className="asm__heading">Help &amp; legal</h3>
+            <p className="asm__meta">
+              Stuck, locked out, or something looks wrong? Email{' '}
+              <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a> — include the build below, it
+              tells us exactly which version you are on.
+            </p>
+            <p className="asm__meta">
+              <a href={TERMS_URL} target="_blank" rel="noreferrer">
+                Terms of Service
+              </a>
+              {' · '}
+              <a href={PRIVACY_URL} target="_blank" rel="noreferrer">
+                Privacy Policy
+              </a>
+            </p>
+            <p className="asm__meta asm__build">Build {buildId}</p>
           </section>
 
           {/* ── Danger zone ─────────────────────────────────────── */}

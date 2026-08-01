@@ -12,7 +12,13 @@
  */
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { BILLING_STATUS_URL, OFFICIAL_HOMESERVER_URL, subscribeUrlFor } from '@/branding'
+import {
+  BILLING_STATUS_URL,
+  OFFICIAL_HOMESERVER_URL,
+  SUPPORT_EMAIL,
+  SUPPORT_MAILTO,
+  subscribeUrlFor,
+} from '@/branding'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import './TrialStatus.css'
 
@@ -91,6 +97,11 @@ export function TrialGate() {
         <button type="button" className="trial-gate__signout" onClick={signOut}>
           Sign out
         </button>
+        {/* A paused account is one of the likeliest moments someone needs a
+            human, and this screen has no other way out. */}
+        <p className="trial-gate__help">
+          Something not right? <a href={SUPPORT_MAILTO}>{SUPPORT_EMAIL}</a>
+        </p>
       </div>
     </div>
   )

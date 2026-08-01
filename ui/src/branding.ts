@@ -23,6 +23,21 @@ export const DEFAULT_HOMESERVER_URL: string =
   (import.meta.env.VITE_DEFAULT_HOMESERVER as string | undefined) ?? 'http://localhost:6167'
 
 /** Where new users subscribe to get a hosted account (ADR 0002 phase D). */
+/**
+ * How a user reaches a human, and the documents they agreed to.
+ *
+ * These live in the app rather than only on the marketing site because every
+ * user who needs support is *inside the app* when they find that out — a locked
+ * account, a failed payment, a device that will not verify. Nobody in that
+ * position is browsing a footer on tidework.io.
+ */
+export const SUPPORT_EMAIL = 'tideworksupport@proton.me'
+export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`
+export const TERMS_URL = 'https://tidework.io/terms'
+export const PRIVACY_URL = 'https://tidework.io/privacy'
+/** Public page for restarting a lapsed subscription without signing in. */
+export const REACTIVATE_URL = 'https://tidework.io/reactivate'
+
 export const SUBSCRIBE_URL = 'https://billing.tidework.io/subscribe'
 
 /** Billing status endpoint for the trial badge / locked gate. */
