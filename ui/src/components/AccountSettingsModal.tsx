@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { PRIVACY_URL, SUPPORT_EMAIL, SUPPORT_MAILTO, TERMS_URL } from '@/branding'
+import { PRIVACY_URL, STATUS_URL, SUPPORT_EMAIL, SUPPORT_MAILTO, TERMS_URL } from '@/branding'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import { RecoveryKeyModal } from './RecoveryKeyModal'
 import './AccountSettingsModal.css'
@@ -176,6 +176,10 @@ export function AccountSettingsModal({ onClose }: { onClose: () => void }) {
               tells us exactly which version you are on.
             </p>
             <p className="asm__meta">
+              <a href={STATUS_URL} target="_blank" rel="noreferrer">
+                Service status
+              </a>
+              {' · '}
               <a href={TERMS_URL} target="_blank" rel="noreferrer">
                 Terms of Service
               </a>

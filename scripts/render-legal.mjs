@@ -189,7 +189,7 @@ const SHELL = (title, body) => `<!doctype html>
 <main class="wrap">
 ${body}
 <footer>
-  <p>© 2026 TideWork · <a href="/">tidework.io</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="mailto:tideworksupport@proton.me">Contact</a></p>
+  <p>© 2026 TideWork · <a href="/">tidework.io</a> · <a href="/status">Status</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="mailto:tideworksupport@proton.me">Contact</a></p>
 </footer>
 </main>
 </body>
