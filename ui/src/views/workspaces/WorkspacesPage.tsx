@@ -159,14 +159,23 @@ export function WorkspacesPage() {
     setActionError(null)
     try {
       const ws = await createWorkspace(name)
+      let seeded = false
       if (slug === ARCHIVE_OPTION && archive) {
         await applyArchive(ws.id, archive)
+        seeded = true
       } else {
         const template = templates.find(t => t.slug === slug)
-        if (template) await applyTemplate(ws.id, template)
+        if (template) {
+          await applyTemplate(ws.id, template)
+          seeded = true
+        }
       }
       setIsCreating(false)
-      navigate(`/workspace/${encodeURIComponent(ws.id)}`)
+      // Tell the workspace shell this one arrives with content, so it opens the
+      // first table instead of greeting a freshly-seeded workspace with "create
+      // a table to get started". We can't name the table here: the seeding ran
+      // on a throwaway handle, and the shell builds its own.
+      navigate(`/workspace/${encodeURIComponent(ws.id)}`, { state: { seeded } })
     } catch (err: any) {
       setActionError(err?.message ?? 'Failed to create workspace')
     } finally {

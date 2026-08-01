@@ -66,6 +66,13 @@ test('the demo template seeds a real workspace, including its formula column', a
 
   await createFromTemplate(page, 'Demo From Template', 'Demo Workspace')
 
+  // A seeded workspace must not open on "Create a table from the sidebar to
+  // get started". Someone who just chose a pre-filled template is being told
+  // their workspace is empty on its very first frame — while the sidebar
+  // beside it lists four tables. It opens the first table instead.
+  await expect(page).toHaveURL(/\/workspace\/[^/]+\/table\//, { timeout: 120_000 })
+  await expect(page.getByText('Create a table from the sidebar to get started')).toHaveCount(0)
+
   // Tables from the template are present. The `tasks` table is LABELLED
   // "Projects" (tables.csv) — the display name, not the id, is what shows.
   await expect(page.locator('.sidebar__item-label', { hasText: /^Projects$/ })).toBeVisible({
@@ -129,8 +136,10 @@ test('every shipped template creates a workspace without error', async ({ page }
   for (const templateName of names) {
     await createFromTemplate(page, `WS ${templateName}`, templateName)
     // A seeded workspace has at least one table in the sidebar; an empty
-    // sidebar means the archive did not apply.
+    // sidebar means the archive did not apply. And it lands on that table
+    // rather than on the "workspace is empty" home.
     await expect(page.locator('.sidebar__item-label').first()).toBeVisible({ timeout: 120_000 })
+    await expect(page).toHaveURL(/\/workspace\/[^/]+\/table\//, { timeout: 120_000 })
     expect(
       pageErrors,
       `page errors seeding template ${templateName}:\n${pageErrors.join('\n')}`,
