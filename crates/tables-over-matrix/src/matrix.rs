@@ -782,6 +782,54 @@ mod matrix_impl {
             })
         }
 
+        /// Register a new account, then log in as it.
+        ///
+        /// Exists so test and benchmark accounts can be created without a
+        /// browser. The web client has had this since the beginning
+        /// (`bridge_matrix::register`), but that path is `#[cfg(wasm)]`, so
+        /// every native caller — the CLI, any harness — previously had to go
+        /// around the product: raw CS-API calls, or `mas-cli` on the server.
+        ///
+        /// Mirrors the wasm flow: probe with a bare request, and if the server
+        /// answers with UIAA, satisfy it with the dummy stage. Anything else is
+        /// a real error. Only works where registration is open — production
+        /// closes it, and accounts there come from MAS.
+        pub async fn register(
+            homeserver_url: &str,
+            store_path: &std::path::Path,
+            username: &str,
+            password: &str,
+        ) -> Result<Self> {
+            use matrix_sdk::ruma::api::client::{account::register, uiaa};
+
+            let this = Self::with_sqlite_store(homeserver_url, store_path).await?;
+
+            let mut request = register::v3::Request::new();
+            request.username = Some(username.to_owned());
+            request.password = Some(password.to_owned());
+            request.initial_device_display_name = Some("TideWork CLI".to_owned());
+
+            if let Err(err) = this.client.matrix_auth().register(request.clone()).await {
+                // A server with no UIAA flows registers on the first call; most
+                // ask for at least the dummy stage, which is not an error but a
+                // handshake.
+                let Some(info) = err.as_uiaa_response() else {
+                    return Err(anyhow::anyhow!("registration failed: {err}"));
+                };
+                let mut dummy = uiaa::Dummy::new();
+                dummy.session = info.session.clone();
+                let mut retry = request;
+                retry.auth = Some(uiaa::AuthData::Dummy(dummy));
+                this.client
+                    .matrix_auth()
+                    .register(retry)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("registration failed: {e}"))?;
+            }
+
+            Ok(this)
+        }
+
         /// Serialize the active session for on-disk persistence. Mirrors the WASM
         /// bridge blob (`kind`/`userId`/`deviceId`/`accessToken`[`/refreshToken`/
         /// `clientId`]) so the formats stay compatible.

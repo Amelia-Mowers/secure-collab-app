@@ -58,6 +58,26 @@ enum Command {
         #[arg(long)]
         recover_key: Option<String>,
     },
+    /// Create an account, enable recovery, and print the new recovery key.
+    ///
+    /// For test and benchmark accounts: it is the only way to get a usable
+    /// account from a script, because login always verifies against secure
+    /// backup and the CLI could not previously mint a key at all.
+    ///
+    /// Only works where registration is open. Production closes it — accounts
+    /// there come from MAS.
+    Register {
+        /// Homeserver URL, e.g. http://localhost:8448
+        #[arg(long)]
+        homeserver: String,
+        /// Username localpart to create.
+        #[arg(long)]
+        user: String,
+        /// Password. If omitted, read from TIDEWORK_PASSWORD (preferred — keeps
+        /// it out of shell history and out of argv).
+        #[arg(long)]
+        password: Option<String>,
+    },
     /// Show the currently logged-in user, or report that none is.
     Whoami,
     /// Log out: forget the saved session and delete the local crypto store.
@@ -376,6 +396,11 @@ async fn run() -> Result<()> {
                 login_password(homeserver, user, password, recover_key).await
             }
         }
+        Command::Register {
+            homeserver,
+            user,
+            password,
+        } => do_register(homeserver, user, password).await,
         Command::Whoami => whoami().await,
         Command::Logout => logout(),
         Command::Workspace { command } => match command {
@@ -546,6 +571,56 @@ fn reset_local_state(paths: &session::Paths) -> Result<()> {
 /// device can't decrypt workspaces created on your other devices and won't back
 /// up the ones it creates, so we don't leave one usable. `fallback_user` is used
 /// only if the client can't report its own id yet.
+/// Register, enable recovery, print the key.
+///
+/// The key is printed to STDOUT and everything else to stderr, so a script can
+/// capture it with `$(...)` without also capturing the chatter. It is shown
+/// exactly once and never stored — same contract as the web client's
+/// "save your recovery key" screen, for the same reason.
+async fn do_register(homeserver: String, user: String, password: Option<String>) -> Result<()> {
+    let password = password
+        .or_else(|| std::env::var("TIDEWORK_PASSWORD").ok())
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| {
+            anyhow!("no password: pass --password or set the TIDEWORK_PASSWORD env var")
+        })?;
+
+    let paths = session::Paths::resolve()?;
+    reset_local_state(&paths)?;
+    paths.ensure_dirs()?;
+
+    let client = MatrixClient::register(&homeserver, &paths.store_dir, &user, &password)
+        .await
+        .context("registration failed")?;
+
+    // One sync before enabling recovery. enable_recovery waits for the backup
+    // to finish uploading, and on a client that has never synced that wait does
+    // not resolve — the command hangs rather than failing. The web client has
+    // the same ordering (initialSync, then bootstrap).
+    client.sync_once().await.context("initial sync")?;
+
+    // Enable recovery HERE, not on first login. A fresh account has no backup,
+    // so a later `login` would have nothing to verify against and would fail —
+    // and this is the only moment the key exists to be shown.
+    let recovery_key = client
+        .enable_recovery()
+        .await
+        .context("enabling recovery for the new account")?;
+
+    let session = client
+        .session_json()
+        .ok_or_else(|| anyhow!("registered but no session to persist"))?;
+    paths.save_session(&homeserver, &session)?;
+
+    let who = client
+        .user_id()
+        .unwrap_or_else(|| format!("@{user}:<server>"));
+    eprintln!("Registered {who} and enabled recovery.");
+    eprintln!("Save this recovery key — it is shown once and cannot be recovered:");
+    println!("{recovery_key}");
+    Ok(())
+}
+
 async fn finish_login(
     client: &MatrixClient,
     homeserver: &str,
