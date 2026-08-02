@@ -2289,6 +2289,44 @@ mod tests {
         assert_eq!(u2[1].row_id, "r2");
     }
 
+    /// Not an assertion — a measurement, printed with --nocapture, so the
+    /// sweep constants are tuned against the real serialized size of a bump
+    /// rather than a guess at it.
+    #[test]
+    fn measure_bump_sweep_size() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        for i in 0..600 {
+            ws.update_cell(
+                "tasks",
+                &format!("r{i}"),
+                "title",
+                json!("Sketch landing page hero #123"),
+            )
+            .unwrap();
+        }
+        let mut updates = Vec::new();
+        for i in 0..WRITES_PER_BUMP_SWEEP {
+            updates = ws
+                .update_cell_with_bump("tasks", &format!("w{i}"), "title", json!("x"))
+                .unwrap();
+        }
+        let bumps = &updates[1..];
+        let total: usize = bumps
+            .iter()
+            .map(|u| serde_json::to_string(u).unwrap().len())
+            .sum();
+        let per = if bumps.is_empty() {
+            0
+        } else {
+            total / bumps.len()
+        };
+        println!(
+            "SWEEP_MEASURE bumps={} total_bytes={total} per_cell={per}",
+            bumps.len()
+        );
+    }
+
     /// The point of the whole change: a sweep refreshes MANY cells in one
     /// event, because cold start costs ~7 ms per event and ~0.14 ms per cell.
     #[test]
