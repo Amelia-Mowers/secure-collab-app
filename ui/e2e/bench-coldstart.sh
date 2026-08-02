@@ -104,8 +104,23 @@ for rows in "${SIZES[@]}"; do
   # regime where cold start is bounded rather than proportional to history.
   # Below it the numbers describe page granularity, not compaction.
   cells=$(( rows * 7 ))
-  edits="${BENCH_EDITS:-$(( cells / 8 ))}"
-  [ "$edits" -lt 200 ] && edits=200
+  want=$(( cells / 8 ))
+  [ "$want" -lt 200 ] && want=200
+  # CAPPED, and the cap is not cosmetic. Every seeding edit is its own process
+  # doing its own warm load, which rehydrates the whole snapshot — ~0.14 ms per
+  # cell, so ~10 s per edit at 10k rows. Seeding a 10k-row room to coverage
+  # would take about a day. Past this cap the room has FEWER events than
+  # coverage needs, the walk cannot be bounded, and the cold number is
+  # proportional to history rather than to the workspace. That is reported, not
+  # hidden: silently truncating here would read as "10k rows costs this", when
+  # what was measured is a 10k-row room that has barely been used.
+  max="${BENCH_MAX_EDITS:-2000}"
+  edits="${BENCH_EDITS:-$want}"
+  if [ "$edits" -gt "$max" ]; then
+    edits="$max"
+    echo "  NOTE: capped at $max edits (wanted $want). This room will hold fewer"
+    echo "        events than coverage needs, so expect an unbounded walk."
+  fi
   echo "  editing: $edits single-cell writes (~${cells} cells, coverage needs ~$(( cells / 16 )))"
   edit_start=$(date +%s)
   TIDEWORK_CLI="$CLI" HOMESERVER="$HS"     bash "$(dirname "$0")/bench-seed-edits.sh" "$ws" "$TABLE" "$edits" >/dev/null 2>&1     || { echo "  edit seeding failed" >&2; exit 1; }
