@@ -106,15 +106,20 @@ for rows in "${SIZES[@]}"; do
   cells=$(( rows * 7 ))
   want=$(( cells / 8 ))
   [ "$want" -lt 200 ] && want=200
-  # CAPPED, and the cap is not cosmetic. Every seeding edit is its own process
-  # doing its own warm load, which rehydrates the whole snapshot — ~0.14 ms per
-  # cell, so ~10 s per edit at 10k rows. Seeding a 10k-row room to coverage
-  # would take about a day. Past this cap the room has FEWER events than
-  # coverage needs, the walk cannot be bounded, and the cold number is
-  # proportional to history rather than to the workspace. That is reported, not
-  # hidden: silently truncating here would read as "10k rows costs this", when
-  # what was measured is a 10k-row room that has barely been used.
-  max="${BENCH_MAX_EDITS:-2000}"
+  # Seeded through `tidework seed-edits`, which writes one event per edit — the
+  # same events interactive editing produces — without repeating the
+  # restore/sync/load cycle around each one. Driving `row set` per edit costs
+  # a full snapshot rehydration every time (~0.14 ms per cell, so ~10 s per edit
+  # at 10k rows) and simply cannot reach a realistic room; measured, the bulk
+  # path is ~0.057 s per edit against ~0.5 s.
+  #
+  # The cap is now a guard against a runaway run, not a hard limit of the
+  # method. When it binds, the room holds fewer events than coverage needs, the
+  # walk cannot be bounded, and the cold number is proportional to history
+  # rather than to the workspace — reported rather than hidden, since a silently
+  # truncated run reads as "10k rows costs this" when what was measured is a
+  # 10k-row room nobody had used.
+  max="${BENCH_MAX_EDITS:-20000}"
   edits="${BENCH_EDITS:-$want}"
   if [ "$edits" -gt "$max" ]; then
     edits="$max"
@@ -123,7 +128,7 @@ for rows in "${SIZES[@]}"; do
   fi
   echo "  editing: $edits single-cell writes (~${cells} cells, coverage needs ~$(( cells / 16 )))"
   edit_start=$(date +%s)
-  TIDEWORK_CLI="$CLI" HOMESERVER="$HS"     bash "$(dirname "$0")/bench-seed-edits.sh" "$ws" "$TABLE" "$edits" >/dev/null 2>&1     || { echo "  edit seeding failed" >&2; exit 1; }
+  "$CLI" seed-edits "$ws" "$TABLE" "$edits" >/dev/null 2>&1     || { echo "  edit seeding failed" >&2; exit 1; }
   echo "  edited in $(( $(date +%s) - edit_start ))s"
 
   # ── Measure. One state dir, one login; `--cold` makes each sample ignore

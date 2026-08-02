@@ -871,6 +871,85 @@ pub async fn row_set(
     Ok(())
 }
 
+/// Write `count` single-cell edits in ONE client cycle, for benchmark seeding.
+///
+/// The shape it produces is the shape the walk pays for: one Matrix event per
+/// edit, each carrying the user write plus its compaction bumps — the same
+/// events `row set` produces. What it does NOT repeat per edit is the client
+/// cycle around them: restore, sync, load the workspace, write the snapshot.
+///
+/// That cycle is the reason seeding through `row set` cannot reach a realistic
+/// room. Each invocation rehydrates the whole snapshot (~0.14 ms per cell), so
+/// a 10k-row workspace costs ~10 s per edit and the ~70k events such a
+/// workspace really accumulates would take about a day to lay down. Here the
+/// per-edit cost is the send alone.
+///
+/// It is deliberately NOT a general bulk-import path: values are throwaway and
+/// every edit hits the same column. Use `import` to load data.
+pub async fn seed_edits(
+    workspace: String,
+    table: String,
+    column: String,
+    count: usize,
+) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let schema = ws
+        .get_table_schema(&table_id)
+        .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
+    let col_id = resolve_column(&schema, &column)?;
+
+    let rows: Vec<String> = ws
+        .get_table_rows(&table_id)
+        .map_err(|e| anyhow!("reading rows: {e}"))?
+        .iter()
+        .filter_map(|r| {
+            r.get("_row_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    if rows.is_empty() {
+        return Err(anyhow!(
+            "table {table_id} has no rows — seed data with `import` first"
+        ));
+    }
+
+    let started = std::time::Instant::now();
+    for i in 0..count {
+        // Cycle the rows so edits spread across the table rather than piling
+        // onto one row, which would make every bump target the same cells.
+        let row_id = &rows[i % rows.len()];
+        let value = serde_json::json!(format!("seeded {i}"));
+        let updates = ws
+            .update_cell_with_bump(&table_id, row_id, &col_id, value)
+            .map_err(|e| anyhow!("writing cell: {e}"))?;
+        // One event per edit, exactly as an interactive write produces.
+        client
+            .send_cell_batch(&updates)
+            .await
+            .context("sending seeded edit")?;
+        if (i + 1) % 250 == 0 {
+            eprintln!("  {}/{count} ({:?})", i + 1, started.elapsed());
+        }
+    }
+
+    // No snapshot written. load_workspace already persisted one on the way in,
+    // and its marker predates these writes — so the next load walks the events
+    // just sent, which is correct and is also exactly what a benchmark wants to
+    // measure. Writing a fresher one here would hide the history from the very
+    // runs that exist to read it.
+    println!(
+        "Wrote {count} edits to {table_id} in {:?}",
+        started.elapsed()
+    );
+    Ok(())
+}
+
 /// Build the cell updates for a set of `column=value` assignments against one
 /// row (shared by `row add` and `row set`). Each assignment writes exactly one
 /// cell — columns not listed are untouched. Values are validated per column.
