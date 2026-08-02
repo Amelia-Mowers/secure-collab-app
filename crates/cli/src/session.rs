@@ -1,7 +1,8 @@
 //! On-disk session + config persistence for the CLI.
 //!
-//! Everything lives under `~/.tidework/`. The session blob is the same shape the
-//! WASM bridge persists, so the two clients stay format-compatible.
+//! Everything lives under `~/.tidework/` by default, or under `$TIDEWORK_DATA_DIR`
+//! when that is set. The session blob is the same shape the WASM bridge
+//! persists, so the two clients stay format-compatible.
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -39,9 +40,29 @@ impl SavedSession {
     }
 }
 
+/// Environment override for where the CLI keeps its state.
+pub const DATA_DIR_ENV: &str = "TIDEWORK_DATA_DIR";
+
 impl Paths {
+    /// Resolve the state directory: `$TIDEWORK_DATA_DIR` if set, else
+    /// `~/.tidework`.
+    ///
+    /// The override exists for benchmarking and for anything else that needs
+    /// more than one identity on a machine. With a single fixed path:
+    ///
+    ///   * two CLI instances share one SDK store and one session file, so
+    ///     "measure 50 concurrent users" is not expressible at all; and
+    ///   * a cold start can only be simulated by deleting the real
+    ///     `~/.tidework`, which destroys the operator's own login.
+    ///
+    /// An env var rather than a flag, deliberately: it applies to every
+    /// subcommand without threading a parameter through each one, and a
+    /// benchmark harness sets it once per worker.
     pub fn resolve() -> Result<Self> {
-        let config_dir = home_dir()?.join(".tidework");
+        let config_dir = match std::env::var_os(DATA_DIR_ENV) {
+            Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+            _ => home_dir()?.join(".tidework"),
+        };
         Ok(Self {
             store_dir: config_dir.join("store"),
             config_file: config_dir.join("config.json"),
