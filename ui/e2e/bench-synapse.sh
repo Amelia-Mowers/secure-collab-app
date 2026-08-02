@@ -23,12 +23,32 @@ URL="http://localhost:$PORT"
 USER_NAME="${BENCH_USER:-benchuser}"
 PASSWORD="${TIDEWORK_PASSWORD:-bench-pw-2026}"
 
+# Stop by pid file if we have one, and fall back to matching the config path.
+#
+# The fallback is not belt-and-braces, it is the common case: `start` wipes the
+# state dir, which takes the pid file with it — so the NEXT start had no way to
+# stop the server still holding the port, and died with "Failed to listen on TCP
+# port (8448)". A start that cannot be repeated is useless for benchmarking.
 stop_server() {
+  local stopped=0
   if [ -f "$DIR/homeserver.pid" ]; then
-    kill "$(cat "$DIR/homeserver.pid")" 2>/dev/null && echo "stopped synapse"
+    kill "$(cat "$DIR/homeserver.pid")" 2>/dev/null && stopped=1
     rm -f "$DIR/homeserver.pid"
+  fi
+  # `pkill -f` on the config path, so this only ever matches OUR server and
+  # never someone else's Synapse on the same machine.
+  if pkill -f "synapse_homeserver.*$DIR/homeserver.yaml" 2>/dev/null; then
+    stopped=1
+  fi
+  if [ "$stopped" = 1 ]; then
+    echo "stopped synapse"
+    # Give the port a moment to be released before a start rebinds it.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      ss -ltn 2>/dev/null | grep -q ":$PORT " || break
+      sleep 1
+    done
   else
-    echo "no pid file at $DIR/homeserver.pid — nothing to stop"
+    echo "no running synapse for $DIR"
   fi
 }
 
@@ -122,26 +142,48 @@ nohup synapse_homeserver --config-path "$DIR/homeserver.yaml" > "$DIR/stdout.log
 # 180s, not 60: the FIRST start runs database migrations and took longer than
 # a minute on a cold box, so the original check reported failure while Synapse
 # was still coming up perfectly well.
+# Readiness via bash's /dev/tcp, NOT curl.
+#
+# The Nix dev shell ships a curl built against a newer glibc than Ubuntu 22.04
+# provides, so it dies with "GLIBC_2.36 not found" — silently, under
+# `>/dev/null 2>&1`. The result was a script that reported "synapse did not
+# start" while Synapse was up and serving, twice, which is the most expensive
+# kind of wrong: a health check that fails when the thing is healthy.
+#
+# /dev/tcp is a bash builtin. No binary, no linkage, nothing to mismatch.
+ready=0
 for i in $(seq 1 180); do
-  if curl -fsS "$URL/_matrix/client/versions" >/dev/null 2>&1; then
+  if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
     echo "synapse up at $URL after ${i}s"
+    ready=1
     break
   fi
   sleep 1
-  [ "$i" = 180 ] && { echo "synapse did not start; see $DIR/stdout.log" >&2; exit 1; }
 done
+[ "$ready" = 1 ] || { echo "synapse did not start; see $DIR/stdout.log" >&2; exit 1; }
 
-# register_new_matrix_user needs the shared secret; simpler to use the public
-# registration API, which this config enables.
-reg=$(curl -fsS -X POST "$URL/_matrix/client/v3/register" \
-  -H 'Content-Type: application/json' \
-  -d "{\"username\":\"$USER_NAME\",\"password\":\"$PASSWORD\",\"auth\":{\"type\":\"m.login.dummy\"},\"inhibit_login\":false}" 2>/dev/null)
-
-if printf '%s' "$reg" | grep -q '"user_id"'; then
-  echo "registered @$USER_NAME:localhost"
+# Register through the CLI rather than the raw registration API. Not just
+# tidiness: `tidework register` also ENABLES RECOVERY and prints the key, and
+# login always verifies against secure backup — so an account created by a bare
+# CS-API call cannot be logged into by the CLI at all. It exercises the real
+# client path too, which is the whole premise of this benchmark.
+CLI="${TIDEWORK_CLI:-./target/release/tidework}"
+if [ ! -x "$CLI" ]; then
+  echo "note: no CLI at $CLI — skipping account creation." >&2
+  echo "      Build it (cargo build -p tidework-cli --release) then run:" >&2
+  echo "        TIDEWORK_PASSWORD=$PASSWORD $CLI register --homeserver $URL --user $USER_NAME" >&2
+  RECOVERY_KEY=""
 else
-  echo "registration response: $reg" >&2
-  echo "(if it says M_USER_IN_USE the account already exists, which is fine)" >&2
+  export TIDEWORK_DATA_DIR="${TIDEWORK_DATA_DIR:-$DIR/cli-state}"
+  rm -rf "$TIDEWORK_DATA_DIR"
+  # The key is on stdout and the chatter on stderr, so this captures only it.
+  RECOVERY_KEY=$(TIDEWORK_PASSWORD="$PASSWORD" "$CLI" register \
+    --homeserver "$URL" --user "$USER_NAME" 2>/dev/null || true)
+  if [ -n "$RECOVERY_KEY" ]; then
+    echo "registered @$USER_NAME:localhost via the CLI, recovery enabled"
+  else
+    echo "CLI registration failed (account may already exist) — see $DIR/stdout.log" >&2
+  fi
 fi
 
 cat <<INFO
@@ -150,7 +192,7 @@ Ready. To benchmark:
 
   export HOMESERVER=$URL
   export TIDEWORK_PASSWORD=$PASSWORD
-  export TIDEWORK_RECOVERY_KEY=...   # see BENCH.md — the CLI cannot mint one yet
+  export TIDEWORK_RECOVERY_KEY='$RECOVERY_KEY'
   bash ui/e2e/bench-coldstart.sh $USER_NAME 100 1000
 
 Stop with: bash ui/e2e/bench-synapse.sh stop

@@ -25,8 +25,8 @@ be trusted. Playwright keeps the real path but puts a browser in every sample.
 
 | | | |
 |---|---|---|
-| **M1** cold start vs size | harness ready, **not yet run** | needs a standing Synapse (below) |
-| **M2** incremental load | **blocked** | no native incremental path — issue `3ddb4e74` |
+| **M1** cold start vs size | harness ready, **not yet run** | everything it needs now exists |
+| **M2** incremental load | **deferred** | worst-case cold start does not need it; seeding uses bulk `import`, not `row add`, so the O(N²) path is not on this road |
 | **M3** concurrent users | not started | needs M1's seeding first |
 | **M4** native propagation | not started | lowest priority; duplicates M3 |
 
@@ -46,28 +46,26 @@ be trusted. Playwright keeps the real path but puts a browser in every sample.
   and concurrent instances do not share a device. Verified: with it set the CLI
   reports "not logged in" while the real `~/.tidework` login is untouched.
 
-## The missing piece: a standing homeserver
-
-Benchmarks need **password login**, which prod disables (`--sso` needs a browser
-per sandbox). The integration harness has Synapse but starts it *per test inside
-Rust* (`crates/tables-over-matrix/tests/harness.rs`), so there is nothing to
-point a CLI at.
-
-Next step is a small script that starts that same Synapse and leaves it running
-— registration is already enabled in the harness config, so accounts can be
-created against it directly.
-
-## Running it, once that exists
+## Running it
 
 ```sh
-export HOMESERVER=http://localhost:8008
-export TIDEWORK_PASSWORD=...        # login is scriptable
-export TIDEWORK_RECOVERY_KEY=...    # login ALWAYS verifies against backup
+# 1. A standing Synapse with password login (prod disables it, and --sso needs
+#    a browser per sandbox). Registers an account and prints its recovery key.
+nix develop --command bash ui/e2e/bench-synapse.sh start
+
+# 2. Benchmark, using the key from step 1.
+export HOMESERVER=http://localhost:8448
+export TIDEWORK_PASSWORD=bench-pw-2026
+export TIDEWORK_RECOVERY_KEY='<printed by step 1>'
 bash ui/e2e/bench-coldstart.sh benchuser 100 1000 5000
+
+nix develop --command bash ui/e2e/bench-synapse.sh stop
 ```
 
-The recovery key currently has to be minted in the web app: the CLI accepts one
-but cannot produce one (issue `e4ff2505`).
+Accounts are created with `tidework register`, which mints and prints the
+recovery key. That matters beyond convenience: login **always** verifies against
+secure backup, so an account made by a bare CS-API call cannot be logged into by
+the CLI at all.
 
 ## Reading the results
 
