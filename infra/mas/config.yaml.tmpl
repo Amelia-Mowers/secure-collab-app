@@ -130,6 +130,13 @@ policy:
 # wrong one for a typo fix.
 branding:
   service_name: TideWork
+  # Shown in the footer of every MAS page, including the ERROR page a locked
+  # account hits when it tries to sign in. That page is otherwise a dead end:
+  # no account chooser, no reactivate link, no support address — and the user
+  # who most wants to pay is the one who cannot reach any payment surface.
+  # The app's TrialGate does offer a subscribe button, but only to a session
+  # already in localStorage; a FRESH sign-in never gets that far.
+  imprint: "Locked out? Reactivate at https://tidework.io/reactivate or email tideworksupport@proton.me"
   tos_uri: https://tidework.io/terms
   policy_uri: https://tidework.io/privacy
 
