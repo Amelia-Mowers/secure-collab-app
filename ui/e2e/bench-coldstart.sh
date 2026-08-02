@@ -104,7 +104,14 @@ for rows in "${SIZES[@]}"; do
   # regime where cold start is bounded rather than proportional to history.
   # Below it the numbers describe page granularity, not compaction.
   cells=$(( rows * 7 ))
-  want=$(( cells / 8 ))
+  # cells/4, not cells/8. Bumps per write is a MEASURED 16 (`seed-edits` reports
+  # it), so one full cycle over the workspace costs ~cells/16 events and cells/8
+  # is nominally two cycles. That was not enough in practice: a 10k-row room
+  # seeded to 8750 edits read its whole history, and the same room stopped at
+  # 4000 events after only 200 more. Seeding to four nominal cycles keeps the
+  # measurement clear of that boundary, which is where the number stops being
+  # about compaction and starts being about where seeding happened to halt.
+  want=$(( cells / 4 ))
   [ "$want" -lt 200 ] && want=200
   # Seeded through `tidework seed-edits`, which writes one event per edit — the
   # same events interactive editing produces — without repeating the
@@ -182,8 +189,12 @@ for rows in "${SIZES[@]}"; do
     saved=0
   fi
   echo "  warm start:  ${warm[0]}ms ${warm[1]}ms ${warm[2]}ms  -> median ${warm_med}ms  (${saved}% off ${cold_once}ms)"
-  walked=$(printf '%s' "$stats" | sed -n 's/^walk: ([0-9]*) events.*//p')
-  stopped=$(printf '%s' "$stats" | sed -n 's/.*stopped: (.*)$//p')
+  # Field-split rather than capture groups. An earlier version used sed with
+  # backslash groups, lost the backslashes on the way into the file, and
+  # silently printed "?" for both columns — the two that distinguish a bounded
+  # walk from a room that was simply small, i.e. the point of the table.
+  walked=$(printf '%s' "$stats" | awk '{print $2}')
+  stopped=$(printf '%s' "$stats" | sed 's/.*stopped: //')
   SUMMARY+=("$rows|$cells|${walked:-?}|${stopped:-?}|$median|$warm_med|$saved")
   rm -rf "$d"
   echo

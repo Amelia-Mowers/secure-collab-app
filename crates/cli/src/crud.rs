@@ -920,6 +920,11 @@ pub async fn seed_edits(
     }
 
     let started = std::time::Instant::now();
+    // Bumps actually emitted, counted rather than assumed. The nominal figure
+    // is BUMP_CELLS_PER_WRITE (16), but BUMP_BYTE_BUDGET can bind first, and
+    // the difference decides how many events coverage really takes — the
+    // quantity every cold-start projection rests on.
+    let mut total_bumps = 0usize;
     for i in 0..count {
         // Cycle the rows so edits spread across the table rather than piling
         // onto one row, which would make every bump target the same cells.
@@ -928,6 +933,7 @@ pub async fn seed_edits(
         let updates = ws
             .update_cell_with_bump(&table_id, row_id, &col_id, value)
             .map_err(|e| anyhow!("writing cell: {e}"))?;
+        total_bumps += updates.len().saturating_sub(1);
         // One event per edit, exactly as an interactive write produces.
         client
             .send_cell_batch(&updates)
@@ -947,6 +953,20 @@ pub async fn seed_edits(
         "Wrote {count} edits to {table_id} in {:?}",
         started.elapsed()
     );
+    if count > 0 {
+        println!(
+            "Bumps per write: {:.2} (nominal {}); coverage of {} cells needs ~{} events",
+            total_bumps as f64 / count as f64,
+            16,
+            ws.export_cells().len(),
+            if total_bumps > 0 {
+                (ws.export_cells().len() as f64 / (total_bumps as f64 / count as f64)).ceil()
+                    as usize
+            } else {
+                0
+            }
+        );
+    }
     Ok(())
 }
 
