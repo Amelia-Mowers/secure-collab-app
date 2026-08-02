@@ -21,12 +21,24 @@ USER_NAME="${1:?usage: bench-coldstart.sh <user> [sizes...]}"
 shift
 SIZES=("$@")
 [ ${#SIZES[@]} -eq 0 ] && SIZES=(100 1000 5000)
+# The table the corpus seeds. It comes from the template bench-corpus.mjs
+# multiplies, so it is the template's table name, not one we chose.
+TABLE="${BENCH_TABLE:-Projects}"
 
 CLI="${TIDEWORK_CLI:-./target/release/tidework}"
 ROOT="${BENCH_ROOT:-/tmp/tidework-bench}"
 CORPUS="$ROOT/corpus"
 
 [ -x "$CLI" ] || { echo "no CLI at $CLI (set TIDEWORK_CLI)" >&2; exit 1; }
+
+# The corpus generator uses modern syntax, and a bare WSL shell has Node 12 —
+# which fails to PARSE it, generates nothing, and leaves the failure to surface
+# two steps later as "import failed". Check here, where the message is useful.
+node_major=$(node --version 2>/dev/null | sed "s/^v//" | cut -d. -f1)
+if [ -z "$node_major" ] || [ "$node_major" -lt 18 ] 2>/dev/null; then
+  echo "node 18+ required (found "$(node --version 2>&1)"). Run inside the Nix dev shell." >&2
+  exit 1
+fi
 : "${TIDEWORK_PASSWORD:?set TIDEWORK_PASSWORD}"
 : "${TIDEWORK_RECOVERY_KEY:?set TIDEWORK_RECOVERY_KEY — login always verifies against backup}"
 

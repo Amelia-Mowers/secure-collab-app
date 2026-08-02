@@ -25,7 +25,7 @@ be trusted. Playwright keeps the real path but puts a browser in every sample.
 
 | | | |
 |---|---|---|
-| **M1** cold start vs size | harness ready, **not yet run** | everything it needs now exists |
+| **M1** cold start vs size | **run 2026-08-01** | results below |
 | **M2** incremental load | **deferred** | worst-case cold start does not need it; seeding uses bulk `import`, not `row add`, so the O(N²) path is not on this road |
 | **M3** concurrent users | not started | needs M1's seeding first |
 | **M4** native propagation | not started | lowest priority; duplicates M3 |
@@ -66,6 +66,48 @@ Accounts are created with `tidework register`, which mints and prints the
 recovery key. That matters beyond convenience: login **always** verifies against
 secure backup, so an account made by a bare CS-API call cannot be logged into by
 the CLI at all.
+
+## Results (2026-08-01, local Synapse, CLI instrument)
+
+Fresh state dir per sample, median of three, loopback with no TLS.
+
+| rows | events | median cold start |
+|---:|---:|---:|
+| 100 | 3 | 288 ms |
+| 1000 | 29 | 687 ms |
+| 2000 | 58 | 949 ms |
+
+**Do not read those as user-facing numbers.** They were seeded with `import`,
+which packs ~35 rows into one Matrix event — a shape no real workspace has.
+
+### The decomposition, which is the actual finding
+
+Same 200 rows (1400 cells), seeded two ways:
+
+| packing | events | median |
+|---|---:|---:|
+| dense, 35 rows/event | 6 | 633 ms |
+| sparse, 1 row/event | 200 | **1981 ms** |
+
+Subtracting gives **~7 ms per event** and **~0.14 ms per cell**, on a
+~250–400 ms fixed floor. **The per-event term dominates by roughly 7× at
+realistic event counts.**
+
+Writes are debounced 300 ms (`schedule_flush_with_delay(300)`), so deliberate
+human editing produces roughly **one event per cell edit**. For a 10k-row ×
+7-column workspace that is ~70k events ≈ **8 minutes on a device with no
+snapshot**.
+
+Two things keep that from being worse than it sounds:
+
+- **It is bounded by cell count, not edit history.** Every write bumps the
+  stalest cell, so the backward walk stops once the table is filled. A workspace
+  does not get slower as it ages.
+- **Both fixes are known and filed.** Batched compaction bumps (`74931dfa`) cut
+  the walk ~100× by refreshing many cells per event; native incremental load
+  (`3ddb4e74`) skips the walk entirely for a device that has a snapshot. They
+  are complementary — a snapshot cannot help a *new* device, which is the worse
+  case and the one a new collaborator meets.
 
 ## Reading the results
 
