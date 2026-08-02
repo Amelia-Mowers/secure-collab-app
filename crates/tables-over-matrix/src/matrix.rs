@@ -663,8 +663,21 @@ mod matrix_impl {
         }
 
         /// Run a single sync cycle and return.
+        ///
+        /// Timeout ZERO, deliberately. `SyncSettings::default()` long-polls: the
+        /// server holds the request open until something happens, so once an
+        /// account was caught up EVERY CLI command blocked for the full poll —
+        /// measured at ~30s each for `workspace list`, `table list` and
+        /// `table show`, against 65ms for `whoami`, which does not sync. It read
+        /// as a workspace-size problem and is not one; it is the same 30s
+        /// whatever the room contains.
+        ///
+        /// Long-polling is right for a client that stays open and wants to be
+        /// told about changes. A one-shot command wants the opposite: whatever
+        /// the server has right now. Per the Matrix spec, timeout=0 returns
+        /// immediately.
         pub async fn sync_once(&self) -> Result<()> {
-            let settings = SyncSettings::default();
+            let settings = SyncSettings::default().timeout(std::time::Duration::from_secs(0));
             self.client
                 .sync_once(settings)
                 .await
