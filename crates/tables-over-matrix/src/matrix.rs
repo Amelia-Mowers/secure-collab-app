@@ -28,6 +28,16 @@ mod matrix_impl {
     use serde::{Deserialize, Serialize};
     use tracing::{debug, info};
 
+
+    /// Events per /messages round-trip.
+    ///
+    /// Large on purpose: a round-trip costs far more than the events in it.
+    /// The coverage stop below is page-granular, so smaller pages would let a
+    /// walk stop after fewer EVENTS — but only by paying for more round-trips,
+    /// which trades a cheap saving for an expensive one. Under this size a room
+    /// is a single request and there is nothing left to save.
+    pub const DEFAULT_PAGE_LIMIT: u32 = 1000;
+
     /// Default client encryption settings (ADR 0001 / review §4.2): auto-enable
     /// cross-signing and key backup, and download backup keys on startup so a
     /// new device can decrypt and materialize encrypted workspace history.
@@ -1169,7 +1179,8 @@ mod matrix_impl {
             &self,
             marker_ts: u64,
         ) -> Result<(Vec<CellUpdate>, u64)> {
-            self.load_room_cell_updates_bounded(marker_ts, true).await
+            let (u, ts, _) = self.load_room_cell_updates_bounded(marker_ts, true).await?;
+            Ok((u, ts))
         }
 
         /// The walk, with the two ways it is allowed to stop early.
@@ -1195,7 +1206,24 @@ mod matrix_impl {
             &self,
             marker_ts: u64,
             stop_when_covered: bool,
-        ) -> Result<(Vec<CellUpdate>, u64)> {
+        ) -> Result<(Vec<CellUpdate>, u64, crate::WalkStats)> {
+            self.load_room_cell_updates_paged(marker_ts, stop_when_covered, DEFAULT_PAGE_LIMIT)
+                .await
+        }
+
+        /// As above, with the page size exposed.
+        ///
+        /// Production always uses [`DEFAULT_PAGE_LIMIT`]. This exists because
+        /// the coverage stop is page-granular, so exercising it otherwise needs
+        /// a room of thousands of events — the rule and the room size are
+        /// independent, and only the rule needs a test.
+        #[doc(hidden)]
+        pub async fn load_room_cell_updates_paged(
+            &self,
+            marker_ts: u64,
+            stop_when_covered: bool,
+            page_limit: u32,
+        ) -> Result<(Vec<CellUpdate>, u64, crate::WalkStats)> {
             use matrix_sdk::room::MessagesOptions;
             use std::collections::HashSet;
 
@@ -1226,17 +1254,15 @@ mod matrix_impl {
             // make the walk say what it actually did.
             let mut pages = 0usize;
             let mut events = 0usize;
-            let mut stop_reason = "exhausted";
+            // Every exit from the loop below is a `break` that names itself, so
+            // this needs no placeholder value.
+            let stop_reason: &'static str;
             loop {
                 let mut options = MessagesOptions::backward();
                 if let Some(ref token) = from_token {
                     options = options.from(token.as_str());
                 }
-                // Large pages on purpose: a round-trip costs far more than the
-                // events in it, and the coverage check below stops at a PAGE
-                // boundary, so shrinking pages to stop sooner just trades a
-                // cheap saving for an expensive one.
-                options.limit = UInt::from(1000u32);
+                options.limit = UInt::from(page_limit);
 
                 let response = room
                     .messages(options)
@@ -1327,7 +1353,16 @@ mod matrix_impl {
                 "history walk: {events} events over {pages} page(s), {} distinct cells, stopped: {stop_reason}",
                 seen_cells.len()
             );
-            Ok((updates, newest_ts))
+            Ok((
+                updates,
+                newest_ts,
+                crate::WalkStats {
+                    events,
+                    pages,
+                    cells: seen_cells.len(),
+                    stopped: stop_reason,
+                },
+            ))
         }
     }
 

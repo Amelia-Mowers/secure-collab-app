@@ -108,6 +108,21 @@ pub fn backfill_caught_up(fast_path: bool, page_oldest: Option<u64>, stop_before
     fast_path && page_oldest.is_some_and(|t| t.saturating_add(REORDER_GRACE_MS) < stop_before)
 }
 
+/// What a history walk actually did — returned rather than only logged,
+/// because "the bounded walk saves work" is a claim that should be asserted
+/// in a test, not inferred from wall-clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WalkStats {
+    /// Timeline events fetched and replayed.
+    pub events: usize,
+    /// Round-trips to /messages — the part that dominates cold start.
+    pub pages: usize,
+    /// Distinct cells the walk resolved.
+    pub cells: usize,
+    /// Why it ended: "covered", "reached marker", "start of room", ...
+    pub stopped: &'static str,
+}
+
 #[cfg(test)]
 mod integration_tests {
     use super::*;
