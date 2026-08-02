@@ -1278,6 +1278,8 @@ mod matrix_impl {
             // Every exit from the loop below is a `break` that names itself, so
             // this needs no placeholder value.
             let stop_reason: &'static str;
+            let mut last_page_new = 0usize;
+            let mut last_page_sample: Vec<String> = Vec::new();
             loop {
                 let mut options = MessagesOptions::backward();
                 if let Some(ref token) = from_token {
@@ -1297,6 +1299,13 @@ mod matrix_impl {
                 events += response.chunk.len();
                 let mut page_oldest: Option<u64> = None;
                 let mut page_new_cells = 0usize;
+                // Which cells this page contributed that nothing newer had. On
+                // the FINAL page these are the cells nothing ever refreshed —
+                // the ones pinning the walk to the start of the room. Naming
+                // them is the difference between fixing the cause and guessing
+                // at a plausible one, which has cost this feature two wrong
+                // suspects already.
+                let mut page_first_seen: Vec<String> = Vec::new();
                 // A page we could not READ is not a page that told us nothing.
                 let mut page_undecryptable = 0usize;
                 for ev in &response.chunk {
@@ -1331,11 +1340,20 @@ mod matrix_impl {
                                 u.column_id.clone(),
                             )) {
                                 page_new_cells += 1;
+                                if page_first_seen.len() < 8 {
+                                    page_first_seen.push(format!(
+                                        "{}/{}/{}",
+                                        u.table_id, u.row_id, u.column_id
+                                    ));
+                                }
                             }
                             updates.push(u);
                         }
                     }
                 }
+                last_page_new = page_new_cells;
+                last_page_sample = std::mem::take(&mut page_first_seen);
+
                 // Stop only once a whole page trails the marker by more than the
                 // reorder grace. The naive rule — stop at the first event older
                 // than the marker — assumes stream order and origin_server_ts
@@ -1374,6 +1392,12 @@ mod matrix_impl {
                 "history walk: {events} events over {pages} page(s), {} distinct cells, stopped: {stop_reason}",
                 seen_cells.len()
             );
+            if last_page_new > 0 {
+                info!(
+                    "  last page still had {last_page_new} unseen cells, e.g. {}",
+                    last_page_sample.join(", ")
+                );
+            }
             Ok((
                 updates,
                 newest_ts,

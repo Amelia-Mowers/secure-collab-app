@@ -138,6 +138,17 @@ for rows in "${SIZES[@]}"; do
   "$CLI" seed-edits "$ws" "$TABLE" "$edits" >/dev/null 2>&1     || { echo "  edit seeding failed" >&2; exit 1; }
   echo "  edited in $(( $(date +%s) - edit_start ))s"
 
+  # SETTLE before measuring. Reading a room straight after a burst of thousands
+  # of writes does not describe its steady state: the 5k and 10k rooms both read
+  # their whole history when measured immediately, and both stopped on
+  # "covered" — 4000 events instead of 17795 — when the same binary re-read the
+  # same room later, with no further edits. Whatever the server is finishing
+  # after a burst, a benchmark that skips it measures that instead of
+  # compaction.
+  settle="${BENCH_SETTLE:-60}"
+  echo "  settling ${settle}s before measuring"
+  sleep "$settle"
+
   # ── Measure. One state dir, one login; `--cold` makes each sample ignore
   #    the saved snapshot and replay history in full.
   #
