@@ -71,6 +71,22 @@ impl Paths {
         })
     }
 
+    /// Where a workspace's snapshot lives. One file per room, under the state
+    /// dir, so `TIDEWORK_DATA_DIR` isolates snapshots along with everything
+    /// else.
+    ///
+    /// The room id is used as the filename with the characters a filesystem
+    /// objects to replaced — `!room:server` is not a valid name on Windows.
+    pub fn snapshot_file(&self, room_id: &str) -> PathBuf {
+        let safe: String = room_id
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        self.config_dir
+            .join("snapshots")
+            .join(format!("{safe}.json"))
+    }
+
     /// Create the config + store directories if they don't exist.
     pub fn ensure_dirs(&self) -> Result<()> {
         fs::create_dir_all(&self.store_dir)

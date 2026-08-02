@@ -663,8 +663,21 @@ mod matrix_impl {
         }
 
         /// Run a single sync cycle and return.
+        ///
+        /// Timeout ZERO, deliberately. `SyncSettings::default()` long-polls: the
+        /// server holds the request open until something happens, so once an
+        /// account was caught up EVERY CLI command blocked for the full poll —
+        /// measured at ~30s each for `workspace list`, `table list` and
+        /// `table show`, against 65ms for `whoami`, which does not sync. It read
+        /// as a workspace-size problem and is not one; it is the same 30s
+        /// whatever the room contains.
+        ///
+        /// Long-polling is right for a client that stays open and wants to be
+        /// told about changes. A one-shot command wants the opposite: whatever
+        /// the server has right now. Per the Matrix spec, timeout=0 returns
+        /// immediately.
         pub async fn sync_once(&self) -> Result<()> {
-            let settings = SyncSettings::default();
+            let settings = SyncSettings::default().timeout(std::time::Duration::from_secs(0));
             self.client
                 .sync_once(settings)
                 .await
@@ -1131,6 +1144,31 @@ mod matrix_impl {
         /// bridge's `ConnectedWorkspace::create` history replay (large pages to
         /// minimise round-trips; the SDK decrypts each event in transit).
         pub async fn load_room_cell_updates(&self) -> Result<Vec<CellUpdate>> {
+            Ok(self.load_room_cell_updates_since(0).await?.0)
+        }
+
+        /// Paginate history backwards, stopping once events are older than
+        /// `marker_ts`, and return the updates found plus the newest
+        /// `origin_server_ts` seen.
+        ///
+        /// `marker_ts = 0` means "no marker", i.e. the full walk that
+        /// [`load_room_cell_updates`] performs.
+        ///
+        /// This is what makes a second open cheap. Cold start costs ~7 ms per
+        /// EVENT (ADR 0006 M1), and a workspace of any size has a lot of them —
+        /// so resuming at a marker rather than re-walking to the beginning is
+        /// the difference between minutes and milliseconds. It mirrors the wasm
+        /// bridge's bounded `gather_history`, which the native path could not
+        /// reach because that module is `#[cfg(feature = "wasm")]`.
+        ///
+        /// Stops at the first PAGE whose events are all older than the marker
+        /// rather than at the first old event: a page is one round-trip either
+        /// way, and events within a page are not strictly ordered by
+        /// `origin_server_ts` once a server has done any backfill.
+        pub async fn load_room_cell_updates_since(
+            &self,
+            marker_ts: u64,
+        ) -> Result<(Vec<CellUpdate>, u64)> {
             use matrix_sdk::room::MessagesOptions;
 
             let room = self.get_room()?;
@@ -1152,6 +1190,7 @@ mod matrix_impl {
             }
 
             let mut updates = Vec::new();
+            let mut newest_ts: u64 = marker_ts;
             let mut from_token: Option<String> = None;
             loop {
                 let mut options = MessagesOptions::backward();
@@ -1167,19 +1206,46 @@ mod matrix_impl {
                 if response.chunk.is_empty() {
                     break;
                 }
+                let mut page_oldest: Option<u64> = None;
                 for ev in &response.chunk {
+                    let ts: u64 = ev
+                        .raw()
+                        .get_field::<u64>("origin_server_ts")
+                        .ok()
+                        .flatten()
+                        .unwrap_or(0);
+                    if ts > newest_ts {
+                        newest_ts = ts;
+                    }
+                    if ts > 0 {
+                        page_oldest = Some(page_oldest.map_or(ts, |o: u64| o.min(ts)));
+                    }
+                    // Re-apply everything on a page we are keeping. Cells are
+                    // LWW, so replaying one we already have is a no-op — and
+                    // skipping by timestamp here would drop events whose stream
+                    // order disagrees with their origin_server_ts.
                     if let Ok(json_str) = serde_json::to_string(ev.raw().json()) {
                         for received in Self::extract_cell_updates(&json_str) {
                             updates.push(received.into_update());
                         }
                     }
                 }
+                // Stop only once a whole page trails the marker by more than the
+                // reorder grace. The naive rule — stop at the first event older
+                // than the marker — assumes stream order and origin_server_ts
+                // agree, and under Synapse workers they need not: that is
+                // exactly how 8 events were permanently lost in prod on
+                // 2026-07-25, because the running marker had already advanced
+                // past them so no later run would ever fetch them.
+                if crate::backfill_caught_up(marker_ts > 0, page_oldest, marker_ts) {
+                    break;
+                }
                 match response.end {
                     Some(token) => from_token = Some(token),
                     None => break,
                 }
             }
-            Ok(updates)
+            Ok((updates, newest_ts))
         }
     }
 

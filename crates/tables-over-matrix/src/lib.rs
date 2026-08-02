@@ -81,6 +81,33 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Library version information.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Skew tolerance for the incremental cold-start walk (issue 48f042ba).
+/// `/messages` follows the server's STREAM order, which can disagree with
+/// `origin_server_ts` by persister skew when Synapse runs workers / stream
+/// writers. The margin bounds how much disagreement the walk tolerates before
+/// concluding it has really passed the snapshot marker.
+pub const REORDER_GRACE_MS: u64 = 30_000;
+
+/// Whether the incremental cold-start walk has convincingly passed the
+/// snapshot marker and may stop paginating (issue 48f042ba).
+///
+/// `page_oldest` is the oldest parseable `origin_server_ts` on the page just
+/// processed; `stop_before` is the snapshot marker. The old rule — abandon the
+/// entire walk at the FIRST event nominally older than the marker — assumed
+/// stream order and `origin_server_ts` agree. Under workers they need not: one
+/// reordered event then truncated the walk, every event deeper in the stream
+/// was skipped, and because the running marker had already advanced past them,
+/// no later incremental start would ever fetch them — a permanent,
+/// self-sealing hole (8 events lost in prod on 2026-07-25). Now a page must
+/// trail the marker by more than [`REORDER_GRACE_MS`] before the walk stops:
+/// an event is lost only if the two orders disagree by over the margin.
+///
+/// A full gather (`fast_path == false`) never stops early, and a page with no
+/// parseable timestamps cannot justify stopping.
+pub fn backfill_caught_up(fast_path: bool, page_oldest: Option<u64>, stop_before: u64) -> bool {
+    fast_path && page_oldest.is_some_and(|t| t.saturating_add(REORDER_GRACE_MS) < stop_before)
+}
+
 #[cfg(test)]
 mod integration_tests {
     use super::*;
