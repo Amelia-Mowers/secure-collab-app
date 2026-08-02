@@ -28,7 +28,6 @@ mod matrix_impl {
     use serde::{Deserialize, Serialize};
     use tracing::{debug, info};
 
-
     /// Events per /messages round-trip.
     ///
     /// Large on purpose: a round-trip costs far more than the events in it.
