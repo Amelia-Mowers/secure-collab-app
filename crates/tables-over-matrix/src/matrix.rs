@@ -635,6 +635,21 @@ mod matrix_impl {
                 .as_u64()
         }
 
+        /// Best-effort read of a raw event's `event_id`.
+        ///
+        /// Undecryptable events are remembered BY ID rather than merely counted,
+        /// so the client can re-fetch exactly those events once the missing room
+        /// key arrives and clear the warning. A count can only ever go up.
+        pub fn extract_event_id(event_json: &str) -> Option<String> {
+            Some(
+                serde_json::from_str::<serde_json::Value>(event_json)
+                    .ok()?
+                    .get("event_id")?
+                    .as_str()?
+                    .to_string(),
+            )
+        }
+
         /// Parse a raw Matrix event JSON into a single `CellUpdate`, if it is a
         /// single `io.tidework.cell.update` event. (Batch events return `None`;
         /// use [`extract_cell_updates`] for the read path.) Retained for callers

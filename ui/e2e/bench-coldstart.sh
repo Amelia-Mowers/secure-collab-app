@@ -104,15 +104,24 @@ for rows in "${SIZES[@]}"; do
   # regime where cold start is bounded rather than proportional to history.
   # Below it the numbers describe page granularity, not compaction.
   cells=$(( rows * 7 ))
-  # cells/4, not cells/8. Bumps per write is a MEASURED 16 (`seed-edits` reports
-  # it), so one full cycle over the workspace costs ~cells/16 events and cells/8
-  # is nominally two cycles. That was not enough in practice: a 10k-row room
-  # seeded to 8750 edits read its whole history, and the same room stopped at
-  # 4000 events after only 200 more. Seeding to four nominal cycles keeps the
-  # measurement clear of that boundary, which is where the number stops being
-  # about compaction and starts being about where seeding happened to halt.
-  want=$(( cells / 4 ))
-  [ "$want" -lt 200 ] && want=200
+  # Two things have to be true before a cold start can be bounded, and they are
+  # different requirements:
+  #
+  #   1. COVERAGE. Bumps per write is a MEASURED 16 (`seed-edits` reports it),
+  #      so refreshing every cell takes ~cells/16 events. Seed twice that, so
+  #      the room is past the point where coverage is reachable rather than
+  #      sitting exactly on it.
+  #   2. ROOM ENOUGH TO STOP IN. The stop is page-granular at 1000 events per
+  #      page, and it needs one page that contributes nothing new AFTER a page
+  #      that did. Under ~2 pages there is no such page and "empty page" is the
+  #      correct, uninteresting answer.
+  #
+  # An earlier version seeded cells/4 on the theory that a 10k room reading its
+  # whole history was sitting too near the coverage boundary. The interval test
+  # disproved it — the same room stops on "covered" at t+0 — so the extra cycle
+  # bought nothing but seeding time, and it is gone.
+  want=$(( cells / 8 ))
+  [ "$want" -lt 3000 ] && want=3000
   # Seeded through `tidework seed-edits`, which writes one event per edit — the
   # same events interactive editing produces — without repeating the
   # restore/sync/load cycle around each one. Driving `row set` per edit costs
@@ -138,16 +147,14 @@ for rows in "${SIZES[@]}"; do
   "$CLI" seed-edits "$ws" "$TABLE" "$edits" >/dev/null 2>&1     || { echo "  edit seeding failed" >&2; exit 1; }
   echo "  edited in $(( $(date +%s) - edit_start ))s"
 
-  # SETTLE before measuring. Reading a room straight after a burst of thousands
-  # of writes does not describe its steady state: the 5k and 10k rooms both read
-  # their whole history when measured immediately, and both stopped on
-  # "covered" — 4000 events instead of 17795 — when the same binary re-read the
-  # same room later, with no further edits. Whatever the server is finishing
-  # after a burst, a benchmark that skips it measures that instead of
-  # compaction.
-  settle="${BENCH_SETTLE:-60}"
-  echo "  settling ${settle}s before measuring"
-  sleep "$settle"
+  # No settle step. One was added here on the theory that reading a room
+  # straight after a burst of writes measures whatever the server is still
+  # finishing rather than the steady state — the 5k and 10k rooms had read their
+  # whole history when measured immediately and stopped on "covered" later. The
+  # interval test then measured a 1000-row room at t+0, t+30, t+60 … t+600 after
+  # a 3000-edit burst and got "covered" at EVERY point, including t+0. There is
+  # no time dependence to wait out, so waiting only made the sweep slower while
+  # implying a cause that had been ruled out.
 
   # ── Measure. One state dir, one login; `--cold` makes each sample ignore
   #    the saved snapshot and replay history in full.

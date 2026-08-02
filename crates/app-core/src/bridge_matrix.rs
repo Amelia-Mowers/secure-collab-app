@@ -1239,10 +1239,16 @@ pub struct ConnectedWorkspace {
     client: Client,
     /// The room this workspace is bound to
     room_id: OwnedRoomId,
-    /// Count of room events that could not be decrypted (no key) during cold
-    /// start / sync. Surfaced to the UI instead of being silently dropped —
+    /// Event IDs of room events that could not be decrypted (no key) during
+    /// cold start / sync. Surfaced to the UI instead of being silently dropped —
     /// see `docs/adr/0001-e2e-key-management.md` / review §4.2.
-    undecryptable: Rc<Cell<u32>>,
+    ///
+    /// IDs rather than a count, because a count can only go up: room keys
+    /// usually arrive moments later over to-device or from backup, and a warning
+    /// that cannot clear teaches users to ignore it. Holding the IDs lets
+    /// [`retry_undecryptable`](ConnectedWorkspace::retry_undecryptable) re-fetch
+    /// exactly those events and drop the ones that now decrypt.
+    undecryptable: Rc<RefCell<Vec<String>>>,
     /// Highest Matrix `origin_server_ts` (ms) applied so far — gather + sync
     /// both advance it. Persisted in a snapshot as the resume point so the next
     /// cold start only fetches events newer than this marker.
@@ -1338,7 +1344,7 @@ where
 }
 
 /// Paginate a room's history backwards and replay every cell event into
-/// `workspace`, returning `(marker_ts, undecryptable_count)`.
+/// `workspace`, returning `(marker_ts, undecryptable_event_ids)`.
 ///
 /// Shared by cold start and the integrity check (issue 48f042ba) so there is
 /// exactly ONE walk: a second implementation is how a re-gather ends up
@@ -1359,12 +1365,12 @@ async fn gather_history(
     fast_path: bool,
     marker_ts: u64,
     stop_when_covered: bool,
-) -> Result<(u64, u32), JsValue> {
+) -> Result<(u64, Vec<String>), JsValue> {
     use std::collections::HashSet;
     let mut seen_cells: HashSet<(String, String, String)> = HashSet::new();
     let mut marker_ts = marker_ts;
     let stop_before = marker_ts;
-    let mut undecryptable_count = 0u32;
+    let mut undecryptable: Vec<String> = Vec::new();
     let mut from_token: Option<String> = None;
     loop {
         let mut options = MessagesOptions::backward();
@@ -1448,7 +1454,11 @@ async fn gather_history(
                     // state. Pre-marker events are excluded on the fast
                     // path: the snapshot already accounts for them, and the
                     // grace-margin walk would otherwise recount them.
-                    undecryptable_count += 1;
+                    if let Some(id) = MatrixClient::extract_event_id(&json_str) {
+                        if !undecryptable.contains(&id) {
+                            undecryptable.push(id);
+                        }
+                    }
                     page_undecryptable += 1;
                 }
             }
@@ -1481,7 +1491,7 @@ async fn gather_history(
         }
     }
 
-    Ok((marker_ts, undecryptable_count))
+    Ok((marker_ts, undecryptable))
 }
 
 #[wasm_bindgen]
@@ -1548,14 +1558,14 @@ impl ConnectedWorkspace {
         // advancing the threshold inside the loop would raise it to the newest
         // event and skip every event between the marker and now (data loss on a
         // snapshot that lags the latest writes).
-        let (marker_ts, undecryptable_count) =
+        let (marker_ts, undecryptable) =
             gather_history(&room, &mut workspace, fast_path, marker_ts, true).await?;
 
         Ok(ConnectedWorkspace {
             inner: Rc::new(RefCell::new(workspace)),
             client,
             room_id,
-            undecryptable: Rc::new(Cell::new(undecryptable_count)),
+            undecryptable: Rc::new(RefCell::new(undecryptable)),
             marker_ts: Rc::new(Cell::new(marker_ts)),
             pending: Rc::new(RefCell::new(HashMap::new())),
             flushing: Rc::new(Cell::new(false)),
@@ -1579,7 +1589,7 @@ impl ConnectedWorkspace {
             version: SNAPSHOT_VERSION,
             marker_ts: self.marker_ts.get(),
             timestamp_counter: ws.timestamp_counter(),
-            undecryptable_count: self.undecryptable.get(),
+            undecryptable_count: self.undecryptable.borrow().len() as u32,
             cells: ws.export_cells(),
         };
         snap.to_json().unwrap_or_default()
@@ -1632,7 +1642,12 @@ impl ConnectedWorkspace {
                             }
                             changed = true;
                         } else if MatrixClient::is_undecryptable_event(&json_str) {
-                            undecryptable.set(undecryptable.get() + 1);
+                            if let Some(id) = MatrixClient::extract_event_id(&json_str) {
+                                let mut pending = undecryptable.borrow_mut();
+                                if !pending.contains(&id) {
+                                    pending.push(id);
+                                }
+                            }
                             changed = true;
                         }
                     }
@@ -2343,7 +2358,7 @@ impl ConnectedWorkspace {
             "missing": report.missing,
             "stale": report.stale,
             "repaired": repaired,
-            "undecryptable": undecryptable,
+            "undecryptable": undecryptable.len(),
         })
         .to_string())
     }
@@ -2648,7 +2663,66 @@ impl ConnectedWorkspace {
     /// state). See `docs/adr/0001-e2e-key-management.md` / review §4.2.
     #[wasm_bindgen(js_name = undecryptableCount)]
     pub fn undecryptable_count(&self) -> u32 {
-        self.undecryptable.get()
+        self.undecryptable.borrow().len() as u32
+    }
+
+    /// Re-fetch the events that could not be decrypted, and apply the ones that
+    /// now can. Returns how many are still unreadable.
+    ///
+    /// Missing room keys are usually a timing problem, not a permanent one: the
+    /// sender's to-device key or a backup restore lands seconds after the event
+    /// itself. Re-fetching through `Room::event` runs the SDK's decryption
+    /// against whatever keys have arrived since, so the common case resolves
+    /// itself and the warning disappears.
+    ///
+    /// Cheap in the case that matters — it fetches only the specific events that
+    /// failed, not the room — so the UI can retry on a backoff while the warning
+    /// is up. Events that stay unreadable stay in the list, which is the honest
+    /// outcome: better a delayed workspace than a confidently incomplete one.
+    #[wasm_bindgen(js_name = retryUndecryptable)]
+    pub async fn retry_undecryptable(&self) -> Result<u32, JsValue> {
+        let pending: Vec<String> = self.undecryptable.borrow().clone();
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        let room = self
+            .client
+            .get_room(&self.room_id)
+            .ok_or_else(|| JsValue::from_str("Room not found"))?;
+
+        let mut still_stuck: Vec<String> = Vec::new();
+        for id in pending {
+            let Ok(event_id) = matrix_sdk::ruma::OwnedEventId::try_from(id.as_str()) else {
+                continue; // Unparseable id: nothing to re-fetch, so stop tracking it.
+            };
+            let Ok(event) = room.event(&event_id, None).await else {
+                still_stuck.push(id); // A fetch failure is not evidence of a key.
+                continue;
+            };
+            let Ok(json_str) = serde_json::to_string(event.raw().json()) else {
+                still_stuck.push(id);
+                continue;
+            };
+            let received = MatrixClient::extract_cell_updates(&json_str);
+            if !received.is_empty() {
+                let mut ws = self.inner.borrow_mut();
+                for r in received {
+                    let ots: u64 = r.origin_server_ts.0.into();
+                    if ots > self.marker_ts.get() {
+                        self.marker_ts.set(ots);
+                    }
+                    let _ = ws.apply_update(r.into_update());
+                }
+            } else if MatrixClient::is_undecryptable_event(&json_str) {
+                still_stuck.push(id);
+            }
+            // Anything else decrypted into an event that carries no cells (a
+            // membership change, a reaction) — readable, so not our problem.
+        }
+
+        let remaining = still_stuck.len() as u32;
+        *self.undecryptable.borrow_mut() = still_stuck;
+        Ok(remaining)
     }
 
     /// Create a view from JSON configuration.
