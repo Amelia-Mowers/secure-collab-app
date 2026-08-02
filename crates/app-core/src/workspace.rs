@@ -91,10 +91,22 @@ const BUMP_CELLS_PER_WRITE: usize = 16;
 /// send takes the user's edit down with it.
 const BUMP_BYTE_BUDGET: usize = 4 * 1024;
 
-/// A single cell too large to bump alongside a write. Document and JSON cells
-/// can approach the event limit alone; those still get refreshed, just one at a
-/// time when they happen to be the stalest.
+/// A single cell too large to bump ALONGSIDE a write. Document and JSON cells
+/// can approach the event limit on their own.
 const MAX_BUMPABLE_CELL_BYTES: usize = 2 * 1024;
+
+/// ...and the ceiling for refreshing one of those on its own turn.
+///
+/// This turn is the whole point. A cell that is never refreshed stays the
+/// stalest thing in the workspace forever, which has two consequences, and the
+/// second is worse than the first: it is re-selected on every write and burns
+/// one of the BUMP_CELLS_PER_WRITE slots without producing anything, starving
+/// the cells behind it; and because it never moves, it stays wherever it was
+/// first written — so a cold start must walk to that point and the coverage
+/// stop can never fire, no matter how well everything else compacts.
+///
+/// Well under the ~64 KiB event limit, since the bump is sent alone.
+const MAX_SOLO_BUMP_BYTES: usize = 32 * 1024;
 
 pub struct Workspace {
     /// Workspace ID (maps to Matrix room ID)
@@ -548,7 +560,22 @@ impl Workspace {
             // ids and timestamp are most of a small cell.
             let size = serde_json::to_string(&bump).map(|s| s.len()).unwrap_or(0);
             if size > MAX_BUMPABLE_CELL_BYTES {
-                continue; // a document cell — it gets refreshed on its own turn
+                // Its own turn, taken here rather than deferred forever. The
+                // previous code said "it gets refreshed on its own turn" and
+                // then skipped it unconditionally — so oversized cells were
+                // refreshed never, and one of them was enough to pin a cold
+                // start to the start of the room.
+                //
+                // Only when nothing else has been bumped yet: riding alongside
+                // is what the size limit rules out, not being sent at all.
+                if updates.len() == 1 && size <= MAX_SOLO_BUMP_BYTES {
+                    updates.push(bump);
+                }
+                // Either way this candidate is done: taken alone, or too big to
+                // send even alone. Stop rather than continue, so the rest of
+                // this write's budget is not spent behind a cell that just had
+                // its turn.
+                break;
             }
             if size > budget {
                 break;
@@ -2477,9 +2504,15 @@ mod tests {
     }
 
     /// A document cell can approach the event limit alone, so it is never
-    /// bundled alongside a write.
+    /// bundled ALONGSIDE other bumps — but it must still get refreshed.
+    ///
+    /// The old contract was "never bumped", and it was wrong in a way that cost
+    /// a day of benchmarking: an unrefreshed cell stays permanently stalest, is
+    /// re-selected on every write, burns a bump slot producing nothing, and
+    /// pins cold start to wherever it was first written — so the coverage stop
+    /// can never fire.
     #[test]
-    fn test_bumps_skip_oversized_cells() {
+    fn test_oversized_cells_are_bumped_alone_not_never() {
         let mut ws = Workspace::new("w");
         ws.create_table(make_tasks_def()).unwrap();
         let huge = json!("d".repeat(MAX_BUMPABLE_CELL_BYTES * 2));
@@ -2490,13 +2523,45 @@ mod tests {
         let updates = ws
             .update_cell_with_bump("tasks", "new", "title", json!("x"))
             .unwrap();
-        for u in updates.iter().skip(1) {
-            let size = serde_json::to_string(u).map(|s| s.len()).unwrap_or(0);
-            assert!(
-                size <= MAX_BUMPABLE_CELL_BYTES,
-                "oversized cell bumped ({size} bytes)"
+
+        let bumps = &updates[1..];
+        let oversized: Vec<usize> = bumps
+            .iter()
+            .map(|u| serde_json::to_string(u).map(|s| s.len()).unwrap_or(0))
+            .filter(|&size| size > MAX_BUMPABLE_CELL_BYTES)
+            .collect();
+        if !oversized.is_empty() {
+            assert_eq!(
+                bumps.len(),
+                1,
+                "an oversized cell must ride alone, got {} bumps",
+                bumps.len()
             );
+            assert!(oversized[0] <= MAX_SOLO_BUMP_BYTES);
         }
+
+        // And the turn must actually come round: with nothing but oversized
+        // cells to refresh, successive writes must eventually refresh them all,
+        // rather than skipping every one forever.
+        let mut refreshed = std::collections::HashSet::new();
+        for u in bumps {
+            refreshed.insert(u.row_id.clone());
+        }
+        for i in 0..60 {
+            let more = ws
+                .update_cell_with_bump("tasks", &format!("filler{i}"), "title", json!("y"))
+                .unwrap();
+            for u in &more[1..] {
+                refreshed.insert(u.row_id.clone());
+            }
+        }
+        let big_refreshed = (0..50)
+            .filter(|i| refreshed.contains(&format!("big{i}")))
+            .count();
+        assert!(
+            big_refreshed > 0,
+            "no oversized cell was ever refreshed — they are starved, and one              stale cell is enough to defeat the bounded walk"
+        );
     }
 
     /// The subtle one. Bumping many cells means the deletion-cutoff exclusion
