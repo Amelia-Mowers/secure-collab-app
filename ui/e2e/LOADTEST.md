@@ -48,6 +48,89 @@ every latency.
 
 ---
 
+## Results (2026-08-01, droplet = 2 vCPU / 3.8 GB, Synapse **+ 3 workers**)
+
+Same box, same scenarios, but Synapse now runs as main + persister + 2 sync
+workers behind nginx. Rate limits relaxed for the run and **restored**; all
+accounts torn down. Zero errors and zero 429s in every scenario below.
+
+> **Read the two tables as different things.** `:8008` talks to the MAIN
+> process only, so it now measures roughly a quarter of the deployed system —
+> the sync workers sit idle at 1–7%. The nginx table is the path a real client
+> takes. The 2026-06-30 baseline below was a monolith, where `:8008` *was* the
+> whole server; comparing today's `:8008` numbers against it compares a shared
+> process to a machine.
+
+### Capacity, direct to the main process (`:8008`)
+
+| Scenario | Achieved | p50 | p95 | main | persister | sync1/2 | combined (of 200%) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| S1 25 @1/s   | 13.9/s | 1310 ms | 3017 ms | 79% | 46% | 5/17% | 107% |
+| S2 50 @0.5/s | 14.2/s | 1893 ms | 3709 ms | 81% | 62% | 5/7%  | 127% |
+| S3 50 @1/s   | 12.1/s | 2419 ms | 3931 ms | 82% | 66% | 4/6%  | 133% |
+| S4 100 @1/s  |  7.2/s | 5153 ms | 7745 ms | 91% | 67% | 10/5% | 135% |
+| S5 100 @2/s  |  5.4/s | 8560 ms | 10218 ms | 76% | 67% | 11/10% | 136% |
+| S6 100 @4/s  |  2.6/s | 8160 ms | 8220 ms | 87% | 62% | 9/7%  | 123% |
+
+### Collaboration, the real client path (nginx → sync workers)
+
+| Scenario | Throughput | Send p50 | **Propagation p50** | **p95** | main | sync1 | sync2 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CN1 25 @0.5/s | **11.0/s** | 2284 ms | **3584 ms** | 20755 ms | 38% | 39% | 55% |
+| CN2 50 @0.5/s | **11.4/s** | 4857 ms | **6733 ms** | 15495 ms | 64% | 56% | 54% |
+
+The same collab scenarios driven at `:8008`, where `/sync` never reaches a
+worker, managed 3.4/s and 4.4/s with propagation p50 of 7.3 s and 20.5 s. That
+gap — 3.4 vs 11.0, 20.5 s vs 6.7 s — **is** the workers doing their job.
+
+## What it means (2026-08-01)
+
+1. **The workers are a real win, and only visible through nginx.** On the
+   client path, collab throughput roughly doubled against the June monolith
+   (5.3/s → 11.4/s at 50 members) and the load genuinely spreads
+   (main 64%, sync1 56%, sync2 54%). Measured at `:8008` the same test looks
+   *worse* than June, because there the main process is one of four
+   contenders for two cores instead of owning the machine.
+
+2. **Propagation p95 is now the ugly number.** p50 improved, but p95 sits at
+   15–21 s. Median latency got better while the tail got worse, which is what
+   queueing behind a saturated box looks like.
+
+3. **The box is still the ceiling.** Combined CPU peaks at 107–136% of 200%,
+   with the main process alone at 76–91%. Splitting into four processes cannot
+   create cores; it only stops `/sync` from competing with writes. Past this,
+   more capacity means a bigger droplet, not more workers.
+
+4. **Re-baseline before the next comparison.** The June figures are a monolith
+   at `:8008`. Now that the deployed topology has four processes, `:8008` is a
+   component test and nginx is the system test — future runs should compare
+   nginx-to-nginx.
+
+### Harness fixes this run depended on
+
+The first three attempts produced numbers that were entirely artefacts of the
+harness, and none of them errored — they all just reported figures:
+
+- Re-using an account prefix a previous teardown had **deactivated** yielded
+  tokens Synapse rejects, and the driver reported **0 sends across every
+  scenario**. Provisioning now verifies a token and refuses to continue.
+- An **uppercase** prefix makes every Matrix username invalid; the failures
+  were swallowed and the script emitted a well-formed **empty array**.
+  Provisioning now fails when it creates nothing.
+- Collab **invites were rate-limited (429)** and the driver ignored the status,
+  so those accounts then failed to **join with 403** and silently sat out the
+  test. Invites now retry on the server's own `retry_after_ms`, and a failed
+  invite or join is fatal.
+- Relax/restore-limits restarted **only the monolith**, leaving the workers on
+  the old limits — a config change whose whole purpose is lifting a limit may
+  not have been in force where it mattered.
+- The CPU sampler named one container out of four, so every "peak CPU" line was
+  **empty**.
+- The collab clock started **before** room setup, so populating a 50-account
+  room consumed the entire 30 s window and the scenario reported 0 sends.
+
+---
+
 ## Results (2026-06-30, droplet = 2 vCPU / 3.8 GB, Synapse v1.148 monolith)
 
 Rate limits relaxed for the run; **restored afterwards**. Driver hit Synapse

@@ -376,8 +376,22 @@ async function setupCollabRoom() {
   return room
 }
 
-async function runCollab(endAt) {
+/**
+ * `endAt` is recomputed after setup, deliberately.
+ *
+ * Populating a 50-account room takes real time — fifty invites, each retrying
+ * while the server rate-limits them, then fifty joins. With the clock started
+ * before setup, that setup ate the entire measurement window: the 50-account
+ * scenario reported 0 sends in a 30s test having spent 37s just getting
+ * everyone into the room, which reads as a total collapse in collaborative
+ * throughput rather than as a test that never began.
+ *
+ * Setup is not the thing being measured, so it does not get to consume the
+ * measurement.
+ */
+async function runCollab(_endAt, durationMs) {
   const room = await setupCollabRoom()
+  const endAt = performance.now() + durationMs
   const sentAt = new Map() // key -> performance.now()
   const seen = new Set() // `${readerUsername}|${key}` dedupe
 
@@ -450,7 +464,7 @@ async function main() {
   if (MODE === 'capacity') {
     await runCapacity(endAt)
   } else {
-    room = await runCollab(endAt)
+    room = await runCollab(endAt, DURATION * 1000)
   }
 
   clearAllTimers()

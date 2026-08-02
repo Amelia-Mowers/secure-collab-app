@@ -34,17 +34,18 @@ run() {
   # shellcheck disable=SC2086
   $DRIVER --mode "$mode" --accounts "$acct" --rate "$rate" --duration "$dur" $extra 2>/dev/null
   kill "$spid" 2>/dev/null
-  echo "-- peak CPU per synapse process, and combined (of $(nproc)00%) --"
-  # Per-process peaks AND the peak of their sum: with workers the interesting
-  # number is whether the box saturates, which no single process reveals.
-  awk '{ tot=0
-         for (i=1;i<=NF;i++) { split($i,kv,"="); gsub(/%/,"",kv[2])
-                               if (kv[2]+0 > peak[kv[1]]) peak[kv[1]]=kv[2]+0
-                               tot+=kv[2]+0 }
-         if (tot>combined) combined=tot }
-       END { for (k in peak) printf "%s=%.0f%% ", k, peak[k]
-             printf "| combined=%.0f%%
-", combined }' "$statf"
+  echo "-- peak CPU per synapse process, and combined --"
+  awk '{ tot = 0
+         for (i = 1; i <= NF; i++) {
+           split($i, kv, "=")
+           gsub(/%/, "", kv[2])
+           if (kv[2] + 0 > peak[kv[1]]) peak[kv[1]] = kv[2] + 0
+           tot += kv[2] + 0
+         }
+         if (tot > combined) combined = tot }
+       END { out = ""
+             for (k in peak) out = out k "=" int(peak[k] + 0.5) "% "
+             print out "| combined=" int(combined + 0.5) "%" }' "$statf"
   rm -f "$statf"
 }
 
