@@ -26,7 +26,7 @@ be trusted. Playwright keeps the real path but puts a browser in every sample.
 | | | |
 |---|---|---|
 | **M1** cold start vs size | **run 2026-08-01** | results below |
-| **M2** incremental load | **deferred** | worst-case cold start does not need it; seeding uses bulk `import`, not `row add`, so the O(N²) path is not on this road |
+| **M2** incremental load | **shipped** | 373 ms cold → 258 ms warm at 1000 rows; the win scales with events skipped |
 | **M3** concurrent users | not started | needs M1's seeding first |
 | **M4** native propagation | not started | lowest priority; duplicates M3 |
 
@@ -108,6 +108,43 @@ Two things keep that from being worse than it sounds:
   (`3ddb4e74`) skips the walk entirely for a device that has a snapshot. They
   are complementary — a snapshot cannot help a *new* device, which is the worse
   case and the one a new collaborator meets.
+
+## The 10k story
+
+All three constants below were measured, not estimated: **~7 ms per event**,
+**~0.14 ms per cell**, a ~325 ms floor, and — from the sweep probe —
+**133 bytes per bump, 122 cells per sweep** inside the 16 KiB budget.
+
+A 10k-row × 7-column workspace, edited by hand (so ~one event per cell edit):
+
+| | events to walk | cold start |
+|---|---:|---:|
+| before batched compaction | 70,000 | **~500 s** |
+| after batched compaction | 573 | **~14 s** |
+| warm, with a snapshot | ~0 | **~0.3 s** |
+
+### Where the remaining 14 s goes
+
+```
+events:    573 × 7 ms    =  4.0 s
+cells:  70,000 × 0.14 ms =  9.8 s   ← now the dominant term
+```
+
+That inversion is the useful part. Before compaction the walk was event-bound,
+and shortening it was everything. Now it is **cell-bound**: even a perfect
+sweep still has to replay every live cell. Raising the sweep budget from 16 KiB
+to 32 KiB would buy about 2 s of the 14 s and double the size risk on an event
+that also carries the user's own write — not a good trade.
+
+So the next lever is not more compaction. It is either per-cell replay cost, or
+not walking at all — which is what the snapshot does, and why warm start is
+~0.3 s regardless of size.
+
+### What this means for a launch claim
+
+"A 10k-row workspace opens in about a second for anyone who has opened it
+before, and about fifteen seconds on a brand-new device." Both halves are
+honest, and the second is the one to keep improving.
 
 ## Reading the results
 

@@ -93,7 +93,7 @@ for rows in "${SIZES[@]}"; do
     d=$(fresh_dir "cold-$rows-$i")
     export TIDEWORK_DATA_DIR="$d"
     "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
-    ms=$(timed "$CLI" table show "$ws" Bench) || { echo "  table show failed" >&2; exit 1; }
+    ms=$(timed "$CLI" table show "$ws" "$TABLE") || { echo "  table show failed" >&2; exit 1; }
     samples+=("$ms")
     rm -rf "$d"
   done
@@ -103,16 +103,29 @@ for rows in "${SIZES[@]}"; do
   median=$(printf '%s\n' "${samples[@]}" | sort -n | sed -n 2p)
   echo "  cold start: ${samples[0]}ms ${samples[1]}ms ${samples[2]}ms  -> median ${median}ms"
 
-  # ── The M2 comparison, free while we are here: run it AGAIN in the same
-  #    state dir. Today this should be indistinguishable from a cold start,
-  #    because the native path has no incremental load (ADR 0006). When that
-  #    lands, this line is the number that should fall.
+  # ── WARM start: the same command again in the SAME state dir, so the
+  #    snapshot written by the first run is reused and only events newer than
+  #    its marker are fetched. This is what a returning user experiences, and
+  #    it is the number worth quoting.
+  #
+  #    Median of three warm runs, not one: the first run in a fresh dir also
+  #    WRITES the snapshot, so timing that would charge incremental load for
+  #    the work it saves rather than the work it costs.
   d=$(fresh_dir "warm-$rows")
   export TIDEWORK_DATA_DIR="$d"
   "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
-  first=$(timed "$CLI" table show "$ws" Bench)
-  second=$(timed "$CLI" table show "$ws" Bench)
-  echo "  same-state-dir: first ${first}ms, second ${second}ms  (equal => no incremental load)"
+  cold_once=$(timed "$CLI" table show "$ws" "$TABLE")
+  warm=()
+  for _ in 1 2 3; do
+    warm+=("$(timed "$CLI" table show "$ws" "$TABLE")")
+  done
+  warm_med=$(printf '%s\n' "${warm[@]}" | sort -n | sed -n 2p)
+  if [ "$cold_once" -gt 0 ]; then
+    saved=$(( (cold_once - warm_med) * 100 / cold_once ))
+  else
+    saved=0
+  fi
+  echo "  warm start:  ${warm[0]}ms ${warm[1]}ms ${warm[2]}ms  -> median ${warm_med}ms  (${saved}% off ${cold_once}ms)"
   rm -rf "$d"
   echo
 done
