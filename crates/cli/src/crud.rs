@@ -9,6 +9,7 @@
 //! limit).
 
 use anyhow::{anyhow, Context, Result};
+use app_core::snapshot::{WorkspaceSnapshot, SNAPSHOT_VERSION};
 use app_core::{ColumnDefinition, ColumnType, TableDefinition, Workspace};
 use tables_over_matrix::{CellUpdate, MatrixClient};
 
@@ -62,17 +63,60 @@ async fn resolve_workspace(client: &MatrixClient, arg: &str) -> Result<String> {
     }
 }
 
-/// Cold-start a `Workspace` from a room's full history.
+/// Load a `Workspace`, resuming from a local snapshot when there is one.
+///
+/// Every CLI invocation used to re-paginate the ENTIRE room and replay every
+/// update. That is ~7 ms per event (ADR 0006 M1), so a workspace of any real
+/// size made every single command pay minutes — and `row add` paid it to write
+/// one row, which is what made scripted row-by-row work quadratic.
+///
+/// Now the materialized state is persisted after each load and the next run
+/// fetches only what is newer than its marker. A missing, unreadable or
+/// stale-versioned snapshot silently falls back to the full walk, because a
+/// wrong snapshot must never be preferred to a slow correct load.
 async fn load_workspace(client: &mut MatrixClient, room_id: &str) -> Result<Workspace> {
     client.set_room_from_str(room_id)?;
-    let updates = client
-        .load_room_cell_updates()
+
+    let paths = session::Paths::resolve()?;
+    let snapshot_path = paths.snapshot_file(room_id);
+    let snapshot = std::fs::read_to_string(&snapshot_path)
+        .ok()
+        .and_then(|raw| WorkspaceSnapshot::from_json(&raw).ok())
+        .filter(|snap| snap.is_fast_path_usable());
+
+    let mut ws = Workspace::new(room_id);
+    let marker_ts = match &snapshot {
+        Some(snap) => {
+            // Same primitive the wasm bridge uses, so both clients rehydrate a
+            // snapshot identically rather than by two similar-looking routes.
+            ws.load_cells(snap.cells.clone(), snap.timestamp_counter);
+            snap.marker_ts
+        }
+        None => 0,
+    };
+
+    let (updates, newest_ts) = client
+        .load_room_cell_updates_since(marker_ts)
         .await
         .context("loading workspace history")?;
-    let mut ws = Workspace::new(room_id);
     for update in updates {
         let _ = ws.apply_update(update);
     }
+
+    // Persist for the next run. Best-effort: a workspace that loaded correctly
+    // must not fail a command because a cache could not be written.
+    let snap = WorkspaceSnapshot {
+        version: SNAPSHOT_VERSION,
+        marker_ts: newest_ts,
+        timestamp_counter: ws.timestamp_counter(),
+        undecryptable_count: 0,
+        cells: ws.export_cells(),
+    };
+    if let (Some(dir), Ok(json)) = (snapshot_path.parent(), snap.to_json()) {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(&snapshot_path, json);
+    }
+
     Ok(ws)
 }
 
