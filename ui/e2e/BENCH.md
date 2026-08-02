@@ -111,40 +111,42 @@ Two things keep that from being worse than it sounds:
 
 ## The 10k story
 
-All three constants below were measured, not estimated: **~7 ms per event**,
-**~0.14 ms per cell**, a ~325 ms floor, and — from the sweep probe —
-**133 bytes per bump, 122 cells per sweep** inside the 16 KiB budget.
+Constants all measured: **~7 ms per event walked**, **~0.14 ms per cell**, a
+~325 ms floor, and — from the coverage test — **16 cells covered per event**.
 
-A 10k-row × 7-column workspace, edited by hand (so ~one event per cell edit):
+A 10k-row × 7-column workspace edited by hand:
 
-| | events to walk | cold start |
-|---|---:|---:|
-| before batched compaction | 70,000 | **~500 s** |
-| after batched compaction | 573 | **~14 s** |
-| warm, with a snapshot | ~0 | **~0.3 s** |
+| | cells/event | events to walk | cold start |
+|---|---:|---:|---:|
+| 1 bump per write (original) | 1.0 | 70,000 | ~500 s |
+| counter-based sweep | 3.96 | 17,700 | ~134 s |
+| **per-write ×16 (current)** | **16.0** | **4,375** | **~41 s** |
+| warm, with a snapshot | — | ~0 | **~0.3 s** |
 
-### Where the remaining 14 s goes
+### Two corrections worth keeping
 
-```
-events:    573 × 7 ms    =  4.0 s
-cells:  70,000 × 0.14 ms =  9.8 s   ← now the dominant term
-```
+**Batching into occasional sweeps barely helped.** The walk pays ~7 ms for
+every event it passes, whether or not that event carries bumps — so refreshing
+122 cells once per 100 writes raised the rate from 1.0 to 3.96 cells/event, not
+to 122. An early version of this document claimed ~14 s at 10k rows on that
+arithmetic; measuring coverage gave ~134 s.
 
-That inversion is the useful part. Before compaction the walk was event-bound,
-and shortening it was everything. Now it is **cell-bound**: even a perfect
-sweep still has to replay every live cell. Raising the sweep budget from 16 KiB
-to 32 KiB would buy about 2 s of the 14 s and double the size risk on an event
-that also carries the user's own write — not a good trade.
+**And the sweep could barely fire.** Its counter lived on `Workspace`, which is
+rebuilt on every CLI command and every page load, so `tidework row set` — one
+write per process — never reached the threshold. Compaction only worked inside a
+long-lived browser session.
 
-So the next lever is not more compaction. It is either per-cell replay cost, or
-not walking at all — which is what the snapshot does, and why warm start is
-~0.3 s regardless of size.
+Both are why the trigger is now stateless: every write refreshes up to 16 stale
+cells. Same total write cost as any batching scheme with the same refresh rate,
+but it fires everywhere and raises the quantity that actually governs walk
+length.
 
-### What this means for a launch claim
+### The remaining shape
 
-"A 10k-row workspace opens in about a second for anyone who has opened it
-before, and about fifteen seconds on a brand-new device." Both halves are
-honest, and the second is the one to keep improving.
+At 10k rows the ~41 s splits as ~31 s of event walking and ~10 s of cell replay.
+More bumps per write keeps buying time until those cross over; past roughly ×32
+the replay floor dominates and the only remaining lever is not walking at all —
+which is what the snapshot does, and why warm start is ~0.3 s at any size.
 
 ## Reading the results
 
