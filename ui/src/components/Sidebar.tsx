@@ -447,7 +447,12 @@ export function Sidebar({
   const { theme, toggleTheme } = useTheme()
   const { confirm, prompt, notify } = useDialogs()
   const { workspaces } = useAuth()
-  const workspaceName = workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace'
+  // The demo mounts under this id and has no account behind it.
+  const isDemo = workspaceId === 'demo'
+  // The demo has no entry in the account's workspace list to take a name from.
+  const workspaceName = isDemo
+    ? 'Demo workspace'
+    : (workspaces.find(w => w.id === workspaceId)?.name ?? 'Workspace')
   /** This user's role — gates the administrative affordances below. */
   const myRole = useRole(workspace, syncCount)
   const myUserId = useCurrentUserId(workspace)
@@ -890,7 +895,13 @@ export function Sidebar({
           <div className="sidebar__workspace-text" onClick={() => setCollapsed(c => !c)}>
             <span className="sidebar__workspace-name">{workspaceName}</span>
             <span className={`sidebar__workspace-badge${encrypted === false ? ' sidebar__workspace-badge--warn' : ''}`}>
-              {encrypted === false ? (
+              {/* The demo is local-only: there is no room, no server and
+                  therefore nothing encrypted. Claiming "E2E Encrypted" here
+                  would be the app's most load-bearing promise, made falsely, on
+                  the one screen shown to people deciding whether to trust it. */}
+              {isDemo ? (
+                <>Local only — nothing leaves this tab</>
+              ) : encrypted === false ? (
                 <>
                   <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
                     <path d="M6 1.2 1 10.8h10L6 1.2z" />
@@ -910,8 +921,12 @@ export function Sidebar({
         {!collapsed && (
           <button
             className="sidebar__back-btn"
-            title="All workspaces"
-            onClick={() => navigate('/workspaces')}
+            title={isDemo ? 'Create an account' : 'All workspaces'}
+            // In the demo there is no workspace list to go back to, and
+            // /workspaces is behind the auth guard — so this would bounce a
+            // visitor straight to sign-in with no explanation. Send them there
+            // deliberately instead, labelled as what it is.
+            onClick={() => navigate(isDemo ? '/signin' : '/workspaces')}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M8 2H3a1 1 0 00-1 1v6a1 1 0 001 1h6a1 1 0 001-1V4L8 2z" />

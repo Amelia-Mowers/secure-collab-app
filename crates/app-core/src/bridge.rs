@@ -18,6 +18,11 @@ pub fn init_tracing() {
 }
 
 /// WASM wrapper for Workspace
+/// The identity a local (no-Matrix) workspace reports as the current user.
+/// `.invalid` is reserved by RFC 2606 and can never be a real homeserver, so
+/// this cannot collide with an account or be mistaken for one.
+pub const LOCAL_USER_ID: &str = "@you:local.invalid";
+
 #[wasm_bindgen]
 pub struct WasmWorkspace {
     workspace: Workspace,
@@ -250,6 +255,59 @@ impl WasmWorkspace {
     pub fn list_views_for_table(&self, table_id: String) -> String {
         let views = self.workspace.list_views_for_table(&table_id);
         serde_json::to_string(&views).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// The viewer's identity in this local workspace.
+    ///
+    /// A local workspace has no Matrix session and therefore no real user, but
+    /// the UI asks who "me" is in two places that matter for a seeded demo:
+    /// member cells render an avatar for the current user, and a view filtered
+    /// to `@me` resolves against it. Without an answer, a demo's "My Board"
+    /// renders empty and every assigned task shows as unassigned — the two
+    /// features most worth demonstrating.
+    ///
+    /// So the local workspace names itself. The value is a syntactically valid
+    /// MXID on a reserved-looking server so it can never collide with a real
+    /// account.
+    #[wasm_bindgen(js_name = currentUserId)]
+    pub fn current_user_id(&self) -> String {
+        LOCAL_USER_ID.to_string()
+    }
+
+    /// Import a workspace archive (the JSON file map) into this workspace.
+    ///
+    /// The engine is identical to the Matrix path — `apply_to_workspace` knows
+    /// nothing about sessions. The difference is the tail: `ConnectedWorkspace`
+    /// enqueues the resulting updates for sending, and this DISCARDS them,
+    /// exactly as `deleteRow` and `deleteTable` above do. A local workspace has
+    /// nowhere to send anything, which is the whole point of it.
+    ///
+    /// Returns `{rowsWritten, issues}`, matching the Matrix binding so the same
+    /// caller can handle both.
+    #[wasm_bindgen(js_name = importWorkspaceArchive)]
+    pub fn import_workspace_archive(&mut self, files_json: String) -> Result<String, JsValue> {
+        let files: crate::archive::Files = serde_json::from_str(&files_json)
+            .map_err(|_| JsValue::from_str("Invalid archive files"))?;
+        let archive = crate::archive::Archive::from_files(&files)
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        // Row ids only have to be unique within this workspace, and a local one
+        // is never merged with another, so a counter is enough — no timestamp
+        // needed, which also keeps this deterministic for tests.
+        let mut n = 0u64;
+        let result = archive.apply_to_workspace(&mut self.workspace, &mut |table, row| {
+            n += 1;
+            format!("row_{n}_{table}_{row}")
+        });
+        Ok(serde_json::json!({
+            "rowsWritten": result.rows_written,
+            "issues": result.issues.iter().map(|i| serde_json::json!({
+                "table": i.table,
+                "row": i.row,
+                "column": i.column,
+                "message": i.message,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string())
     }
 
     /// Delete a row from a table.
