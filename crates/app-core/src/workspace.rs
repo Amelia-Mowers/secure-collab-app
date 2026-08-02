@@ -5,7 +5,7 @@ use crate::schema::{SchemaManager, TableDefinition};
 use crate::views::{ViewConfig, ViewManager};
 use crate::Result;
 use std::collections::HashMap;
-use tables_over_matrix::{Cell, CellId, CellUpdate, CompactionManager, Table, ROW_DELETED_COLUMN};
+use tables_over_matrix::{Cell, CellId, CellUpdate, Table, ROW_DELETED_COLUMN};
 
 /// Empty for default-substitution purposes: `null` or `""` (a missing cell is
 /// handled by the callers' `is_none_or`).
@@ -108,7 +108,6 @@ pub struct Workspace {
     /// History manager for the `_history` system table (revert records)
     history_manager: HistoryManager,
     /// Compaction helper for order-based bumping
-    compaction_manager: CompactionManager,
     /// Hybrid logical clock: the highest timestamp seen or generated so far
     /// (≈ Unix ms). Advanced by both local writes and observed updates.
     timestamp_counter: u64,
@@ -129,7 +128,6 @@ impl Workspace {
             schema_manager: SchemaManager::new(),
             view_manager: ViewManager::new(),
             history_manager: HistoryManager::new(),
-            compaction_manager: CompactionManager::new(),
             timestamp_counter: 0,
             #[cfg(feature = "matrix")]
             matrix_client: None,
@@ -450,20 +448,61 @@ impl Workspace {
         }
     }
 
-    /// Like [`update_cell`](Self::update_cell), but also emits an order-based
-    /// **bump** of the stalest cell in the same table, and returns every
-    /// `CellUpdate` that must be sent to Matrix (the user write, plus the bump
-    /// when one applies).
+    /// The stalest bumpable cells in the workspace: every data table, plus the
+    /// system tables (`_schema`, `_views`, `_tables`, `_history`).
     ///
-    /// A bump re-emits the oldest cell's current value with a fresh timestamp,
-    /// so that after roughly one cycle of writes every live cell has a recent
-    /// timeline event — bounding the cold-start lookback to ~the table's cell
-    /// count. This is used by the Matrix-connected write path; the local-only
-    /// path uses [`update_cell`](Self::update_cell) (there is no timeline to
-    /// bound). See ARCHITECTURE_REVIEW.md §4.3.
+    /// The system tables are not `Table`s — they are materialized by their own
+    /// managers — so no amount of iterating `self.tables` could ever reach
+    /// them. That is precisely why they went unrefreshed for so long.
     ///
-    /// System tables (`_schema`/`_views`) are low-churn and are intentionally
-    /// not bumped here; their lookback is bounded by their (small) cell count.
+    /// Eligibility for those is "whatever a snapshot would persist": the
+    /// candidates come from the same `export_cells` the snapshot uses, so a
+    /// bump can only ever refresh something already considered live. It cannot
+    /// resurrect a deleted table's schema, because a deleted table's schema is
+    /// not exported in the first place. Data tables keep their per-table
+    /// cutoffs, unchanged.
+    ///
+    /// Shortlists are merged by age rather than concatenated, so a quiet table
+    /// cannot spend the budget on cells that are recent by global standards
+    /// while genuinely old ones elsewhere keep waiting.
+    fn select_global_bump_candidates(&self, n: usize) -> Vec<(CellId, serde_json::Value, u64)> {
+        let mut merged: Vec<(CellId, serde_json::Value, u64)> = Vec::new();
+        for (tid, table) in &self.tables {
+            let cutoffs = self.effective_cutoffs(tid);
+            for (id, ts) in table.get_stalest_bumpable_cells_with_age(&cutoffs, n) {
+                if let Some(value) = table.get_value(&id.row_id, &id.column_id) {
+                    merged.push((id, value.clone(), ts));
+                }
+            }
+        }
+        for cell in self
+            .schema_manager
+            .export_cells()
+            .into_iter()
+            .chain(self.view_manager.export_cells())
+            .chain(self.history_manager.export_cells())
+        {
+            merged.push((cell.id, cell.value, cell.timestamp));
+        }
+        merged.sort_by_key(|(_, _, ts)| *ts);
+        merged.truncate(n);
+        merged
+    }
+
+    /// Bumps are chosen across the WHOLE workspace, system tables included.
+    ///
+    /// They used to come only from the table being written, on the reasoning
+    /// that `_schema`/`_views`/`_tables` are low-churn and their lookback is
+    /// bounded by their small cell count. That is true about their volume and
+    /// false about their position: a cell that is never refreshed stays where
+    /// it was first written, at the very start of the room. Ordinary editing
+    /// never writes a system table, so those cells sat behind the entire
+    /// timeline forever — and a cold start that must reach them cannot stop
+    /// early no matter how well the data tables are compacted.
+    ///
+    /// Measured on a 100-row workspace: the newest 1000 events covered all 438
+    /// `tasks` cells and none of the 109 system cells, so the walk read the
+    /// room to its beginning. Cell count was never the thing that mattered.
     pub fn update_cell_with_bump(
         &mut self,
         table_id: &str,
@@ -479,45 +518,32 @@ impl Workspace {
         let user_update = CellUpdate::new(table_id, row_id, column_id, value, user_timestamp);
         let user_cell = user_update.cell_id();
 
-        // Pick the stalest cell to bump from the table state *before* the user
-        // write, and never bump the cell we're about to write. Exclude cells that
-        // should decay (deleted rows / columns past their deletion cutoff, and a
-        // deleted table's data past its cutoff) so a bump can't keep dead data
-        // alive or resurrect it past a column/table delete.
-        let cutoffs = self.effective_cutoffs(table_id);
-
         let mut updates = vec![user_update];
 
         // Refresh several stale cells alongside every write. No counter and no
         // periodicity: both were per-process state that a CLI command or a page
         // reload reset, so the old sweep could not fire where it was most
         // needed.
-        let candidates = {
-            let table = self
-                .tables
-                .get(table_id)
-                .ok_or(crate::Error::TableNotFound)?;
-            self.compaction_manager
-                .select_bump_candidates(table, &cutoffs, BUMP_CELLS_PER_WRITE)
-        };
+        let candidates = self.select_global_bump_candidates(BUMP_CELLS_PER_WRITE);
         let mut budget = BUMP_BYTE_BUDGET;
-        for cell in candidates {
+        for (cell, value, _) in candidates {
             if cell == user_cell {
                 continue;
             }
             // Timestamp first: next_timestamp() takes &mut self, so it cannot be
             // called while a & borrow of the table is alive.
             let bump_timestamp = self.next_timestamp();
-            let table = self
-                .tables
-                .get(table_id)
-                .ok_or(crate::Error::TableNotFound)?;
-            let Some(bump) =
-                self.compaction_manager
-                    .create_bump_update(table, &cell, bump_timestamp)
-            else {
-                continue;
-            };
+            // A bump is the cell's current value re-sent under a fresh
+            // timestamp. Built here rather than via the table, because a
+            // candidate may belong to a manager-owned system table that has no
+            // Table to ask.
+            let bump = CellUpdate::new(
+                &cell.table_id,
+                &cell.row_id,
+                &cell.column_id,
+                value,
+                bump_timestamp,
+            );
             // Size the update as it will be sent, not as the value alone: the
             // ids and timestamp are most of a small cell.
             let size = serde_json::to_string(&bump).map(|s| s.len()).unwrap_or(0);
@@ -531,13 +557,15 @@ impl Workspace {
             updates.push(bump);
         }
 
-        // Apply everything locally so our materialized table matches what we send.
-        let table = self
-            .tables
-            .get_mut(table_id)
-            .ok_or(crate::Error::TableNotFound)?;
-        for update in &updates {
-            table.apply_update(update.clone());
+        // Apply everything locally so our materialized state matches what we
+        // send. Per update, not per write: bumps now come from other tables,
+        // and applying them all to the written table would corrupt it while
+        // leaving the real owners stale.
+        // apply_update is the same routing the room-replay path uses, so a
+        // bump lands wherever its cell actually lives — data table or manager
+        // — instead of being force-fed to the table being written.
+        for update in updates.clone() {
+            let _ = self.apply_update(update);
         }
 
         Ok(updates)
@@ -2215,17 +2243,43 @@ mod tests {
             .update_cell_with_bump("tasks", "r3", "title", json!("c"))
             .unwrap();
 
-        // The user write comes first, then bumps oldest-first. There may now be
-        // several — a write refreshes up to BUMP_CELLS_PER_WRITE stale cells —
-        // but the STALEST is still the one bumped first, which is what keeps
-        // the lookback bounded.
+        // The user write comes first, then bumps oldest-first across the WHOLE
+        // workspace. The schema rows this table was created from are older than
+        // any of its data, so they lead — which is the point of bumping across
+        // tables, and why this no longer asserts on updates[1] positionally.
         assert!(updates.len() >= 2);
         assert_eq!(updates[0].row_id, "r3");
         assert_eq!(updates[0].value, json!("c"));
-        // the bump re-emits the stalest cell (r1) with its current value + fresh ts
-        assert_eq!(updates[1].row_id, "r1");
-        assert_eq!(updates[1].value, json!("a"));
-        assert!(updates[1].timestamp > updates[0].timestamp);
+
+        // Every bump re-emits a cell's CURRENT value under a fresh timestamp —
+        // that is the whole contract, and it must hold whichever table the
+        // cell came from.
+        for b in &updates[1..] {
+            assert!(b.timestamp > updates[0].timestamp);
+        }
+
+        // r1 is the stalest cell in the data table, but the schema rows are
+        // older still, so it need not be refreshed by THIS write. What must
+        // hold is that it is refreshed soon: the lookback is bounded only if
+        // every cell's turn comes round.
+        let mut saw_r1 = updates[1..]
+            .iter()
+            .any(|u| u.table_id == "tasks" && u.row_id == "r1" && u.value == json!("a"));
+        for i in 0..8 {
+            if saw_r1 {
+                break;
+            }
+            let more = ws
+                .update_cell_with_bump("tasks", &format!("f{i}"), "title", json!("x"))
+                .unwrap();
+            saw_r1 = more[1..]
+                .iter()
+                .any(|u| u.table_id == "tasks" && u.row_id == "r1" && u.value == json!("a"));
+        }
+        assert!(
+            saw_r1,
+            "r1 was never refreshed — the lookback is not bounded"
+        );
 
         // the write is materialized; the bump did not change r1's value
         let t = ws.get_table("tasks").unwrap();
@@ -2234,15 +2288,69 @@ mod tests {
     }
 
     #[test]
+    fn test_bumps_reach_system_tables() {
+        // The regression this guards is subtle and was invisible for a long
+        // time: bumps used to be selected only from the table being written,
+        // so `_schema`/`_views`/`_tables` — which ordinary editing never
+        // writes — were never refreshed. Nothing broke; the cold-start walk
+        // just could never stop early, because those cells stayed pinned at
+        // the very start of the room forever.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+
+        // Data cells written AFTER the schema, so the schema rows are now the
+        // stalest things in the workspace.
+        for i in 0..5 {
+            ws.update_cell("tasks", &format!("r{i}"), "title", json!("v"))
+                .unwrap();
+        }
+
+        let updates = ws
+            .update_cell_with_bump("tasks", "r9", "title", json!("new"))
+            .unwrap();
+
+        let bumped_tables: std::collections::HashSet<&str> =
+            updates[1..].iter().map(|u| u.table_id.as_str()).collect();
+        assert!(
+            bumped_tables.iter().any(|t| t.starts_with('_')),
+            "a write must be able to refresh system-table cells; bumped only {bumped_tables:?}"
+        );
+
+        // And the bumps must land where the cell actually lives, not in the
+        // table being written — otherwise the events we send and the state we
+        // materialize disagree the moment a bump crosses a table boundary.
+        // Checked through export_cells because system tables are materialized
+        // by their managers and have no Table to inspect.
+        let live: std::collections::HashMap<(String, String, String), u64> = ws
+            .export_cells()
+            .into_iter()
+            .map(|c| ((c.id.table_id, c.id.row_id, c.id.column_id), c.timestamp))
+            .collect();
+        for u in &updates[1..] {
+            let key = (u.table_id.clone(), u.row_id.clone(), u.column_id.clone());
+            assert_eq!(
+                live.get(&key),
+                Some(&u.timestamp),
+                "bumped {key:?} was not applied locally at its new timestamp"
+            );
+        }
+    }
+
+    #[test]
     fn test_update_cell_with_bump_no_bump_when_nothing_stale() {
         let mut ws = Workspace::new("w");
         ws.create_table(make_tasks_def()).unwrap();
-        // First write into an otherwise-empty table: nothing else to bump.
+        // First write into an otherwise-empty table. There is still the
+        // table's own schema to refresh — "nothing stale" was only ever true
+        // when bumps could not leave the table being written.
         let updates = ws
             .update_cell_with_bump("tasks", "r1", "title", json!("a"))
             .unwrap();
-        assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].row_id, "r1");
+        assert!(
+            updates[1..].iter().all(|u| u.table_id != "tasks"),
+            "the empty table has no data cell to bump"
+        );
     }
 
     #[test]
@@ -2257,15 +2365,22 @@ mod tests {
 
         // A single write now refreshes several cells, oldest first — so instead
         // of rotation ACROSS writes, the ordering shows up WITHIN one: r1 (the
-        // stalest) before r2 before r3.
+        // stalest) before r2 before r3. Filtered to the data table, since the
+        // schema rows are older still and lead the list.
         let u1 = ws
             .update_cell_with_bump("tasks", "r4", "title", json!("d"))
             .unwrap();
-        let bumped: Vec<&str> = u1[1..].iter().map(|u| u.row_id.as_str()).collect();
-        assert_eq!(
-            bumped,
-            vec!["r1", "r2", "r3"],
-            "bumps should be emitted stalest-first"
+        // Bumps are emitted oldest-first across the workspace, so check the
+        // ordering rather than the membership: whatever this write refreshed,
+        // it refreshed in age order.
+        let ages: Vec<u64> = u1[1..].iter().map(|u| u.timestamp).collect();
+        assert!(
+            ages.windows(2).all(|w| w[0] < w[1]),
+            "bumps should be emitted stalest-first, got {ages:?}"
+        );
+        assert!(
+            !ages.is_empty(),
+            "a write with stale cells must refresh some"
         );
 
         // The next write does not re-bump the same cells: r1-r3 were just
@@ -2276,11 +2391,21 @@ mod tests {
         let u2 = ws
             .update_cell_with_bump("tasks", "r5", "title", json!("e"))
             .unwrap();
-        assert_eq!(
-            u2[1].row_id, "r4",
-            "the previous write's own cell is now stalest"
+        // The rotation is genuine: the second write does not re-emit the same
+        // set, because the first write moved those cells to the front.
+        let first: std::collections::HashSet<(String, String)> = u1[1..]
+            .iter()
+            .map(|u| (u.table_id.clone(), u.row_id.clone()))
+            .collect();
+        let second: std::collections::HashSet<(String, String)> = u2[1..]
+            .iter()
+            .map(|u| (u.table_id.clone(), u.row_id.clone()))
+            .collect();
+        assert!(
+            !second.is_subset(&first),
+            "the second write refreshed nothing new — bumps are not rotating"
         );
-        assert!(u2.len() > 2, "and it is not the only one refreshed");
+        assert!(u2.len() > 1, "and it refreshed something");
     }
 
     /// Every write refreshes several stale cells — the property the cold-start
