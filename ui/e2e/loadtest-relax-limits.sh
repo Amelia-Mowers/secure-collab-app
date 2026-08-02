@@ -10,7 +10,11 @@
 # impossible.
 set -eu
 CFG=/srv/tidework/synapse/homeserver.yaml
-SYN=tidework-synapse-1
+# Every Synapse process shares this config file, so every one of them has to be
+# restarted to pick it up. Restarting only the monolith left the workers running
+# the OLD limits — which for a config change whose entire purpose is to lift a
+# limit means the change may simply not be in force where it matters.
+SYN=$(docker ps --format '{{.Names}}' | grep -E '^tidework-synapse' | sort | paste -sd' ' -)
 MARK="# === LOAD TEST"
 
 if grep -q "$MARK" "$CFG"; then
@@ -48,8 +52,9 @@ YAML
   echo "appended relax block; original backed up at $CFG.preloadtest.bak"
 fi
 
-echo "restarting $SYN ..."
-docker restart "$SYN" >/dev/null
+echo "restarting: $SYN"
+# shellcheck disable=SC2086
+docker restart $SYN >/dev/null
 echo "waiting for synapse ..."
 for i in $(seq 1 40); do
   code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8008/_matrix/client/versions || true)

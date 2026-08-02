@@ -41,6 +41,23 @@ printf '\n]\n'
 # The driver then reports 0 sends for every scenario, which reads like a result
 # rather than a broken setup — that cost a whole suite run on 2026-08-01. A
 # silent all-zero run is the worst output this script can produce, so check.
+# Nothing registered at all. Most likely an invalid prefix: Matrix localparts
+# are lowercase, so a capital letter anywhere in PREFIX makes every username
+# "not available on homeserver" — and every failure is swallowed by the
+# >/dev/null on register-user, leaving a well-formed EMPTY array. The driver
+# then runs happily against no accounts and reports zeros.
+if [ -z "$first_token" ]; then
+  {
+    echo "FATAL: no accounts were created."
+    case "$PREFIX" in
+      *[A-Z]*) echo "       PREFIX '$PREFIX' contains an uppercase letter; Matrix"
+               echo "       usernames must be lowercase. Try '$(printf '%s' "$PREFIX" | tr 'A-Z' 'a-z')'." ;;
+      *)       echo "       Check that mas-cli can register users on this host." ;;
+    esac
+  } >&2
+  exit 1
+fi
+
 if [ -n "$first_token" ]; then
   code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $first_token" \
     http://127.0.0.1:8008/_matrix/client/v3/account/whoami)

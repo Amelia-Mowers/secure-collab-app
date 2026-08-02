@@ -111,11 +111,36 @@ async function createRoom(token) {
   return j.room_id
 }
 
-async function invite(token, roomId, userId) {
-  const r = await fetch(`${HOMESERVER}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`, {
-    method: 'POST', headers: headers(token), body: JSON.stringify({ user_id: userId }),
-  })
-  return r.status
+/**
+ * Invite one user, retrying while the server says we are going too fast.
+ *
+ * Invites are rate-limited per room, per user and per issuer, and collab setup
+ * is the single burstiest thing this driver does: one host inviting up to a
+ * hundred accounts at once. Measured on prod at 25 accounts with stock limits,
+ * 15 of 24 invites came back 429 — and because the caller ignored the status,
+ * those 15 accounts then failed to JOIN with 403 "You are not invited to this
+ * room". The run reported a collapse in collaborative throughput that was
+ * entirely an artefact of its own setup.
+ *
+ * `retry_after_ms` is the server telling us exactly how long to wait, so honour
+ * it rather than guessing.
+ */
+async function invite(token, roomId, userId, attempts = 8) {
+  for (let i = 0; i < attempts; i++) {
+    const r = await fetch(`${HOMESERVER}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`, {
+      method: 'POST', headers: headers(token), body: JSON.stringify({ user_id: userId }),
+    })
+    if (r.status !== 429) return r.status
+    let waitMs = 100
+    try {
+      const body = await r.json()
+      if (Number.isFinite(body?.retry_after_ms)) waitMs = Math.max(body.retry_after_ms, 50)
+    } catch { /* no body — fall back to the default backoff */ }
+    // Grow the floor a little each time, so a server that keeps saying "too
+    // fast" is not hammered at its own suggested interval forever.
+    await new Promise(res => setTimeout(res, waitMs + i * 100))
+  }
+  return 429
 }
 
 async function joinRoom(token, roomId) {
@@ -305,24 +330,48 @@ async function setupCollabRoom() {
   if (!room) throw new Error('account[0] createRoom returned no room_id')
   console.log(`==> collab: created shared room ${room}; inviting ${N - 1} others`)
 
-  // account[0] invites every other account; tolerate already-invited errors.
-  await Promise.all(accounts.slice(1).map(async (acct) => {
-    try { await invite(host.token, room, acct.userId) } catch (err) {
-      console.error(`invite ${acct.userId} failed: ${err.message}`)
-    }
-  }))
-
-  // Each other account joins; tolerate already-joined errors.
-  await Promise.all(accounts.slice(1).map(async (acct) => {
+  // account[0] invites every other account. A failed invite is FATAL, not a
+  // warning: the account would go on to 403 at join, be silently absent from
+  // the room, and quietly turn a collab measurement into a measurement of
+  // however many accounts happened to get in. 403 (already invited/joined) and
+  // 409 are fine.
+  const inviteStatuses = await Promise.all(accounts.slice(1).map(async (acct) => {
     try {
-      const status = await joinRoom(acct.token, room)
-      if (!(status >= 200 && status < 300)) {
-        console.error(`account ${acct.username}: join status ${status}`)
-      }
+      return await invite(host.token, room, acct.userId)
     } catch (err) {
-      console.error(`account ${acct.username}: join failed: ${err.message}`)
+      console.error(`invite ${acct.userId} threw: ${err.message}`)
+      return 0
     }
   }))
+  const failedInvites = inviteStatuses.filter((s) => !(s >= 200 && s < 300) && s !== 403 && s !== 409)
+  if (failedInvites.length) {
+    const counts = failedInvites.reduce((m, s) => ((m[s] = (m[s] ?? 0) + 1), m), {})
+    throw new Error(
+      `collab setup: ${failedInvites.length}/${accounts.length - 1} invites failed ` +
+      `(${JSON.stringify(counts)}). Relax rc_invites (loadtest-relax-limits.sh) and ` +
+      `make sure EVERY synapse process was restarted — a stale worker keeps the old limits.`,
+    )
+  }
+
+  // Each other account joins. Also fatal for the same reason — a partially
+  // populated room measures nothing anybody asked about.
+  const joinStatuses = await Promise.all(accounts.slice(1).map(async (acct) => {
+    try {
+      return await joinRoom(acct.token, room)
+    } catch (err) {
+      console.error(`account ${acct.username}: join threw: ${err.message}`)
+      return 0
+    }
+  }))
+  const failedJoins = joinStatuses.filter((s) => !(s >= 200 && s < 300))
+  if (failedJoins.length) {
+    const counts = failedJoins.reduce((m, s) => ((m[s] = (m[s] ?? 0) + 1), m), {})
+    throw new Error(
+      `collab setup: ${failedJoins.length}/${accounts.length - 1} joins failed ` +
+      `(${JSON.stringify(counts)}). A 403 here means the invite never landed.`,
+    )
+  }
+  console.log(`==> collab: ${accounts.length} accounts in the room`)
 
   return room
 }
