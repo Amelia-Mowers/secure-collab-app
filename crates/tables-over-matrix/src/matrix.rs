@@ -1169,7 +1169,35 @@ mod matrix_impl {
             &self,
             marker_ts: u64,
         ) -> Result<(Vec<CellUpdate>, u64)> {
+            self.load_room_cell_updates_bounded(marker_ts, true).await
+        }
+
+        /// The walk, with the two ways it is allowed to stop early.
+        ///
+        /// `stop_when_covered` is the one order-based compaction exists for.
+        /// Every write refreshes several stale cells, so the newest slice of the
+        /// timeline contains a current value for EVERY live cell — walking past
+        /// it only re-reads values that have since been superseded. Until now
+        /// nothing acted on that: the bumps were written on every edit and the
+        /// walk still ran to the beginning of the room, so compaction was pure
+        /// write-side cost with no read benefit.
+        ///
+        /// The stop rule is "a whole page contributed no cell we had not already
+        /// seen". A page rather than an event, because events within a page are
+        /// not strictly ordered; and cells rather than a count, because the
+        /// question is coverage, not distance.
+        ///
+        /// Pass `false` where the walk must be exhaustive regardless — the
+        /// integrity check compares a FULL re-gather against local state, so
+        /// letting it stop early would make it agree with itself by
+        /// construction.
+        pub async fn load_room_cell_updates_bounded(
+            &self,
+            marker_ts: u64,
+            stop_when_covered: bool,
+        ) -> Result<(Vec<CellUpdate>, u64)> {
             use matrix_sdk::room::MessagesOptions;
+            use std::collections::HashSet;
 
             let room = self.get_room()?;
             // Cold-start key restore: a freshly recovered device has backup
@@ -1192,11 +1220,22 @@ mod matrix_impl {
             let mut updates = Vec::new();
             let mut newest_ts: u64 = marker_ts;
             let mut from_token: Option<String> = None;
+            let mut seen_cells: HashSet<(String, String, String)> = HashSet::new();
+            // Observability, not decoration: every claim about what the bounded
+            // walk saves has so far been INFERRED from wall-clock. These counters
+            // make the walk say what it actually did.
+            let mut pages = 0usize;
+            let mut events = 0usize;
+            let mut stop_reason = "exhausted";
             loop {
                 let mut options = MessagesOptions::backward();
                 if let Some(ref token) = from_token {
                     options = options.from(token.as_str());
                 }
+                // Large pages on purpose: a round-trip costs far more than the
+                // events in it, and the coverage check below stops at a PAGE
+                // boundary, so shrinking pages to stop sooner just trades a
+                // cheap saving for an expensive one.
                 options.limit = UInt::from(1000u32);
 
                 let response = room
@@ -1204,9 +1243,13 @@ mod matrix_impl {
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to fetch room history: {e}"))?;
                 if response.chunk.is_empty() {
+                    stop_reason = "empty page";
                     break;
                 }
+                pages += 1;
+                events += response.chunk.len();
                 let mut page_oldest: Option<u64> = None;
+                let mut page_new_cells = 0usize;
                 for ev in &response.chunk {
                     let ts: u64 = ev
                         .raw()
@@ -1226,7 +1269,18 @@ mod matrix_impl {
                     // order disagrees with their origin_server_ts.
                     if let Ok(json_str) = serde_json::to_string(ev.raw().json()) {
                         for received in Self::extract_cell_updates(&json_str) {
-                            updates.push(received.into_update());
+                            let u = received.into_update();
+                            // Walking backwards, the FIRST time a cell is seen
+                            // is its newest value; anything older is superseded
+                            // by LWW anyway.
+                            if seen_cells.insert((
+                                u.table_id.clone(),
+                                u.row_id.clone(),
+                                u.column_id.clone(),
+                            )) {
+                                page_new_cells += 1;
+                            }
+                            updates.push(u);
                         }
                     }
                 }
@@ -1238,13 +1292,29 @@ mod matrix_impl {
                 // 2026-07-25, because the running marker had already advanced
                 // past them so no later run would ever fetch them.
                 if crate::backfill_caught_up(marker_ts > 0, page_oldest, marker_ts) {
+                    stop_reason = "reached marker";
+                    break;
+                }
+                // Coverage stop: this page told us nothing new, so compaction
+                // has already put a current value for every live cell in the
+                // slice we have walked. Requires having seen something at all,
+                // so an empty first page cannot end the walk immediately.
+                if stop_when_covered && page_new_cells == 0 && !seen_cells.is_empty() {
+                    stop_reason = "covered";
                     break;
                 }
                 match response.end {
                     Some(token) => from_token = Some(token),
-                    None => break,
+                    None => {
+                        stop_reason = "start of room";
+                        break;
+                    }
                 }
             }
+            info!(
+                "history walk: {events} events over {pages} page(s), {} distinct cells, stopped: {stop_reason}",
+                seen_cells.len()
+            );
             Ok((updates, newest_ts))
         }
     }
