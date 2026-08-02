@@ -4,7 +4,13 @@
 # while the driver runs, then prints the driver's JSON result + the peak sample.
 # Long-running (~7 min) — launch backgrounded and read /tmp/lt-suite.log.
 set -u
-SYN=tidework-synapse-1
+# Every Synapse process, not just the old monolith name. Once workers were
+# deployed this sampled one of four containers and, because `docker stats` fails
+# on an unknown name, printed an EMPTY peak line for every scenario — so a run
+# could look complete while reporting no CPU at all. Discovered by name so a new
+# worker is included the day it is added.
+SYN_PROCS=$(docker ps --format '{{.Names}}' | grep -E '^tidework-synapse' | sort | paste -sd' ' -)
+SYN=${SYN_PROCS%% *}
 DRIVER="docker run --rm --network host -v /tmp:/work -e LOADTEST_ACCOUNTS=/work/loadtest-accounts.json -e HOMESERVER=http://127.0.0.1:8008 node:20-alpine node /work/loadtest-prod.mjs"
 
 run() {
@@ -17,7 +23,9 @@ run() {
   local statf="/tmp/lt-stats.$$"
   : > "$statf"
   ( while :; do
-      docker stats --no-stream --format '{{.CPUPerc}} mem={{.MemUsage}}' "$SYN" 2>/dev/null >> "$statf"
+      # shellcheck disable=SC2086
+      docker stats --no-stream --format '{{.Name}}={{.CPUPerc}}' $SYN_PROCS 2>/dev/null | paste -sd' ' - >> "$statf"
+      echo >> "$statf"
       sleep 1
     done ) &
   local spid=$!
@@ -26,13 +34,24 @@ run() {
   # shellcheck disable=SC2086
   $DRIVER --mode "$mode" --accounts "$acct" --rate "$rate" --duration "$dur" $extra 2>/dev/null
   kill "$spid" 2>/dev/null
-  echo "-- synapse peak CPU during scenario --"
-  sort -t% -k1 -nr "$statf" 2>/dev/null | head -1
+  echo "-- peak CPU per synapse process, and combined (of $(nproc)00%) --"
+  # Per-process peaks AND the peak of their sum: with workers the interesting
+  # number is whether the box saturates, which no single process reveals.
+  awk '{ tot=0
+         for (i=1;i<=NF;i++) { split($i,kv,"="); gsub(/%/,"",kv[2])
+                               if (kv[2]+0 > peak[kv[1]]) peak[kv[1]]=kv[2]+0
+                               tot+=kv[2]+0 }
+         if (tot>combined) combined=tot }
+       END { for (k in peak) printf "%s=%.0f%% ", k, peak[k]
+             printf "| combined=%.0f%%
+", combined }' "$statf"
   rm -f "$statf"
 }
 
 echo "=== TIDEWORK LOAD-TEST SUITE  start ==="
-docker stats --no-stream --format 'baseline synapse: {{.CPUPerc}} {{.MemUsage}}' "$SYN"
+echo "synapse processes: $SYN_PROCS"
+# shellcheck disable=SC2086
+docker stats --no-stream --format 'baseline {{.Name}}: {{.CPUPerc}} {{.MemUsage}}' $SYN_PROCS
 
 run "S1  capacity 25 @1/s   (25/s aggregate, low concurrency)"  capacity 25  1   25
 run "S2  capacity 50 @0.5/s (25/s aggregate, 2x concurrency)"   capacity 50  0.5 25
