@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import { useWorkspace } from './hooks/useTable'
 import { LoadingSpinner } from './components/LoadingSpinner'
@@ -18,6 +18,7 @@ import { TrialGate } from './components/TrialStatus'
 import { UpdateBanner } from './components/UpdateBanner'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
+import { DemoShell } from './views/demo/DemoShell'
 import './App.css'
 
 /** How long the workspace home will promise incoming tables before falling
@@ -271,6 +272,16 @@ export default function App() {
             </RequireAuth>
           }
         />
+        {/* The no-account demo (ADR 0002). Registered BEFORE the general
+            workspace route and matched ahead of it, because react-router ranks
+            the static `demo` segment above the `:workspaceId` parameter — so
+            this is the specific case and the route below stays untouched.
+
+            It lives under /workspace/ on purpose: every internal link in the
+            views builds `/workspace/${id}/...` by hand, so mounting the demo
+            anywhere else would fill it with dead links. /demo redirects here. */}
+        <Route path="/workspace/demo/*" element={<DemoShell />} />
+        <Route path="/demo" element={<Navigate to="/workspace/demo" replace />} />
         <Route
           path="/workspace/:workspaceId/*"
           element={
