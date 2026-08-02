@@ -63,6 +63,10 @@ timed() {
 echo "instrument=cli  homeserver=$HS  cli=$CLI"
 echo
 
+# Rows of the summary table, accumulated as we go so a run that dies partway
+# still reports what it managed to measure.
+SUMMARY=()
+
 for rows in "${SIZES[@]}"; do
   ws="bench-$rows"
   echo "=== $rows rows ==="
@@ -87,6 +91,26 @@ for rows in "${SIZES[@]}"; do
   done
   echo "  seed: ${seed_ms}ms across $(ls -d "$CORPUS/$rows"/chunk-* | wc -l) chunks"
 
+  # ── Hand-edit the room into a realistic SHAPE.
+  #
+  # Import alone is not a workspace anyone has: it packs ~250 cells per event,
+  # so a 10k-row corpus lands as a few hundred events and every cold start is
+  # trivially fast. Real rooms are mostly single-cell edits, one event each,
+  # and that is what the walk pays for.
+  #
+  # How many: compaction refreshes BUMP_CELLS_PER_WRITE (16) stale cells per
+  # write, so covering the workspace takes ~cells/16 events. Seeding twice that
+  # puts the room past the point where coverage is reachable, which is the only
+  # regime where cold start is bounded rather than proportional to history.
+  # Below it the numbers describe page granularity, not compaction.
+  cells=$(( rows * 7 ))
+  edits="${BENCH_EDITS:-$(( cells / 8 ))}"
+  [ "$edits" -lt 200 ] && edits=200
+  echo "  editing: $edits single-cell writes (~${cells} cells, coverage needs ~$(( cells / 16 )))"
+  edit_start=$(date +%s)
+  TIDEWORK_CLI="$CLI" HOMESERVER="$HS"     bash "$(dirname "$0")/bench-seed-edits.sh" "$ws" "$TABLE" "$edits" >/dev/null 2>&1     || { echo "  edit seeding failed" >&2; exit 1; }
+  echo "  edited in $(( $(date +%s) - edit_start ))s"
+
   # ── Measure. One state dir, one login; `--cold` makes each sample ignore
   #    the saved snapshot and replay history in full.
   #
@@ -102,6 +126,11 @@ for rows in "${SIZES[@]}"; do
   # Prime the store once, untimed, so no sample pays the first-run key
   # download and room-state sync.
   "$CLI" table show "$ws" "$TABLE" >/dev/null 2>&1
+  # What the walk DID, not just how long it took — a cold-start number without
+  # the event count cannot be told apart from a room that was simply small.
+  stats=$(TIDEWORK_WALK_STATS=1 "$CLI" --cold table show "$ws" "$TABLE" 2>&1 >/dev/null | grep "^walk:" | tail -1)
+  echo "  $stats"
+
   samples=()
   for _ in 1 2 3; do
     ms=$(timed "$CLI" --cold table show "$ws" "$TABLE") || { echo "  table show failed" >&2; exit 1; }
@@ -133,8 +162,27 @@ for rows in "${SIZES[@]}"; do
     saved=0
   fi
   echo "  warm start:  ${warm[0]}ms ${warm[1]}ms ${warm[2]}ms  -> median ${warm_med}ms  (${saved}% off ${cold_once}ms)"
+  walked=$(printf '%s' "$stats" | sed -n 's/^walk: ([0-9]*) events.*//p')
+  stopped=$(printf '%s' "$stats" | sed -n 's/.*stopped: (.*)$//p')
+  SUMMARY+=("$rows|$cells|${walked:-?}|${stopped:-?}|$median|$warm_med|$saved")
   rm -rf "$d"
   echo
 done
 
 unset TIDEWORK_DATA_DIR
+
+# ── The table. This is the deliverable; everything above is working.
+echo
+echo "| rows | cells | events walked | stop | cold | warm | warm saves |"
+echo "|-----:|------:|--------------:|------|-----:|-----:|-----------:|"
+for line in "${SUMMARY[@]}"; do
+  IFS='|' read -r r c w st cold warm saved <<<"$line"
+  printf "| %s | %s | %s | %s | %sms | %sms | %s%% |\n" "$r" "$c" "$w" "$st" "$cold" "$warm" "$saved"
+done
+echo
+echo "cold = no snapshot, full history walk (--cold). warm = resuming from the"
+echo "snapshot the cold runs wrote. Both against the same room and the same"
+echo "binary, so the saving is a before/after rather than two setups."
+echo "A stop of 'covered' means compaction bounded the walk; 'empty page' or"
+echo "'start of room' means it read the whole room — expected below ~2 pages,"
+echo "where one round-trip is the floor and there is nothing to save."
