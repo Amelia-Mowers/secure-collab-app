@@ -119,10 +119,41 @@ async fn load_workspace(client: &mut MatrixClient, room_id: &str) -> Result<Work
     // saves X" is a comparison between two builds and two seeded rooms, which is
     // not a comparison at all.
     let bounded = std::env::var("TIDEWORK_UNBOUNDED_WALK").is_err();
-    let (updates, newest_ts, stats) = client
-        .load_room_cell_updates_bounded(marker_ts, bounded)
-        .await
-        .context("loading workspace history")?;
+
+    // Undecryptable history means the keys have not arrived yet, which is
+    // normal for a moment after a burst of writes: megolm sessions rotate and
+    // backup download is asynchronous. Materializing anyway would print a
+    // workspace with holes in it and no indication of which rows are missing —
+    // so wait for the keys instead, and fail rather than lie if they never
+    // come. A CLI can afford to be correct and delayed; it has no way to show
+    // the "still catching up" state a UI can.
+    let mut attempt = 0u32;
+    let (updates, newest_ts, stats) = loop {
+        let (u, ts, st) = client
+            .load_room_cell_updates_bounded(marker_ts, bounded)
+            .await
+            .context("loading workspace history")?;
+        if st.undecryptable == 0 || attempt >= 5 {
+            if st.undecryptable > 0 {
+                return Err(anyhow!(
+                    "{} events in this workspace could not be decrypted after {}                      attempts — the keys have not reached this device. Wait and                      retry; if it persists, the history may need recovering from                      backup.",
+                    st.undecryptable,
+                    attempt + 1
+                ));
+            }
+            break (u, ts, st);
+        }
+        // 1s, 2s, 4s, 8s, 16s — long enough to cover key delivery, short
+        // enough that an interactive command does not appear hung.
+        let wait = 1u64 << attempt;
+        eprintln!(
+            "{} events not yet decryptable; waiting {wait}s for keys",
+            st.undecryptable
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        let _ = client.sync_once().await;
+        attempt += 1;
+    };
     if std::env::var("TIDEWORK_WALK_STATS").is_ok() {
         eprintln!(
             "walk: {} events, {} page(s), {} cells, stopped: {}",

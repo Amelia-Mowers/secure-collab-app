@@ -121,6 +121,13 @@ pub struct WalkStats {
     pub cells: usize,
     /// Why it ended: "covered", "reached marker", "start of room", ...
     pub stopped: &'static str,
+    /// Events the walk could not decrypt.
+    ///
+    /// Not a diagnostic: a caller that materializes state while this is
+    /// non-zero is showing the user a workspace with holes in it. Better to be
+    /// correct and delayed than fast and wrong — keys usually arrive shortly
+    /// after a burst of writes, so the fix is to wait and retry, not to render.
+    pub undecryptable: usize,
 }
 
 #[cfg(test)]

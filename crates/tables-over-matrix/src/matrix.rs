@@ -1279,6 +1279,7 @@ mod matrix_impl {
             // this needs no placeholder value.
             let stop_reason: &'static str;
             let mut last_page_new = 0usize;
+            let mut undecryptable = 0usize;
             let mut last_page_sample: Vec<String> = Vec::new();
             loop {
                 let mut options = MessagesOptions::backward();
@@ -1328,6 +1329,7 @@ mod matrix_impl {
                     if let Ok(json_str) = serde_json::to_string(ev.raw().json()) {
                         if Self::is_undecryptable_event(&json_str) {
                             page_undecryptable += 1;
+                            undecryptable += 1;
                         }
                         for received in Self::extract_cell_updates(&json_str) {
                             let u = received.into_update();
@@ -1406,6 +1408,7 @@ mod matrix_impl {
                     pages,
                     cells: seen_cells.len(),
                     stopped: stop_reason,
+                    undecryptable,
                 },
             ))
         }
