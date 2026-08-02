@@ -1250,6 +1250,8 @@ mod matrix_impl {
                 events += response.chunk.len();
                 let mut page_oldest: Option<u64> = None;
                 let mut page_new_cells = 0usize;
+                // A page we could not READ is not a page that told us nothing.
+                let mut page_undecryptable = 0usize;
                 for ev in &response.chunk {
                     let ts: u64 = ev
                         .raw()
@@ -1268,6 +1270,9 @@ mod matrix_impl {
                     // skipping by timestamp here would drop events whose stream
                     // order disagrees with their origin_server_ts.
                     if let Ok(json_str) = serde_json::to_string(ev.raw().json()) {
+                        if Self::is_undecryptable_event(&json_str) {
+                            page_undecryptable += 1;
+                        }
                         for received in Self::extract_cell_updates(&json_str) {
                             let u = received.into_update();
                             // Walking backwards, the FIRST time a cell is seen
@@ -1299,7 +1304,14 @@ mod matrix_impl {
                 // has already put a current value for every live cell in the
                 // slice we have walked. Requires having seen something at all,
                 // so an empty first page cannot end the walk immediately.
-                if stop_when_covered && page_new_cells == 0 && !seen_cells.is_empty() {
+                // The undecryptable guard is the difference between "compaction
+                // already covered everything" and "we could not read this page".
+                // Both look like zero new cells; only the first means we are done.
+                if stop_when_covered
+                    && page_new_cells == 0
+                    && page_undecryptable == 0
+                    && !seen_cells.is_empty()
+                {
                     stop_reason = "covered";
                     break;
                 }

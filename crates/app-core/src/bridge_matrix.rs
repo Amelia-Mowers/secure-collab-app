@@ -1346,12 +1346,22 @@ where
 ///
 /// `fast_path` + `marker_ts` bound the walk to a snapshot's resume point; pass
 /// `false` / `0` for an unbounded full gather.
+///
+/// `stop_when_covered` is the second bound, and the one order-based compaction
+/// exists for: every write refreshes stale cells, so the newest slice of the
+/// timeline holds a current value for EVERY live cell and walking past it only
+/// re-reads values already superseded. The integrity check must pass `false` —
+/// it audits a full re-gather against local state, so a walk that stopped early
+/// would agree with itself by construction.
 async fn gather_history(
     room: &matrix_sdk::room::Room,
     workspace: &mut Workspace,
     fast_path: bool,
     marker_ts: u64,
+    stop_when_covered: bool,
 ) -> Result<(u64, u32), JsValue> {
+    use std::collections::HashSet;
+    let mut seen_cells: HashSet<(String, String, String)> = HashSet::new();
     let mut marker_ts = marker_ts;
     let stop_before = marker_ts;
     let mut undecryptable_count = 0u32;
@@ -1396,6 +1406,8 @@ async fn gather_history(
         // stream order and ots disagree by over the margin, far beyond
         // realistic worker skew.
         let mut page_oldest: Option<u64> = None;
+        let mut page_new_cells = 0usize;
+        let mut page_undecryptable = 0usize;
         for timeline_event in &response.chunk {
             if let Ok(json_str) = serde_json::to_string(timeline_event.raw().json()) {
                 // An unparseable ts is treated as "newer" (fail-safe:
@@ -1416,7 +1428,17 @@ async fn gather_history(
                             marker_ts = event_ts;
                         }
                         // origin_server_ts is the LWW tiebreaker.
-                        let _ = workspace.apply_update(r.into_update());
+                        let u = r.into_update();
+                        // Walking backwards, the first sighting of a cell is
+                        // its newest value; deeper ones lose LWW anyway.
+                        if seen_cells.insert((
+                            u.table_id.clone(),
+                            u.row_id.clone(),
+                            u.column_id.clone(),
+                        )) {
+                            page_new_cells += 1;
+                        }
+                        let _ = workspace.apply_update(u);
                     }
                 } else if MatrixClient::is_undecryptable_event(&json_str)
                     && (!fast_path || ots.is_none_or(|t| t >= stop_before))
@@ -1427,11 +1449,29 @@ async fn gather_history(
                     // path: the snapshot already accounts for them, and the
                     // grace-margin walk would otherwise recount them.
                     undecryptable_count += 1;
+                    page_undecryptable += 1;
                 }
             }
         }
 
         if backfill_caught_up(fast_path, page_oldest, stop_before) {
+            break;
+        }
+
+        // Coverage stop: a whole page contributed no cell we had not already
+        // seen, so compaction has put a current value for every live cell
+        // inside the slice already walked. Page-granular because events within
+        // a page are not strictly ordered, and cell-based because the question
+        // is coverage rather than distance.
+        //
+        // The undecryptable guard matters: a page we could not READ also
+        // contributes zero new cells, and treating that as "covered" would
+        // silently truncate the walk exactly when data is already at risk.
+        if stop_when_covered
+            && page_new_cells == 0
+            && page_undecryptable == 0
+            && !seen_cells.is_empty()
+        {
             break;
         }
 
@@ -1509,7 +1549,7 @@ impl ConnectedWorkspace {
         // event and skip every event between the marker and now (data loss on a
         // snapshot that lags the latest writes).
         let (marker_ts, undecryptable_count) =
-            gather_history(&room, &mut workspace, fast_path, marker_ts).await?;
+            gather_history(&room, &mut workspace, fast_path, marker_ts, true).await?;
 
         Ok(ConnectedWorkspace {
             inner: Rc::new(RefCell::new(workspace)),
@@ -2272,7 +2312,7 @@ impl ConnectedWorkspace {
         // Full walk into a SEPARATE workspace: unbounded, no snapshot, so it
         // shares none of the assumptions being audited.
         let mut truth = Workspace::new(self.room_id.to_string());
-        let (_, undecryptable) = gather_history(&room, &mut truth, false, 0).await?;
+        let (_, undecryptable) = gather_history(&room, &mut truth, false, 0, false).await?;
 
         let local = { self.inner.borrow().export_cells() };
         // The comparison itself lives in snapshot.rs, unit-tested natively —
