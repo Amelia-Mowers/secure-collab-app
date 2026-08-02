@@ -270,6 +270,48 @@ impl Table {
             .map(|((row_id, column_id), _)| CellId::new(&self.id, row_id, column_id))
     }
 
+    /// The `n` stalest bumpable cells, oldest first.
+    ///
+    /// Same eligibility rules as [`get_stalest_bumpable_cell`], which this
+    /// generalises — that one is exactly `n = 1`. Sorting the eligible set once
+    /// and taking a prefix keeps this O(cells log cells) for the whole batch;
+    /// calling the singular selector `n` times with a growing exclusion set
+    /// would be O(n·cells) and re-scan the same cells repeatedly.
+    ///
+    /// Used by the batched compaction path: refreshing many cells in ONE event
+    /// is what shortens the cold-start walk, because the walk costs ~7 ms per
+    /// EVENT and only ~0.14 ms per cell (ADR 0006 M1).
+    pub fn get_stalest_bumpable_cells(
+        &self,
+        cutoffs: &HashMap<String, u64>,
+        n: usize,
+    ) -> Vec<CellId> {
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut eligible: Vec<_> = self
+            .cell_ages
+            .iter()
+            .filter(|((row_id, column_id), &ts)| {
+                // Keep a deleted row's tombstone bumpable; drop its data cells.
+                if column_id != ROW_DELETED_COLUMN && self.is_row_deleted(row_id) {
+                    return false;
+                }
+                // Drop cells at/before a column's deletion cutoff.
+                match cutoffs.get(column_id.as_str()) {
+                    Some(&cutoff) => ts > cutoff,
+                    None => true,
+                }
+            })
+            .collect();
+        eligible.sort_by_key(|(_, &timestamp)| timestamp);
+        eligible
+            .into_iter()
+            .take(n)
+            .map(|((row_id, column_id), _)| CellId::new(&self.id, row_id, column_id))
+            .collect()
+    }
+
     /// Get the number of cells in the table.
     pub fn cell_count(&self) -> usize {
         self.cells.len()

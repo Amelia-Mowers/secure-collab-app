@@ -45,6 +45,38 @@ fn now_millis() -> u64 {
 }
 
 /// A workspace containing tables, schema, and views.
+/// Writes between batched bump sweeps.
+///
+/// Every write still bumps ONE stale cell, which alone bounds the cold-start
+/// lookback to roughly the table's cell count. The problem is that the bound is
+/// expressed in EVENTS, and cold start costs ~7 ms per event against ~0.14 ms
+/// per cell (ADR 0006 M1) — so a 70k-cell workspace needs ~70k events replayed,
+/// about eight minutes on a device with no snapshot.
+///
+/// A sweep refreshes many cells in a SINGLE event, so the walk fills ~a batch
+/// per event instead of one cell per event. One sweep per 100 writes costs ~1%
+/// more events and shortens the walk by roughly the batch size.
+const WRITES_PER_BUMP_SWEEP: u32 = 100;
+
+/// Cells to refresh in one sweep, before the size budget trims it.
+const BUMP_SWEEP_TARGET_CELLS: usize = 200;
+
+/// Byte budget for a sweep's bumps.
+///
+/// The real limit is the homeserver's ~64 KiB EVENT, and a cell is not its value
+/// — each arrives as its own update carrying ids and a timestamp, so the event
+/// runs several times the size of the data. Measured while building the
+/// benchmark harness: ~250 ordinary text cells already drew 413 M_TOO_LARGE,
+/// and a 24 KB payload still produced an oversized event. Hence a deliberately
+/// conservative budget: a sweep that fails to send is worse than a small one,
+/// because the user's write rides in the same batch.
+const BUMP_SWEEP_BYTE_BUDGET: usize = 16 * 1024;
+
+/// A single cell too large to sweep. Document and JSON cells can approach the
+/// event limit alone; those keep riding the ordinary one-cell bump path rather
+/// than blowing up a sweep.
+const MAX_SWEEPABLE_CELL_BYTES: usize = 2 * 1024;
+
 pub struct Workspace {
     /// Workspace ID (maps to Matrix room ID)
     pub id: String,
@@ -58,6 +90,10 @@ pub struct Workspace {
     history_manager: HistoryManager,
     /// Compaction helper for order-based bumping
     compaction_manager: CompactionManager,
+    /// Writes since the last BATCHED bump sweep, per table. Drives
+    /// [`update_cell_with_bump`]'s periodic many-cell bump — see the constants
+    /// below for why batching matters so much.
+    writes_since_sweep: HashMap<String, u32>,
     /// Hybrid logical clock: the highest timestamp seen or generated so far
     /// (≈ Unix ms). Advanced by both local writes and observed updates.
     timestamp_counter: u64,
@@ -79,6 +115,7 @@ impl Workspace {
             view_manager: ViewManager::new(),
             history_manager: HistoryManager::new(),
             compaction_manager: CompactionManager::new(),
+            writes_since_sweep: HashMap::new(),
             timestamp_counter: 0,
             #[cfg(feature = "matrix")]
             matrix_client: None,
@@ -446,7 +483,66 @@ impl Workspace {
 
         let mut updates = vec![user_update];
 
-        if let Some(candidate) = candidate {
+        // Periodically sweep instead of nudging a single cell. The sweep is what
+        // makes the cold-start walk cheap; the single bump keeps the bound
+        // holding between sweeps.
+        let sweep_now = {
+            let counter = self
+                .writes_since_sweep
+                .entry(table_id.to_string())
+                .or_insert(0);
+            *counter += 1;
+            if *counter >= WRITES_PER_BUMP_SWEEP {
+                *counter = 0;
+                true
+            } else {
+                false
+            }
+        };
+
+        if sweep_now {
+            let candidates = {
+                let table = self
+                    .tables
+                    .get(table_id)
+                    .ok_or(crate::Error::TableNotFound)?;
+                self.compaction_manager.select_bump_candidates(
+                    table,
+                    &cutoffs,
+                    BUMP_SWEEP_TARGET_CELLS,
+                )
+            };
+            let mut budget = BUMP_SWEEP_BYTE_BUDGET;
+            for cell in candidates {
+                if cell == user_cell {
+                    continue;
+                }
+                // Timestamp first: next_timestamp() takes &mut self, so it cannot be
+                // called while a & borrow of the table is alive.
+                let bump_timestamp = self.next_timestamp();
+                let table = self
+                    .tables
+                    .get(table_id)
+                    .ok_or(crate::Error::TableNotFound)?;
+                let Some(bump) =
+                    self.compaction_manager
+                        .create_bump_update(table, &cell, bump_timestamp)
+                else {
+                    continue;
+                };
+                // Size the update as it will actually be sent, not as the value
+                // alone: the ids and timestamp are most of a small cell.
+                let size = serde_json::to_string(&bump).map(|s| s.len()).unwrap_or(0);
+                if size > MAX_SWEEPABLE_CELL_BYTES {
+                    continue; // a document cell — leave it to the single-bump path
+                }
+                if size > budget {
+                    break;
+                }
+                budget -= size;
+                updates.push(bump);
+            }
+        } else if let Some(candidate) = candidate {
             let bump_timestamp = self.next_timestamp();
             let table = self
                 .tables
@@ -2191,6 +2287,131 @@ mod tests {
             .update_cell_with_bump("tasks", "r5", "title", json!("e"))
             .unwrap();
         assert_eq!(u2[1].row_id, "r2");
+    }
+
+    /// The point of the whole change: a sweep refreshes MANY cells in one
+    /// event, because cold start costs ~7 ms per event and ~0.14 ms per cell.
+    #[test]
+    fn test_bump_sweep_refreshes_many_cells_in_one_batch() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        for i in 0..300 {
+            ws.update_cell("tasks", &format!("r{i}"), "title", json!("v"))
+                .unwrap();
+        }
+
+        // Ordinary writes bump exactly one cell...
+        let mut sweep_sizes = Vec::new();
+        for i in 0..WRITES_PER_BUMP_SWEEP {
+            let updates = ws
+                .update_cell_with_bump("tasks", &format!("w{i}"), "title", json!("x"))
+                .unwrap();
+            sweep_sizes.push(updates.len());
+        }
+
+        // ...until the sweep, which is the last write of the cycle.
+        let (last, rest) = sweep_sizes.split_last().unwrap();
+        assert!(
+            rest.iter().all(|&n| n <= 2),
+            "non-sweep writes should carry at most one bump, saw {rest:?}"
+        );
+        assert!(
+            *last > 10,
+            "the sweep should batch many bumps into one event, got {last}"
+        );
+    }
+
+    /// A sweep must not exceed the byte budget — the user's own write rides in
+    /// the same batch, so an oversized sweep would take the write down with it.
+    #[test]
+    fn test_bump_sweep_respects_the_byte_budget() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        for i in 0..400 {
+            ws.update_cell("tasks", &format!("r{i}"), "title", json!("v"))
+                .unwrap();
+        }
+        let mut updates = Vec::new();
+        for i in 0..WRITES_PER_BUMP_SWEEP {
+            updates = ws
+                .update_cell_with_bump("tasks", &format!("w{i}"), "title", json!("x"))
+                .unwrap();
+        }
+        let bytes: usize = updates
+            .iter()
+            .skip(1) // the user write is not part of the budget
+            .map(|u| serde_json::to_string(u).map(|s| s.len()).unwrap_or(0))
+            .sum();
+        assert!(
+            bytes <= BUMP_SWEEP_BYTE_BUDGET,
+            "sweep was {bytes} bytes, budget is {BUMP_SWEEP_BYTE_BUDGET}"
+        );
+    }
+
+    /// Document-sized cells are skipped rather than allowed to blow the event.
+    /// One of them can approach the homeserver limit on its own.
+    #[test]
+    fn test_bump_sweep_skips_oversized_cells() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        let huge = json!("d".repeat(MAX_SWEEPABLE_CELL_BYTES * 2));
+        for i in 0..50 {
+            ws.update_cell("tasks", &format!("big{i}"), "title", huge.clone())
+                .unwrap();
+        }
+        let mut updates = Vec::new();
+        for i in 0..WRITES_PER_BUMP_SWEEP {
+            updates = ws
+                .update_cell_with_bump("tasks", &format!("w{i}"), "title", json!("x"))
+                .unwrap();
+        }
+        for u in updates.iter().skip(1) {
+            let size = serde_json::to_string(u).map(|s| s.len()).unwrap_or(0);
+            assert!(
+                size <= MAX_SWEEPABLE_CELL_BYTES,
+                "an oversized cell reached the sweep ({size} bytes)"
+            );
+        }
+    }
+
+    /// The subtle one. The single-bump path already excludes cells past a
+    /// deletion cutoff; a sweep touches many cells, so the exclusion has to hold
+    /// for EVERY one of them — otherwise a sweep quietly resurrects deleted data
+    /// that the single-bump path was careful never to revive.
+    #[test]
+    fn test_bump_sweep_never_revives_deleted_rows() {
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        for i in 0..200 {
+            ws.update_cell("tasks", &format!("r{i}"), "title", json!("v"))
+                .unwrap();
+        }
+        for i in 0..100 {
+            ws.delete_row("tasks", &format!("r{i}")).unwrap();
+        }
+
+        let mut updates = Vec::new();
+        for i in 0..WRITES_PER_BUMP_SWEEP {
+            updates = ws
+                .update_cell_with_bump("tasks", &format!("w{i}"), "title", json!("x"))
+                .unwrap();
+        }
+
+        for u in updates.iter().skip(1) {
+            if u.row_id.starts_with('r') {
+                let idx: usize = u.row_id[1..].parse().unwrap();
+                if idx < 100 {
+                    // A deleted row may only be bumped via its tombstone.
+                    assert_eq!(
+                        u.column_id,
+                        tables_over_matrix::table::ROW_DELETED_COLUMN,
+                        "sweep bumped a deleted row's data cell {}/{}",
+                        u.row_id,
+                        u.column_id
+                    );
+                }
+            }
+        }
     }
 
     #[test]
