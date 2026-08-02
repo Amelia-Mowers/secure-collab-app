@@ -28,6 +28,15 @@ mod session;
     version
 )]
 struct Cli {
+    /// Ignore any saved snapshot and replay the room's history in full.
+    ///
+    /// Measurement aid: cold and warm start differ only in whether the snapshot
+    /// is read, so this gives both numbers against the same room without
+    /// wiping the data directory — which would also discard the Matrix store
+    /// and turn the comparison into something else.
+    #[arg(long, global = true)]
+    cold: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -382,6 +391,9 @@ fn real_main() -> i32 {
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
+    if cli.cold {
+        crud::COLD_START.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     match cli.command {
         Command::Login {
             homeserver,

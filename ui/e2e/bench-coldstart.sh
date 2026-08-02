@@ -87,15 +87,25 @@ for rows in "${SIZES[@]}"; do
   done
   echo "  seed: ${seed_ms}ms across $(ls -d "$CORPUS/$rows"/chunk-* | wc -l) chunks"
 
-  # ── Measure. A fresh state dir per sample, so every one is genuinely cold.
+  # ── Measure. One state dir, one login; `--cold` makes each sample ignore
+  #    the saved snapshot and replay history in full.
+  #
+  #    The old shape wiped the dir and logged in again per sample. That is a
+  #    colder cold start than any real user has — it also discards the Matrix
+  #    store, so the run re-downloads keys and re-syncs room state, and those
+  #    costs are constant while the history walk is the part that grows with
+  #    the workspace. Isolating the walk is the whole point of the sweep, and
+  #    the wipe also meant cold and warm numbers came from different dirs.
+  d=$(fresh_dir "measure-$rows")
+  export TIDEWORK_DATA_DIR="$d"
+  "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
+  # Prime the store once, untimed, so no sample pays the first-run key
+  # download and room-state sync.
+  "$CLI" table show "$ws" "$TABLE" >/dev/null 2>&1
   samples=()
-  for i in 1 2 3; do
-    d=$(fresh_dir "cold-$rows-$i")
-    export TIDEWORK_DATA_DIR="$d"
-    "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
-    ms=$(timed "$CLI" table show "$ws" "$TABLE") || { echo "  table show failed" >&2; exit 1; }
+  for _ in 1 2 3; do
+    ms=$(timed "$CLI" --cold table show "$ws" "$TABLE") || { echo "  table show failed" >&2; exit 1; }
     samples+=("$ms")
-    rm -rf "$d"
   done
 
   # Median of three: enough to reject one unlucky sample without pretending
@@ -103,18 +113,15 @@ for rows in "${SIZES[@]}"; do
   median=$(printf '%s\n' "${samples[@]}" | sort -n | sed -n 2p)
   echo "  cold start: ${samples[0]}ms ${samples[1]}ms ${samples[2]}ms  -> median ${median}ms"
 
-  # ── WARM start: the same command again in the SAME state dir, so the
-  #    snapshot written by the first run is reused and only events newer than
-  #    its marker are fetched. This is what a returning user experiences, and
-  #    it is the number worth quoting.
+  # ── WARM start: the same command, same dir, WITHOUT --cold — so the
+  #    snapshot the cold runs already wrote is reused and only events newer
+  #    than its marker are fetched. This is what a returning user experiences,
+  #    and it is the number worth quoting.
   #
-  #    Median of three warm runs, not one: the first run in a fresh dir also
-  #    WRITES the snapshot, so timing that would charge incremental load for
-  #    the work it saves rather than the work it costs.
-  d=$(fresh_dir "warm-$rows")
-  export TIDEWORK_DATA_DIR="$d"
-  "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
-  cold_once=$(timed "$CLI" table show "$ws" "$TABLE")
+  #    Because both halves now run against one dir and one room, the saving
+  #    below is a real before/after rather than two measurements of two
+  #    different setups that happen to share a label.
+  cold_once="$median"
   warm=()
   for _ in 1 2 3; do
     warm+=("$(timed "$CLI" table show "$ws" "$TABLE")")

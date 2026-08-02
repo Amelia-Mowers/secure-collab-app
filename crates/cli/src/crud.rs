@@ -63,6 +63,19 @@ async fn resolve_workspace(client: &MatrixClient, arg: &str) -> Result<String> {
     }
 }
 
+/// Ignore any persisted snapshot for this run, forcing a full history walk.
+///
+/// Set by `--cold`. It exists for measurement: cold and warm start differ only
+/// in whether a snapshot is read, and the alternative way to get a cold number
+/// — wiping the data directory — also throws away the Matrix store, so it
+/// re-downloads keys and re-syncs room state and stops being a comparison.
+/// Re-seeding a room to get one back is the expensive part.
+///
+/// Note what this does NOT simulate: a device that has never seen the room.
+/// The Matrix store is still warm, so this isolates the cost of the history
+/// walk, which is the part that grows with the workspace.
+pub static COLD_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Load a `Workspace`, resuming from a local snapshot when there is one.
 ///
 /// Every CLI invocation used to re-paginate the ENTIRE room and replay every
@@ -79,10 +92,16 @@ async fn load_workspace(client: &mut MatrixClient, room_id: &str) -> Result<Work
 
     let paths = session::Paths::resolve()?;
     let snapshot_path = paths.snapshot_file(room_id);
-    let snapshot = std::fs::read_to_string(&snapshot_path)
-        .ok()
-        .and_then(|raw| WorkspaceSnapshot::from_json(&raw).ok())
-        .filter(|snap| snap.is_fast_path_usable());
+    let cold = COLD_START.load(std::sync::atomic::Ordering::Relaxed)
+        || std::env::var("TIDEWORK_COLD_START").is_ok();
+    let snapshot = if cold {
+        None
+    } else {
+        std::fs::read_to_string(&snapshot_path)
+            .ok()
+            .and_then(|raw| WorkspaceSnapshot::from_json(&raw).ok())
+            .filter(|snap| snap.is_fast_path_usable())
+    };
 
     let mut ws = Workspace::new(room_id);
     let marker_ts = match &snapshot {
@@ -95,10 +114,21 @@ async fn load_workspace(client: &mut MatrixClient, room_id: &str) -> Result<Work
         None => 0,
     };
 
-    let (updates, newest_ts) = client
-        .load_room_cell_updates_since(marker_ts)
+    // TIDEWORK_UNBOUNDED_WALK exists so the coverage stop can be measured
+    // against itself on ONE room with ONE binary. Without it, "the bounded walk
+    // saves X" is a comparison between two builds and two seeded rooms, which is
+    // not a comparison at all.
+    let bounded = std::env::var("TIDEWORK_UNBOUNDED_WALK").is_err();
+    let (updates, newest_ts, stats) = client
+        .load_room_cell_updates_bounded(marker_ts, bounded)
         .await
         .context("loading workspace history")?;
+    if std::env::var("TIDEWORK_WALK_STATS").is_ok() {
+        eprintln!(
+            "walk: {} events, {} page(s), {} cells, stopped: {}",
+            stats.events, stats.pages, stats.cells, stats.stopped
+        );
+    }
     for update in updates {
         let _ = ws.apply_update(update);
     }
