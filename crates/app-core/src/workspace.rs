@@ -68,11 +68,13 @@ fn now_millis() -> u64 {
 /// The number is a trade of write size against cold start. At ~133 bytes per
 /// bump, and ~0.14 ms per cell to replay:
 ///
-///     bumps/write   extra per write   walk at 10k rows (70k cells)
-///          1             0.1 KB            ~500 s
-///          8             1.1 KB             ~71 s
-///         16             2.1 KB             ~41 s
-///         32             4.3 KB             ~25 s
+/// ```text
+/// bumps/write   extra per write   walk at 10k rows (70k cells)
+///      1             0.1 KB            ~500 s
+///      8             1.1 KB             ~71 s
+///     16             2.1 KB             ~41 s
+///     32             4.3 KB             ~25 s
+/// ```
 ///
 /// 16 buys most of the benefit before the write cost starts to matter on a
 /// slow connection. Past ~32 the walk is dominated by per-cell replay anyway,
