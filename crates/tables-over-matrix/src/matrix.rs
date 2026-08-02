@@ -37,6 +37,21 @@ mod matrix_impl {
     /// is a single request and there is nothing left to save.
     pub const DEFAULT_PAGE_LIMIT: u32 = 1000;
 
+    /// Events per round-trip when resuming from a snapshot.
+    ///
+    /// Deliberately much smaller than [`DEFAULT_PAGE_LIMIT`], because the two
+    /// walks want opposite things. A cold start reads a whole room and wants as
+    /// few round-trips as possible. An incremental start expects a handful of
+    /// new events and stops at the first page that trails the marker — so a
+    /// 1000-event page means fetching and DECRYPTING a thousand events to pick
+    /// up five, on every load, growing with the room rather than with what
+    /// changed.
+    ///
+    /// Measured: seeding through the CLI cost ~1.5s per single-cell edit, and
+    /// the walk stats showed every one of those loads pulling a full
+    /// 1000-event page to reach "stopped: reached marker".
+    pub const INCREMENTAL_PAGE_LIMIT: u32 = 100;
+
     /// Default client encryption settings (ADR 0001 / review §4.2): auto-enable
     /// cross-signing and key backup, and download backup keys on startup so a
     /// new device can decrypt and materialize encrypted workspace history.
@@ -1206,7 +1221,14 @@ mod matrix_impl {
             marker_ts: u64,
             stop_when_covered: bool,
         ) -> Result<(Vec<CellUpdate>, u64, crate::WalkStats)> {
-            self.load_room_cell_updates_paged(marker_ts, stop_when_covered, DEFAULT_PAGE_LIMIT)
+            // Resuming (marker_ts > 0) is a different problem from a cold
+            // start, and takes a different page size — see the constants.
+            let page = if marker_ts > 0 {
+                INCREMENTAL_PAGE_LIMIT
+            } else {
+                DEFAULT_PAGE_LIMIT
+            };
+            self.load_room_cell_updates_paged(marker_ts, stop_when_covered, page)
                 .await
         }
 
