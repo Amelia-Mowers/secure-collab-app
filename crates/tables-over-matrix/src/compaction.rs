@@ -35,6 +35,17 @@ impl CompactionManager {
         table.get_stalest_bumpable_cell(cutoffs)
     }
 
+    /// The `n` stalest bumpable cells, oldest first — the batched counterpart
+    /// of [`select_bump_candidate_excluding`].
+    pub fn select_bump_candidates(
+        &self,
+        table: &Table,
+        cutoffs: &std::collections::HashMap<String, u64>,
+        n: usize,
+    ) -> Vec<CellId> {
+        table.get_stalest_bumpable_cells(cutoffs, n)
+    }
+
     /// Create a bump update for a given cell.
     /// A bump is just a regular cell update with the current value and a new timestamp.
     pub fn create_bump_update(
