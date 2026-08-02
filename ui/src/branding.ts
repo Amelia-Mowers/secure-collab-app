@@ -37,6 +37,20 @@ export const TERMS_URL = 'https://tidework.io/terms'
 export const PRIVACY_URL = 'https://tidework.io/privacy'
 /** Public page for restarting a lapsed subscription without signing in. */
 export const REACTIVATE_URL = 'https://tidework.io/reactivate'
+/**
+ * MAS's self-service account portal: sessions, devices, sign-out-everywhere,
+ * and deactivation.
+ *
+ * Linked rather than reimplemented. MAS owns the session records, so an in-app
+ * device manager would be a second view of somebody else's state — able to
+ * drift, and able to show a device as revoked that is not. The portal is the
+ * authority, and it is already deployed.
+ *
+ * Only meaningful for accounts on OUR homeserver; a self-hosted user's sessions
+ * live on their own MAS.
+ */
+export const ACCOUNT_PORTAL_URL = 'https://auth.tidework.io/account/'
+
 /** Operational status. Served from Cloudflare Pages while the homeserver runs
  *  elsewhere, so it survives the outage it most often has to describe. */
 export const STATUS_URL = 'https://tidework.io/status'

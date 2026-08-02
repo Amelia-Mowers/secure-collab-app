@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { PRIVACY_URL, STATUS_URL, SUPPORT_EMAIL, SUPPORT_MAILTO, TERMS_URL } from '@/branding'
+import {
+  ACCOUNT_PORTAL_URL,
+  OFFICIAL_HOMESERVER_URL,
+  PRIVACY_URL,
+  STATUS_URL,
+  SUPPORT_EMAIL,
+  SUPPORT_MAILTO,
+  TERMS_URL,
+} from '@/branding'
 import { ManageSubscriptionButton } from './ManageSubscriptionButton'
 import { RecoveryKeyModal } from './RecoveryKeyModal'
 import './AccountSettingsModal.css'
@@ -23,7 +31,11 @@ declare const __BUILD_ID__: string
 const buildId = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'dev'
 
 export function AccountSettingsModal({ onClose }: { onClose: () => void }) {
-  const { username, userId, matrixSession, deleteAccount } = useAuth()
+  const { username, userId, matrixSession, homeserverUrl, deleteAccount } = useAuth()
+  // The portal is OUR MAS. A self-hosted account's sessions live on its own
+  // server, and sending that user here would show them someone else's login.
+  const onOfficialHomeserver =
+    (homeserverUrl ?? '').replace(/\/$/, '') === OFFICIAL_HOMESERVER_URL.replace(/\/$/, '')
 
   const [displayName, setDisplayName] = useState('')
   const [nameLoaded, setNameLoaded] = useState(false)
@@ -166,6 +178,30 @@ export function AccountSettingsModal({ onClose }: { onClose: () => void }) {
             </p>
             <ManageSubscriptionButton className="asm__action" errorClassName="asm__error" />
           </section>
+
+          {/* ── Devices & sessions ──────────────────────────────── */}
+          {onOfficialHomeserver && (
+            <section className="asm__section">
+              <h3 className="asm__heading">Devices &amp; sessions</h3>
+              <p className="asm__meta">
+                See every device signed in to your account and sign any of them out.
+                For a product that sells encryption, &ldquo;which devices can decrypt
+                my data&rdquo; should have an answer you can check.
+              </p>
+              <p className="asm__meta">
+                <a href={ACCOUNT_PORTAL_URL} target="_blank" rel="noreferrer">
+                  Manage devices and sessions
+                </a>
+              </p>
+              {/* Signing a device out does not un-share what it already read —
+                  it holds room keys for history it has already seen. Saying so
+                  here is more honest than letting the button imply otherwise. */}
+              <p className="asm__meta asm__hint">
+                Signing a device out stops future access. It cannot take back history
+                that device has already downloaded.
+              </p>
+            </section>
+          )}
 
           {/* ── Help & legal ────────────────────────────────────── */}
           <section className="asm__section">

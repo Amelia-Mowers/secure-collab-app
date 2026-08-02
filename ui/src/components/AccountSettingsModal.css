@@ -119,3 +119,10 @@
   font-size: 11.5px;
   user-select: all;
 }
+
+/* A caveat under a link, not a warning: quieter than the surrounding meta text
+   so it reads as a clarification rather than an alarm. */
+.asm__hint {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
