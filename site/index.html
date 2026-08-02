@@ -125,6 +125,17 @@
     font-weight: 600; text-decoration: none; transition: transform 0.08s, background 0.15s, border-color 0.15s;
   }
   .btn:active { transform: translateY(1px); }
+  /* A second line inside the primary CTA: "no account needed" is the single
+     most persuasive thing the button can say, and it belongs on the button
+     rather than in fine print somewhere below it. */
+  .btn__sub {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.72;
+    margin-top: 2px;
+    letter-spacing: 0.01em;
+  }
   .btn-buoy { background: var(--buoy); color: var(--abyss); box-shadow: 0 6px 30px rgba(255, 158, 87, 0.25); }
   .btn-buoy:hover { background: var(--buoy-deep); }
   .btn-line { color: var(--foam); border: 1px solid var(--line); background: rgba(255,255,255,0.03); }
@@ -304,6 +315,7 @@
     <a href="#compare">Compare</a>
     <a href="#fares">Pricing</a>
     <a href="https://github.com/Amelia-Mowers/secure-collab-app">GitHub</a>
+    <a href="https://app.tidework.io/demo">Demo</a>
     <a class="go" href="https://app.tidework.io">Open app</a>
   </div>
 </header>
@@ -329,7 +341,15 @@
         <strong>Your server stores ciphertext. So do we.</strong>
       </p>
       <div class="cta">
-        <a class="btn btn-buoy" href="https://app.tidework.io">Open TideWork</a>
+        <!-- The demo leads. Asking a stranger to create an account, accept
+             terms and save an unrecoverable recovery key BEFORE they have seen
+             a single table is a lot to ask of someone who does not yet know
+             what this is. -->
+        <a class="btn btn-buoy" href="https://app.tidework.io/demo">
+          Try the demo
+          <span class="btn__sub">no account needed</span>
+        </a>
+        <a class="btn btn-line" href="https://app.tidework.io">Open TideWork</a>
         <a class="btn btn-line" href="https://github.com/Amelia-Mowers/secure-collab-app">Read the source</a>
       </div>
       <p class="fine">open source · federated · no telemetry — and this page runs zero JavaScript</p>
