@@ -39,7 +39,17 @@ test('history names the row and resolves relation values', async ({ page }) => {
   await page.getByRole('button', { name: /history/i }).click()
   const drawer = page.locator('.history-drawer')
   await expect(drawer).toBeVisible({ timeout: 60_000 })
-  await expect(drawer.locator('.history-entry').first()).toBeVisible({ timeout: 60_000 })
+  // Report what the drawer SAYS when no entry appears. "element(s) not found"
+  // is true of "Loading history…", of "No changes recorded yet." and of an
+  // error banner alike, and telling them apart is the whole diagnosis — this
+  // spec went red for four commits and the log could not distinguish them.
+  await expect
+    .poll(async () => (await drawer.innerText()).replace(/\s+/g, ' ').slice(0, 200), {
+      timeout: 60_000,
+      message: 'no history entry rendered; the drawer showed',
+    })
+    .not.toMatch(/Loading history|No changes recorded yet/)
+  await expect(drawer.locator('.history-entry').first()).toBeVisible({ timeout: 30_000 })
 
   const log = await drawer.innerText()
 

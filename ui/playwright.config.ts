@@ -46,7 +46,12 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   timeout: 180_000,
   expect: { timeout: 45_000 },
-  reporter: [['list']],
+  // `list` for the log, `html` for the artifact. Without the html reporter,
+  // `ui/playwright-report/` is never written, so CI's "Upload Playwright report
+  // on failure" step uploaded an empty directory — a failing run left the
+  // console tail and nothing else, no trace, no error context. Four red runs
+  // were diagnosed from a stack-less timeout because of it.
+  reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: 'http://localhost:4173',
     trace: 'retain-on-failure',
