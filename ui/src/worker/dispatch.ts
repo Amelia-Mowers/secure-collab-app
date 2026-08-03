@@ -38,6 +38,24 @@ import {
   type SessionInfo,
   type WorkspaceState,
 } from './protocol'
+import { wasmHeapMiB } from '../wasm/loader'
+
+/**
+ * Render an error, and say how big the wasm heap was if the module trapped.
+ *
+ * `RuntimeError: unreachable executed` is what BOTH a Rust panic and a failed
+ * allocation look like from JS, and the difference decides where to look. A
+ * panic prints a message and a source location alongside it; the allocation
+ * handler traps directly, printing nothing at all. So a bare trap plus a heap
+ * near the engine's ceiling says out-of-memory, and a bare trap on a small heap
+ * says the panic hook is not reaching us.
+ */
+function describeErr(err: unknown): string {
+  const text = String(err)
+  if (!text.includes('unreachable')) return text
+  const mib = wasmHeapMiB()
+  return mib === null ? text : `${text} — wasm heap ${mib} MiB`
+}
 
 /** What the dispatcher needs from its host: a wasm module and a way to reach
  *  every connected tab. */
@@ -148,7 +166,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       if (typeof ws[method] !== 'function') return fallback
       return ws[method](...args) as T
     } catch (err) {
-      log('warn', `${method} failed while materializing state: ${err}`)
+      log('warn', `${method} failed while materializing state: ${describeErr(err)}`)
       return fallback
     }
   }
@@ -409,7 +427,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
     try {
       json = p.cws.pendingUpdates()
     } catch (err) {
-      log('warn', `pendingUpdates failed while mirroring the outbox: ${err}`)
+      log('warn', `pendingUpdates failed while mirroring the outbox: ${describeErr(err)}`)
       return
     }
     if (json === p.lastOutbox) return
@@ -422,7 +440,7 @@ export function createDispatcher(deps: DispatchDeps): Dispatcher {
       const snap = p.cws.snapshot()
       if (snap) void saveSnapshot(p.roomId, snap, p.key)
     } catch (err) {
-      log('warn', `snapshot failed: ${err}`)
+      log('warn', `snapshot failed: ${describeErr(err)}`)
     }
   }
 
