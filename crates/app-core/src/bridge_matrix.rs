@@ -3102,12 +3102,7 @@ fn trigger_key_backup(client: &Client) {
         if !client.encryption().backups().are_enabled().await {
             return;
         }
-        if let Err(e) = client
-            .encryption()
-            .backups()
-            .wait_for_steady_state()
-            .await
-        {
+        if let Err(e) = client.encryption().backups().wait_for_steady_state().await {
             web_sys::console::warn_1(&JsValue::from_str(&format!(
                 "room keys may not have reached secure backup: {e}"
             )));
