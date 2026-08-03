@@ -1,4 +1,4 @@
-# Architecture & "Bones" Review — secure-collab-app
+# Architecture & "Bones" Review — tidework
 
 **Review date:** 2026-06-07
 **Reviewed at:** `main` @ `ce8c8dd` (23 commits; first commit 2026-03-09, last 2026-03-11)

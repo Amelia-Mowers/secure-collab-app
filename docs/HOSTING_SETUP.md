@@ -85,7 +85,7 @@ matrix.tidework.io    → DO droplet: proxy → Synapse + MAS  ← managed PG  [
 
 - [ ] **Tier 1 → GitHub Actions secrets.** A GitHub compromise then yields
       deploy ability — bad, recoverable, auditable — not production secrets.
-      Add each at **github.com/Amelia-Mowers/secure-collab-app → Settings →
+      Add each at **github.com/Amelia-Mowers/tidework → Settings →
       Secrets and variables → Actions → New repository secret**, using these
       exact IDs (CI workflows will reference them by name):
 

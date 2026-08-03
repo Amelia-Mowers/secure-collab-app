@@ -1,6 +1,6 @@
 # TideWork
 
-[![CI](https://github.com/Amelia-Mowers/secure-collab-app/actions/workflows/ci.yml/badge.svg)](https://github.com/Amelia-Mowers/secure-collab-app/actions/workflows/ci.yml)
+[![CI](https://github.com/Amelia-Mowers/tidework/actions/workflows/ci.yml/badge.svg)](https://github.com/Amelia-Mowers/tidework/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 **An end-to-end encrypted collaborative workspace.** Tables, kanban boards, and

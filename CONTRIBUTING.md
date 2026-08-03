@@ -1,4 +1,4 @@
-# Contributing to Secure Collaborative Workspace
+# Contributing to TideWork
 
 Thank you for your interest in contributing! This document provides guidelines and information for contributors.
 
@@ -7,8 +7,8 @@ Thank you for your interest in contributing! This document provides guidelines a
 1. **Fork the repository** on GitHub
 2. **Clone your fork**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/secure-collab-app.git
-   cd secure-collab-app
+   git clone https://github.com/YOUR_USERNAME/tidework.git
+   cd tidework
    ```
 3. **Set up the development environment**:
    ```bash

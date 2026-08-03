@@ -25,8 +25,8 @@ export default defineConfig({
   define: {
     __BUILD_ID__: JSON.stringify(buildId),
   },
-  // Base path for GitHub Pages: https://amelia-mowers.github.io/secure-collab-app/
-  base: process.env.GITHUB_PAGES === 'true' ? '/secure-collab-app/' : '/',
+  // Base path for GitHub Pages: https://amelia-mowers.github.io/tidework/
+  base: process.env.GITHUB_PAGES === 'true' ? '/tidework/' : '/',
   plugins: [react(), wasm(), emitVersionJson()],
   resolve: {
     alias: {
