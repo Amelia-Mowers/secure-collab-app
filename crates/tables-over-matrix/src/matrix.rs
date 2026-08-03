@@ -788,6 +788,36 @@ mod matrix_impl {
             Ok(device.is_verified())
         }
 
+        /// Block until this device's room keys have finished uploading to
+        /// secure backup.
+        ///
+        /// The SDK backs keys up from a background task, which is fine for a
+        /// client that stays open and wrong for one that does not: a process
+        /// that sends events and exits can take the only copy of those megolm
+        /// sessions with it. Devices that already existed got them over
+        /// to-device at send time, but any device created LATER has only backup
+        /// to restore from — so those events are undecryptable there, and stay
+        /// that way, because nothing ever revisits them.
+        ///
+        /// Measured, not theorised: a benchmark account seeded 3000 edits from
+        /// one short-lived process, and a second login on the same account then
+        /// found 2903 events it could not decrypt, unchanged after 31 s of
+        /// retries.
+        ///
+        /// A no-op when backup is not enabled — nowhere to upload to.
+        pub async fn wait_for_key_backup(&self) -> Result<()> {
+            if !self.client.encryption().backups().are_enabled().await {
+                return Ok(());
+            }
+            self.client
+                .encryption()
+                .backups()
+                .wait_for_steady_state()
+                .await
+                .map_err(|e| anyhow::anyhow!("key backup upload failed: {e}"))?;
+            Ok(())
+        }
+
         /// Whether a key backup is enabled for this client (ADR 0001 Phase A).
         /// True once recovery/backup setup has completed — lets callers confirm
         /// "backup on" directly rather than inferring it from a restore working.

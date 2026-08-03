@@ -17,6 +17,29 @@ use crate::session;
 
 // ── shared helpers ──────────────────────────────────────────────────────
 
+/// Push the room keys created by this command into secure backup before the
+/// process exits.
+///
+/// A CLI is not a browser tab: it sends its events and dies seconds later, and
+/// the SDK's key backup runs in a background task that may not have gotten to
+/// them. Devices that already existed receive the megolm session over to-device
+/// at send time and are fine — but a device that logs in AFTERWARDS can only
+/// restore from backup, so anything that never got uploaded is undecryptable
+/// there, permanently, since nothing revisits old sessions.
+///
+/// Found by the cold-start benchmark rather than by reasoning: a second login on
+/// an account whose 3000 edits came from one short-lived process could not read
+/// 2903 of them, and 31 s of retries did not change that number.
+///
+/// Failures are reported, not propagated. The write itself already succeeded, so
+/// turning a backup hiccup into a non-zero exit would report a loss that did not
+/// happen and invite the user to redo work they have already done.
+async fn flush_key_backup(client: &MatrixClient) {
+    if let Err(e) = client.wait_for_key_backup().await {
+        eprintln!("warning: room keys may not have reached secure backup: {e}");
+    }
+}
+
 /// Restore the logged-in client from `~/.tidework/`.
 async fn restore_client() -> Result<MatrixClient> {
     let paths = session::Paths::resolve()?;
@@ -136,7 +159,9 @@ async fn load_workspace(client: &mut MatrixClient, room_id: &str) -> Result<Work
         if st.undecryptable == 0 || attempt >= 5 {
             if st.undecryptable > 0 {
                 return Err(anyhow!(
-                    "{} events in this workspace could not be decrypted after {}                      attempts — the keys have not reached this device. Wait and                      retry; if it persists, the history may need recovering from                      backup.",
+                    "{} events in this workspace could not be decrypted after {} attempts — \
+                     the keys have not reached this device. Wait and retry; if it persists, \
+                     the history may need recovering from backup.",
                     st.undecryptable,
                     attempt + 1
                 ));
@@ -478,6 +503,7 @@ pub async fn table_create(workspace: String, name: String, columns: Vec<String>)
         .send_cell_batch(&updates)
         .await
         .context("sending table schema")?;
+    flush_key_backup(&client).await;
     println!(
         "Created table \"{name}\" (id: {table_id}) with {} column(s)",
         columns.len()
@@ -855,6 +881,7 @@ pub async fn row_add(workspace: String, table: String, cells: Vec<String>) -> Re
         .send_cell_batch(&updates)
         .await
         .context("sending row")?;
+    flush_key_backup(&client).await;
     println!("Added row {row_id} to \"{}\"", schema.name);
     Ok(())
 }
@@ -898,6 +925,7 @@ pub async fn row_set(
         .send_cell_batch(&updates)
         .await
         .context("sending row update")?;
+    flush_key_backup(&client).await;
     println!("Updated row {row_id} in \"{}\"", schema.name);
     Ok(())
 }
@@ -975,6 +1003,10 @@ pub async fn seed_edits(
         }
     }
 
+    // Once, after the whole burst — not per edit, which would serialise
+    // thousands of uploads behind thousands of round trips.
+    flush_key_backup(&client).await;
+
     // No snapshot written. load_workspace already persisted one on the way in,
     // and its marker predates these writes — so the next load walks the events
     // just sent, which is correct and is also exactly what a benchmark wants to
@@ -1040,6 +1072,7 @@ pub async fn row_delete(workspace: String, table: String, row_id: String) -> Res
         .send_cell_batch(&updates)
         .await
         .context("sending row delete")?;
+    flush_key_backup(&client).await;
     println!("Deleted row {row_id} from table {table_id}");
     Ok(())
 }
@@ -1121,6 +1154,7 @@ pub async fn row_move(
         .send_cell_batch(&updates)
         .await
         .context("sending row move")?;
+    flush_key_backup(&client).await;
     if writes.len() == 1 {
         println!("Moved row {row_id} in table {table_id}");
     } else {
@@ -1152,6 +1186,7 @@ pub async fn column_delete(workspace: String, table: String, column: String) -> 
         .send_cell_batch(&updates)
         .await
         .context("sending column delete")?;
+    flush_key_backup(&client).await;
     println!("Deleted column \"{display_name}\" ({col_id}) from table {table_id}");
     Ok(())
 }
@@ -1218,6 +1253,7 @@ pub async fn column_move(
         .send_cell_batch(&updates)
         .await
         .context("sending column move")?;
+    flush_key_backup(&client).await;
     println!("Moved column {col_id} in table {table_id}");
     Ok(())
 }
@@ -1244,6 +1280,7 @@ pub async fn column_add(workspace: String, table: String, spec: String) -> Resul
         .send_cell_batch(&updates)
         .await
         .context("sending column")?;
+    flush_key_backup(&client).await;
     println!("Added column \"{col_name}\" to table {table_id}");
     Ok(())
 }
@@ -1328,6 +1365,7 @@ pub async fn column_set(
         .send_cell_batch(&updates)
         .await
         .context("sending column update")?;
+    flush_key_backup(&client).await;
     println!("Updated column \"{display_name}\" ({col_id}) in table {table_id}");
     Ok(())
 }
@@ -1449,6 +1487,7 @@ pub async fn import(
             .await
             .context("sending imported rows")?;
     }
+    flush_key_backup(&client).await;
     println!(
         "Imported {} row(s) into {} table(s)",
         result.rows_written,
