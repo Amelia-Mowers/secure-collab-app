@@ -370,6 +370,7 @@ export const WORKSPACE_METHODS = new Set([
   'getTableRows', 'getRowOrderKeys', 'getTableSchema', 'getView', 'listTables',
   'listViewsForTable', 'getTableOrderKeys', 'currentUserId', 'snapshot',
   'isEncrypted', 'undecryptableCount', 'connectionHealth', 'rejectedWrites',
+  'keyBackupCaughtUp', 'flushKeyBackup', 'retryUndecryptable',
   'pendingUpdates', 'exportTableCsv', 'exportWorkspaceZip', 'previewCsvImport',
   // writes
   'createTable', 'renameTable', 'deleteTable', 'setTableOrder',
@@ -402,6 +403,9 @@ export const WORKSPACE_WRITE_METHODS = new Set([
   'updateCell', 'deleteRow', 'applyUpdate', 'importCsv', 'importWorkspaceZip',
   'importWorkspaceArchive',
   'restorePendingUpdates', 'rollbackTo', 'checkIntegrity',
+  // Applies the updates from events that have just become decryptable, so the
+  // grid must be re-pushed — the whole point is that data appears.
+  'retryUndecryptable',
 ])
 
 /** Methods callable on `verify:<flowId>`. */

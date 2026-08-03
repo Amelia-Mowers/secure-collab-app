@@ -2666,6 +2666,44 @@ impl ConnectedWorkspace {
         self.undecryptable.borrow().len() as u32
     }
 
+    /// Whether every room key this device holds has reached secure backup.
+    ///
+    /// False means at least one megolm session exists only here: readable by
+    /// everyone who was in the room when it was sent, and unreadable by any
+    /// device that signs in later — including this user's own next device, or
+    /// this one after its browser store is cleared.
+    #[wasm_bindgen(js_name = keyBackupCaughtUp)]
+    pub async fn key_backup_caught_up(&self) -> bool {
+        use matrix_sdk::encryption::backups::BackupState;
+        !self.client.encryption().backups().are_enabled().await
+            || matches!(
+                self.client.encryption().backups().state(),
+                BackupState::Enabled
+            )
+    }
+
+    /// Push any not-yet-backed-up room keys to secure backup and wait for it.
+    ///
+    /// The UI calls this when the page is being hidden — a tab close, a mobile
+    /// browser backgrounding, a laptop about to sleep. It is best effort by
+    /// nature: a browser will not hold a closing page open for a network round
+    /// trip. Its value is that the upload is STARTED at the last moment we know
+    /// the page is alive, rather than left waiting on a sync response that may
+    /// never arrive because the tab is gone.
+    #[wasm_bindgen(js_name = flushKeyBackup)]
+    pub async fn flush_key_backup(&self) -> Result<(), JsValue> {
+        if !self.client.encryption().backups().are_enabled().await {
+            return Ok(());
+        }
+        self.client
+            .encryption()
+            .backups()
+            .wait_for_steady_state()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("key backup upload failed: {e}")))?;
+        Ok(())
+    }
+
     /// Re-fetch the events that could not be decrypted, and apply the ones that
     /// now can. Returns how many are still unreadable.
     ///
@@ -3039,6 +3077,44 @@ fn merge_pending(pending: &mut HashMap<CellKey, CellUpdate>, update: CellUpdate)
 /// window backs off exponentially, so the burst is paced out and the error is
 /// never surfaced to the user. The loop exits once the queue is empty; a later
 /// enqueue starts a fresh task (see [`ConnectedWorkspace::schedule_flush`]).
+/// Start uploading this device's room keys to secure backup, without waiting for
+/// the result.
+///
+/// A megolm session begins life on exactly one device. Everyone in the room at
+/// send time receives it over to-device, so collaboration is unaffected — but a
+/// device that logs in AFTERWARDS can only restore from backup, and nothing
+/// revisits an old session. Until the upload lands, those events are one cleared
+/// browser store away from being unreadable forever.
+///
+/// The SDK backs keys up from a background task that `/sync` triggers, so left
+/// alone the window is "until the next sync response, plus an upload". Closing a
+/// tab inside it is ordinary user behaviour, not an edge case — and the CLI half
+/// of this bug (fixed by `wait_for_key_backup`) proved the failure is silent and
+/// permanent when it happens.
+///
+/// Fire-and-forget: the send already succeeded, and a browser cannot block a
+/// closing tab on a network round trip anyway. What it can do is not leave the
+/// upload unstarted. `wait_for_steady_state` triggers the backup as well as
+/// awaiting it, which is why this calls the waiting form and drops the result.
+fn trigger_key_backup(client: &Client) {
+    let client = client.clone();
+    spawn_local(async move {
+        if !client.encryption().backups().are_enabled().await {
+            return;
+        }
+        if let Err(e) = client
+            .encryption()
+            .backups()
+            .wait_for_steady_state()
+            .await
+        {
+            web_sys::console::warn_1(&JsValue::from_str(&format!(
+                "room keys may not have reached secure backup: {e}"
+            )));
+        }
+    });
+}
+
 async fn flush_pending(
     client: Client,
     room_id: OwnedRoomId,
@@ -3103,6 +3179,10 @@ async fn flush_pending(
                 backoff_ms = DEBOUNCE_MS;
                 send_failures.set(0);
                 last_send_ok_ms.set(js_sys::Date::now());
+                // The keys for what we just sent are, right now, on this device
+                // only. Start pushing them to backup immediately instead of
+                // waiting for the SDK's next sync response to trigger it.
+                trigger_key_backup(&client);
             }
             SendOutcome::Retryable(_) => {
                 // Still in `pending` (nothing was drained) — just back off.

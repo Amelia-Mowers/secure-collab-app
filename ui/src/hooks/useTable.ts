@@ -131,6 +131,10 @@ export interface WorkspaceHandle {
   undecryptableCount?(): number
   /** Re-fetch the events that failed to decrypt; resolves to how many still do. */
   retryUndecryptable?(): Promise<number>
+  /** Push not-yet-backed-up room keys to secure backup (see the page-hide hook). */
+  flushKeyBackup?(): Promise<void>
+  /** False when a room key exists on this device only. */
+  keyBackupCaughtUp?(): Promise<boolean>
   myRole?(): Promise<string>
   setUserRole?(userId: string, role: string): Promise<void>
   leaveWorkspace?(removeEveryone: boolean): Promise<void>
@@ -748,6 +752,40 @@ export function useWorkspace(workspaceId: string, matrixSession?: any) {
       document.removeEventListener('visibilitychange', onHide)
     }
   }, [workspace, workspaceId])
+
+  // ── Get this device's room keys into secure backup before it goes away ──
+  // A megolm session starts out on one device. Everyone in the room at send
+  // time gets it over to-device, so collaboration is fine — but a device that
+  // signs in LATER can only restore from backup, and nothing revisits an old
+  // session. A key that never reached backup is one cleared browser store away
+  // from making its events unreadable forever.
+  //
+  // The bridge already starts an upload after each successful send, so this is
+  // the second line: the moments a page is about to vanish (a tab close, a
+  // mobile browser backgrounding, a laptop sleeping) are exactly when an upload
+  // that has not started yet will never start. Best-effort by nature — no
+  // browser holds a closing page open for a network round trip — but starting
+  // it while the page is demonstrably alive is the part we control. Same
+  // reasoning as the outbox mirror below.
+  useEffect(() => {
+    if (!workspace || typeof workspace.flushKeyBackup !== 'function') return
+    const flush = () => {
+      try {
+        void Promise.resolve(workspace.flushKeyBackup?.()).catch(() => {})
+      } catch {
+        /* best-effort */
+      }
+    }
+    const onHide = () => {
+      if (document.hidden) flush()
+    }
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('pagehide', flush)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('pagehide', flush)
+    }
+  }, [workspace])
 
   // ── Mirror the pending send queue to the persistent outbox (ADR 0003) ──
   // A short interval (unsent writes matter within seconds, unlike snapshot
