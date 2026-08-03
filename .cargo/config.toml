@@ -1,7 +1,30 @@
 [target.wasm32-unknown-unknown]
 rustflags = [
-  "-C", "link-arg=--initial-memory=33554432",   # 32MB initial memory (browser safe)
-  "-C", "link-arg=--max-memory=134217728",      # 128MB max memory
+  "-C", "link-arg=--initial-memory=33554432",    # 32 MiB initial — a fast first paint
+  # 2 GiB max, raised from 128 MiB (134217728) on 2026-08-03.
+  #
+  # THIS WAS THE PRODUCTION CRASH. 128 MiB is a cap the module can actually
+  # reach on a real workspace, and reaching it is not a graceful failure: once
+  # `memory.grow` refuses, the Rust allocator gets null, `handle_alloc_error`
+  # aborts, and the abort compiles to a bare wasm `unreachable`. That is NOT a
+  # panic, so no panic hook runs and nothing is printed — the user's whole bug
+  # report was:
+  #
+  #     RuntimeError: unreachable executed  app_core_bg-QKXN0Fn-.wasm:6126383:1
+  #
+  # and the module stays poisoned afterwards, so the tab quietly stops working
+  # until it is reloaded. It cost a week of wrong theories (a RefCell
+  # double-borrow, a sibling-tab race, a Firefox-vs-Chromium difference) because
+  # every reproduction attempt used a small workspace, which never gets near the
+  # ceiling. What settled it was reporting the heap size at the trap: exactly
+  # 134217728 bytes, exactly this number.
+  #
+  # A cap is still worth having — a runaway allocation should fail rather than
+  # take the machine with it — but it has to sit far above any real workspace,
+  # and 2 GiB does. It costs nothing until it is used: wasm memory grows on
+  # demand, and a 64-bit engine already reserves the address space for a wasm32
+  # memory regardless of the declared maximum.
+  "-C", "link-arg=--max-memory=2147483648",
   # getrandom v0.3 requires this cfg to enable the JS backend on wasm32
   "--cfg", "getrandom_backend=\"wasm_js\"",
 ]

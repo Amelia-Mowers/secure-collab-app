@@ -150,6 +150,13 @@ jobs:
         working-directory: crates/app-core
         run: wasm-pack build --target web --out-dir ../../ui/src/wasm/generated --no-default-features --features wasm,matrix-wasm
 
+      # The memory ceiling is stated in three places (linker arg, built module,
+      # and a TypeScript constant used to report how close a crash was to it)
+      # with nothing linking them. Lowering it fails silently and unreadably —
+      # see the script's docstring for the production crash that prompted this.
+      - name: Check the wasm memory ceiling
+        run: python3 scripts/check-wasm-memory.py
+
       - name: Upload WASM bindings
         uses: actions/upload-artifact@v4
         with:

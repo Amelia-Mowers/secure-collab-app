@@ -24,23 +24,41 @@ export async function getWasmModule() {
 }
 
 /**
- * How much linear memory the module currently holds, in MiB — or null before it
- * has loaded.
+ * The module's linear-memory ceiling, in MiB — the `--max-memory` link argument
+ * in `.cargo/config.toml`. Duplicated here because a wasm memory does not
+ * expose its declared maximum to JS, and the number is worth nothing to a bug
+ * report unless the reading can be compared to it.
  *
- * This exists to tell two very different failures apart. A Rust panic and a
- * failed ALLOCATION both surface in JS as the same opaque
- * `RuntimeError: unreachable executed`, but only the panic prints a message and
- * a source location: the wasm allocation-error handler traps directly, so
- * `console_error_panic_hook` never runs and there is nothing to read. A
- * production report of exactly that shape — no message, unchanged by switching
- * the release profile to `panic = "unwind"`, and only ever on real workspaces
- * rather than the small ones every test builds — fits the second far better
- * than the first. Reporting the heap size at the moment of the trap decides it,
- * from the machine it happens on, without needing a reproduction.
+ * KEEP IN STEP with that link argument. Being wrong here is not dangerous — it
+ * only mislabels a diagnostic — but a stale value would misdirect exactly the
+ * kind of investigation this exists to shorten.
  */
-export function wasmHeapMiB(): number | null {
+const WASM_MAX_HEAP_MIB = 2048
+
+/**
+ * How much linear memory the module holds, and how close that is to the cap —
+ * or null before it has loaded.
+ *
+ * This exists because a Rust panic and a failed ALLOCATION both surface in JS
+ * as the same opaque `RuntimeError: unreachable executed`, and only the panic
+ * prints a message and a source location. When `memory.grow` refuses, the
+ * allocator gets null and `handle_alloc_error` aborts — an abort is not a
+ * panic, so `console_error_panic_hook` never runs and there is nothing at all
+ * to read.
+ *
+ * That is not hypothetical: it was the production crash. The heap came back as
+ * exactly 128 MiB, exactly the `--max-memory` of the day, which is what finally
+ * identified it after a week of theories that a small test workspace could
+ * never have distinguished. The cap is 2 GiB now, but the failure mode survives
+ * the fix — so the reading says how near the ceiling it is, and a report that
+ * says "at the ceiling" needs no further diagnosis.
+ */
+export function wasmHeapMiB(): string | null {
   if (!linearMemory) return null
-  return Math.round(linearMemory.buffer.byteLength / (1024 * 1024))
+  const mib = Math.round(linearMemory.buffer.byteLength / (1024 * 1024))
+  const pct = Math.round((mib / WASM_MAX_HEAP_MIB) * 100)
+  const verdict = pct >= 99 ? ' — AT THE CEILING, this is out of memory' : ''
+  return `${mib} of ${WASM_MAX_HEAP_MIB} MiB (${pct}%)${verdict}`
 }
 
 /** Reset the cached module (used on sign-out to allow clean re-init). */

@@ -46,15 +46,16 @@ import { wasmHeapMiB } from '../wasm/loader'
  * `RuntimeError: unreachable executed` is what BOTH a Rust panic and a failed
  * allocation look like from JS, and the difference decides where to look. A
  * panic prints a message and a source location alongside it; the allocation
- * handler traps directly, printing nothing at all. So a bare trap plus a heap
- * near the engine's ceiling says out-of-memory, and a bare trap on a small heap
- * says the panic hook is not reaching us.
+ * handler traps directly, printing nothing at all. So a bare trap on a heap
+ * sitting at the cap is out-of-memory — which is what the production crash
+ * turned out to be — and a bare trap well below it means the panic hook is not
+ * reaching us and the search is somewhere else entirely.
  */
 function describeErr(err: unknown): string {
   const text = String(err)
   if (!text.includes('unreachable')) return text
-  const mib = wasmHeapMiB()
-  return mib === null ? text : `${text} — wasm heap ${mib} MiB`
+  const heap = wasmHeapMiB()
+  return heap === null ? text : `${text} — wasm heap ${heap}`
 }
 
 /** What the dispatcher needs from its host: a wasm module and a way to reach
