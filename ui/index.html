@@ -5,9 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TideWork — End-to-end encrypted collaborative workspace</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <!-- The brand faces, self-hosted — the same files the site serves.
+
+         Two reasons this is not a Google Fonts link any more. The app used DM
+         Sans and JetBrains Mono while the site used Fraunces and IBM Plex, so
+         a visitor crossed from one typeface family into another two screens
+         into the funnel. And an end-to-end encrypted product that phones a
+         third party for its fonts on every page load is telling on its users
+         for no benefit; these are four woff2 files. -->
+    <link rel="preload" href="/fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/ibm-plex-sans-600.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/fonts/fonts.css" />
   </head>
   <body>
     <div id="root"></div>

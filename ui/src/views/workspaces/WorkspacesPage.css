@@ -53,7 +53,7 @@
   height: 28px;
   border-radius: 7px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
   font-size: 12px;
   font-weight: 600;
   display: flex;

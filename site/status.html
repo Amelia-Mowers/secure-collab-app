@@ -6,14 +6,8 @@
 <title>Status — TideWork</title>
 <meta name="description" content="Current operational status of the TideWork hosted service." />
 <link rel="stylesheet" href="/fonts/fonts.css" />
+<link rel="stylesheet" href="/tokens.css" />
 <style>
-  :root {
-    --abyss:#03101c; --foam:#eaf6f6; --mist:#9fc3cd; --faint:#5c8292;
-    --spray:#67e2d4; --buoy:#ff9e57; --red:#f87171; --amber:#f5c451;
-    --line:rgba(154,203,212,0.16);
-    --serif:'Fraunces', Georgia, serif; --sans:'IBM Plex Sans', system-ui, sans-serif;
-    --mono:'IBM Plex Mono', ui-monospace, monospace;
-  }
   * { margin:0; box-sizing:border-box; }
   body {
     font-family:var(--sans); color:var(--mist); line-height:1.7;
@@ -43,8 +37,8 @@
   }
   .dot { width:13px; height:13px; border-radius:50%; flex-shrink:0; }
   .dot--ok { background:var(--spray); box-shadow:0 0 14px rgba(103,226,212,0.5); }
-  .dot--degraded { background:var(--amber); box-shadow:0 0 14px rgba(245,196,81,0.45); }
-  .dot--down { background:var(--red); box-shadow:0 0 14px rgba(248,113,113,0.45); }
+  .dot--degraded { background:var(--lantern); box-shadow:0 0 14px rgba(245,196,81,0.45); }
+  .dot--down { background:var(--reef); box-shadow:0 0 14px rgba(248,113,113,0.45); }
   .banner__text { font-size:17px; color:var(--foam); font-weight:500; }
   .updated { font-size:12.5px; color:var(--faint); margin-top:0; }
 
@@ -53,8 +47,8 @@
   th { color:var(--foam); font-weight:600; font-size:13px; }
   .state { font-family:var(--mono); font-size:12.5px; }
   .state--ok { color:var(--spray); }
-  .state--degraded { color:var(--amber); }
-  .state--down { color:var(--red); }
+  .state--degraded { color:var(--lantern); }
+  .state--down { color:var(--reef); }
 
   .note { border-left:2px solid var(--spray); padding-left:16px; margin:22px 0; }
   footer { margin-top:60px; padding-top:22px; border-top:1px solid var(--line); font-size:13px; color:var(--faint); }

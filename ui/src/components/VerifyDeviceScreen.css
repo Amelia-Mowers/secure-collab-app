@@ -57,7 +57,7 @@
 .verify__key-text {
   flex: 1;
   padding: 10px 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   word-break: break-all;
   color: var(--text);
@@ -147,7 +147,7 @@
   padding: 9px 16px;
   font-size: 13px;
   font-weight: 500;
-  color: #ffffff;
+  color: var(--accent-text);
   background: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 6px;
@@ -276,7 +276,7 @@
 .verify__kit-btn {
   background: var(--accent);
   border: none;
-  color: #fff;
+  color: var(--accent-text);
   border-radius: 8px;
   padding: 9px 18px;
   font-size: 13.5px;
@@ -332,7 +332,7 @@
 
 .verify__challenge-input {
   width: 9ch;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 15px;
   letter-spacing: 0.06em;
   text-align: center;

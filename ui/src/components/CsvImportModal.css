@@ -188,7 +188,7 @@
 .csvim__btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
 }
 
 .csvim__btn:disabled {
