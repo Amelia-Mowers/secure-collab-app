@@ -83,6 +83,9 @@ function fmtTime(ms: number): string {
   }
 }
 
+/** How many times an empty change log is re-fetched before it is believed. */
+const EMPTY_RETRIES = 6
+
 /**
  * The History drawer: a side panel showing the change log for a table (edits +
  * reverts, newest-first) with the ability to roll the table back to any point.
@@ -95,6 +98,7 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
   const [error, setError] = useState<string | null>(null)
   const [busyTs, setBusyTs] = useState<number | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
   const { confirm } = useDialogs()
 
   // Schema + members + reference labels, so an entry can say "Sketch landing
@@ -167,6 +171,35 @@ export function HistoryDrawer({ workspace, tableId, onClose, onReverted }: Histo
   useEffect(() => {
     void load()
   }, [load])
+
+  /**
+   * An empty log is retried, because "empty" and "not fetched yet" look
+   * identical here.
+   *
+   * `getChangeLog` reads the room timeline, which a freshly opened workspace is
+   * still paginating. Opening the drawer in that window loaded once, got
+   * nothing, and then said "No changes recorded yet." FOREVER — the load ran on
+   * mount and never again, so the only way out was to close the drawer and
+   * reopen it. The demo template makes this easy to hit: it seeds fifty writes
+   * and a user goes looking at them immediately.
+   *
+   * So an empty result is retried on a doubling backoff for about half a
+   * minute, then left alone: a table with no edits IS legitimately empty, and
+   * polling it forever would be worse than the bug. `retry` is state rather
+   * than a ref on purpose — the effect has to re-arm after an attempt that
+   * changed nothing, and without a changing dependency it fires exactly once.
+   */
+  useEffect(() => {
+    if (loading || error || entries.length > 0 || retry >= EMPTY_RETRIES) return
+    const timer = setTimeout(
+      () => {
+        setRetry(n => n + 1)
+        void load()
+      },
+      Math.min(1_000 * 2 ** retry, 10_000),
+    )
+    return () => clearTimeout(timer)
+  }, [loading, error, entries.length, retry, load])
 
   const restore = useCallback(
     async (serverTs: number) => {
