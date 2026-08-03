@@ -457,6 +457,21 @@ jobs:
           npx wrangler@4 pages project create tidework-site --production-branch=main 2>/dev/null || true
           npx wrangler@4 pages deploy site --project-name=tidework-site --branch=main
 
+      # community.tidework.io — its own tiny Pages project, so the subdomain
+      # has its own root rather than serving the marketing landing page. The
+      # page itself is site/community.html and stays the single source: this
+      # assembles a one-page site from it at deploy time rather than keeping a
+      # second copy to drift.
+      - name: Deploy community page (community.tidework.io)
+        run: |
+          mkdir -p community-dist/fonts
+          cp site/community.html community-dist/index.html
+          cp site/tokens.css community-dist/tokens.css
+          cp site/fonts/* community-dist/fonts/
+          cp site/_headers community-dist/_headers
+          npx wrangler@4 pages project create tidework-community --production-branch=main 2>/dev/null || true
+          npx wrangler@4 pages deploy community-dist --project-name=tidework-community --branch=main
+
       - name: Deploy app (app.tidework.io)
         run: |
           npx wrangler@4 pages project create tidework-app --production-branch=main 2>/dev/null || true
@@ -496,8 +511,10 @@ jobs:
           }
           attach tidework-site tidework.io
           attach tidework-app app.tidework.io
+          attach tidework-community community.tidework.io
           record tidework.io tidework-site.pages.dev
           record app.tidework.io tidework-app.pages.dev
+          record community.tidework.io tidework-community.pages.dev
 
       # "Merged" is not "deployed". A green CI run has repeatedly meant a stale
       # live site — a cancelled deploy, a Pages edge that had not caught up, a
