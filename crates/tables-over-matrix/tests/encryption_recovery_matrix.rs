@@ -87,6 +87,73 @@ async fn test_second_device_reconstructs_encrypted_workspace_from_history() {
     );
 }
 
+/// The same promise for writes made AFTER backup was set up — which is every
+/// write a user actually makes, and the case the test above does not cover.
+///
+/// `enable_recovery` uploads the keys that exist at that moment and returns. New
+/// megolm sessions created later are backed up by a background task, so a client
+/// that writes and exits promptly can take the only copy with it: devices that
+/// already existed got the session over to-device, but a device created
+/// afterwards has only the backup, and nothing ever revisits an old session.
+///
+/// Measured before it was fixed: a benchmark account seeded 3000 edits from one
+/// short-lived CLI process, and a second login could not decrypt 2903 of them —
+/// still 2903 after 31 s of retries. `wait_for_key_backup` is the fix, and this
+/// is the test that keeps it honest.
+#[tokio::test]
+#[ignore]
+async fn test_second_device_reads_writes_made_after_backup_was_enabled() {
+    let harness = TestHarness::new().await.unwrap();
+
+    let mut alice1 = harness.register_user("alice").await.unwrap();
+    let room_id = harness
+        .create_encrypted_room(&alice1, "workspace")
+        .await
+        .unwrap();
+    alice1.sync_once().await.unwrap();
+    alice1.set_room_from_str(&room_id).unwrap();
+
+    // Backup FIRST, writes second — the real order of events.
+    let recovery_key = alice1.enable_recovery().await.unwrap();
+
+    let update = CellUpdate::new("tasks", "t1", "title", json!("Written later"), 100);
+    alice1.send_cell_update(&update).await.unwrap();
+    harness.wait_for_sync().await;
+
+    // What a process about to exit has to do. Without it the assertion below is
+    // a coin flip on whether the background task got there first.
+    alice1.wait_for_key_backup().await.unwrap();
+
+    let mut alice2 = harness.login_existing("alice").await.unwrap();
+    alice2.sync_once().await.unwrap();
+    alice2.recover_with_key(&recovery_key).await.unwrap();
+    alice2.sync_once().await.unwrap();
+    harness.wait_for_sync().await;
+    alice2.set_room_from_str(&room_id).unwrap();
+
+    let room = alice2.get_room().unwrap();
+    let response = room
+        .messages(matrix_sdk::room::MessagesOptions::backward())
+        .await
+        .unwrap();
+
+    let mut table = Table::new("tasks");
+    for event in &response.chunk {
+        if let Ok(json_str) = serde_json::to_string(event.raw().json()) {
+            if let Some(rx) = MatrixClient::extract_cell_update(&json_str) {
+                table.apply_update(rx.into_update());
+            }
+        }
+    }
+
+    assert_eq!(
+        table.get_value("t1", "title"),
+        Some(&json!("Written later")),
+        "a device that logs in later must be able to read writes made after \
+         backup was enabled — otherwise those keys exist on exactly one device"
+    );
+}
+
 /// A key backup is enabled after the device enables recovery — the ADR 0001
 /// Phase A "backup exists after setup" assertion, now directly checkable via
 /// `MatrixClient::backup_exists()`.
