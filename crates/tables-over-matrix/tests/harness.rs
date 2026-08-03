@@ -15,6 +15,11 @@ use std::time::Duration;
 use tables_over_matrix::MatrixClient;
 use tokio::time::sleep;
 
+/// Marker in the error message that says the failure was the start-up port race
+/// and a retry on a different port is worth trying. Matched by string because
+/// the harness's errors are `anyhow`, not a typed enum.
+const PORT_RACE_LOST: &str = "port race lost";
+
 /// Find a free TCP port by binding to port 0.
 fn free_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind to random port");
@@ -58,7 +63,33 @@ impl TestHarness {
     }
 
     /// Start a real Synapse homeserver with a specific `rc_message` rate limit.
+    ///
+    /// Retries when it loses the port race. `free_port()` binds port 0, reads the
+    /// port and CLOSES the listener; Synapse binds it a second or two later, so
+    /// two harnesses starting at once can be handed the same number. The loser's
+    /// Synapse fails to bind and exits — and because readiness was only ever "does
+    /// something answer on this port", the loser then talked to the WINNER's
+    /// homeserver. Two tests sharing one server, both registering `alice`, and the
+    /// second one failed with `M_USER_IN_USE` (main, 2026-08-03, run 30806069592).
+    /// The tell is that the failure lands on registration rather than on start-up,
+    /// which reads like a test bug rather than a harness one.
     pub async fn new_with_message_rate_limit(rc_ps: f64, rc_burst: u32) -> Result<Self> {
+        let mut last_err = None;
+        for attempt in 1..=5 {
+            match Self::start_once(rc_ps, rc_burst).await {
+                Ok(harness) => return Ok(harness),
+                Err(e) if e.to_string().contains(PORT_RACE_LOST) => {
+                    eprintln!("[harness] lost the port race (attempt {attempt}); retrying");
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err.unwrap()).context("Synapse could not claim a free port in 5 attempts")
+    }
+
+    /// One attempt at starting Synapse on a freshly chosen port.
+    async fn start_once(rc_ps: f64, rc_burst: u32) -> Result<Self> {
         let port = free_port();
         let homeserver_url = format!("http://localhost:{port}");
 
@@ -200,7 +231,7 @@ rc_invites:
             .spawn()
             .context("Failed to start synapse_homeserver — is matrix-synapse installed?")?;
 
-        let harness = Self {
+        let mut harness = Self {
             homeserver_process,
             homeserver_url,
             data_dir,
@@ -212,8 +243,15 @@ rc_invites:
         Ok(harness)
     }
 
-    /// Poll Synapse until it responds to requests (or timeout).
-    async fn wait_for_ready(&self) -> Result<()> {
+    /// Poll until *our* Synapse responds (or timeout).
+    ///
+    /// Checks that our child is still alive BEFORE asking whether the port
+    /// answers, which is the whole difference: a Synapse that lost the port race
+    /// exits within about a second, while a healthy one takes several to finish
+    /// its schema migrations. Without that check, "something answers on this
+    /// port" was accepted as "our homeserver is up", and a dead child silently
+    /// handed the test somebody else's server.
+    async fn wait_for_ready(&mut self) -> Result<()> {
         let client = reqwest::Client::new();
         let url = format!("{}/_matrix/client/versions", self.homeserver_url);
 
@@ -221,6 +259,14 @@ rc_invites:
         // up than Conduit, especially under parallel-test contention. 600 *
         // 100ms = 60s.
         for i in 0..600 {
+            if let Ok(Some(status)) = self.homeserver_process.try_wait() {
+                bail!(
+                    "{PORT_RACE_LOST}: Synapse exited ({status}) while starting on port {} \
+                     (see {}/homeserver.log)",
+                    self.port,
+                    self.data_dir.display(),
+                );
+            }
             match client.get(&url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     eprintln!(
