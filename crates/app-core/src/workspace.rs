@@ -5,7 +5,7 @@ use crate::schema::{SchemaManager, TableDefinition};
 use crate::views::{ViewConfig, ViewManager};
 use crate::Result;
 use std::collections::HashMap;
-use tables_over_matrix::{Cell, CellId, CellUpdate, Table, ROW_DELETED_COLUMN};
+use tables_over_matrix::{Cell, CellId, CellUpdate, Table, ROW_DELETED_COLUMN, ROW_ORDER_COLUMN};
 
 /// Empty for default-substitution purposes: `null` or `""` (a missing cell is
 /// handled by the callers' `is_none_or`).
@@ -2312,6 +2312,50 @@ mod tests {
         let t = ws.get_table("tasks").unwrap();
         assert_eq!(t.get_value("r3", "title"), Some(&json!("c")));
         assert_eq!(t.get_value("r1", "title"), Some(&json!("a")));
+    }
+
+    #[test]
+    fn test_kanban_move_does_not_panic() {
+        // Reproduction of a production panic: dragging a card between kanban
+        // columns took the wasm module down with a bare "unreachable executed"
+        // and poisoned the worker for the rest of the session — every later
+        // call failed, so the tab was dead until reload.
+        //
+        // The drag handler makes exactly two kinds of write, and the second is
+        // the unusual one: it updates `_order`, a RESERVED control column that
+        // is not in any schema. Everything downstream of a write assumes it is
+        // looking at a real column.
+        let mut ws = Workspace::new("w");
+        ws.create_table(make_tasks_def()).unwrap();
+        for i in 0..8 {
+            ws.update_cell(
+                "tasks",
+                &format!("r{i}"),
+                "title",
+                json!(format!("card {i}")),
+            )
+            .unwrap();
+            ws.update_cell("tasks", &format!("r{i}"), "status", json!("todo"))
+                .unwrap();
+            ws.update_cell("tasks", &format!("r{i}"), ROW_ORDER_COLUMN, json!("a"))
+                .unwrap();
+        }
+
+        // What KanbanView does on drop: move the card to the target column,
+        // then rewrite the order keys of everything that shifted.
+        ws.update_cell_with_bump("tasks", "r3", "status", json!("done"))
+            .unwrap();
+        for (i, key) in ["a0", "a1", "a2", "a3"].iter().enumerate() {
+            ws.update_cell_with_bump("tasks", &format!("r{i}"), ROW_ORDER_COLUMN, json!(key))
+                .unwrap();
+        }
+
+        // Reading back is half the repro: the panic surfaced through
+        // getTableRows/getRowOrderKeys while materializing state.
+        let rows = ws.get_table_rows("tasks").unwrap();
+        assert_eq!(rows.len(), 8);
+        let keys = ws.get_row_order_keys("tasks").unwrap();
+        assert!(!keys.is_empty());
     }
 
     #[test]

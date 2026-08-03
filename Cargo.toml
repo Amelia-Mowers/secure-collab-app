@@ -64,7 +64,23 @@ uuid = { version = "1.6", features = ["v4", "serde", "js"] }
 opt-level = "z"     # Optimize for size
 lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce number of codegen units to increase optimizations
-panic = "abort"     # Abort on panic
+# panic = "unwind" (the default), NOT abort.
+#
+# A production panic reached us as exactly this and nothing else:
+#
+#   RuntimeError: unreachable executed  app_core_bg-D_axPbry.wasm:8640453:1
+#
+# No message, no file, no line — an offset into a stripped, wasm-opt'd binary,
+# which is not a location anybody can act on. The panic also POISONS the
+# module: every later call traps, so the tab silently stops working until it is
+# reloaded, and the user's first symptom is that nothing happens any more.
+#
+# Unwinding lets `console_error_panic_hook` print the panic message and the
+# source location it came from. The strings for those live in the binary
+# regardless of `strip` (which drops symbols, not panic metadata), so this
+# costs a little size and buys the difference between a bug report we can act
+# on and one we can only speculate about. We had one of each this week.
+panic = "unwind"
 strip = true        # Strip symbols from binary
 
 [profile.release.package."*"]
