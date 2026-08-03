@@ -5,7 +5,7 @@ use crate::schema::{SchemaManager, TableDefinition};
 use crate::views::{ViewConfig, ViewManager};
 use crate::Result;
 use std::collections::HashMap;
-use tables_over_matrix::{Cell, CellId, CellUpdate, Table, ROW_DELETED_COLUMN, ROW_ORDER_COLUMN};
+use tables_over_matrix::{Cell, CellId, CellUpdate, Table, ROW_DELETED_COLUMN};
 
 /// Empty for default-substitution purposes: `null` or `""` (a missing cell is
 /// handled by the callers' `is_none_or`).
@@ -2337,8 +2337,13 @@ mod tests {
             .unwrap();
             ws.update_cell("tasks", &format!("r{i}"), "status", json!("todo"))
                 .unwrap();
-            ws.update_cell("tasks", &format!("r{i}"), ROW_ORDER_COLUMN, json!("a"))
-                .unwrap();
+            ws.update_cell(
+                "tasks",
+                &format!("r{i}"),
+                tables_over_matrix::ROW_ORDER_COLUMN,
+                json!("a"),
+            )
+            .unwrap();
         }
 
         // What KanbanView does on drop: move the card to the target column,
@@ -2346,8 +2351,13 @@ mod tests {
         ws.update_cell_with_bump("tasks", "r3", "status", json!("done"))
             .unwrap();
         for (i, key) in ["a0", "a1", "a2", "a3"].iter().enumerate() {
-            ws.update_cell_with_bump("tasks", &format!("r{i}"), ROW_ORDER_COLUMN, json!(key))
-                .unwrap();
+            ws.update_cell_with_bump(
+                "tasks",
+                &format!("r{i}"),
+                tables_over_matrix::ROW_ORDER_COLUMN,
+                json!(key),
+            )
+            .unwrap();
         }
 
         // Reading back is half the repro: the panic surfaced through
