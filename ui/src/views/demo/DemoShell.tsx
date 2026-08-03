@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { Sidebar } from '@/components/Sidebar'
@@ -33,6 +34,18 @@ export function DemoShell() {
   const navigate = useNavigate()
   const { workspace, error, changeCount } = useDemoWorkspace()
 
+  // The off-canvas drawer, same as WorkspaceShell. It was missing here, and the
+  // consequence was worse than a layout blemish: below 768px the sidebar sits at
+  // left:-300px, this shell rendered no hamburger and no backdrop, and so a
+  // phone visitor arriving from the marketing CTA hit a dead end — on the screen
+  // that says "Pick a table or a board on the left", with 19 tables and views
+  // off-canvas and nothing on the page able to reach them. The only button was
+  // "Create an account". That is the funnel, and it did not work on a phone.
+  const [navOpen, setNavOpen] = useState(false)
+  useEffect(() => {
+    setNavOpen(false)
+  }, [location.pathname])
+
   if (error) {
     return (
       <div className="app-error">
@@ -54,31 +67,65 @@ export function DemoShell() {
   }
 
   return (
-    <div className="app">
+    // A column: banner, then the shell. The banner used to be `position: fixed`
+    // with the shell clearing it via `padding-top: 37px` — a number measured on a
+    // desktop, where the banner is one line. At 390px its text wraps to three, so
+    // the banner covered the top of the shell, which is exactly where the mobile
+    // bar lives: the hamburger rendered, and every tap landed on the banner
+    // instead. In normal flow its height is whatever it actually is, at any width
+    // and any number of wrapped lines, with no constant to keep in step.
+    <div className="demo-shell">
       <DemoBanner />
-      <Sidebar
-        workspace={workspace}
-        workspaceId={DEMO_WORKSPACE_ID}
-        syncCount={changeCount}
-      />
-      <div className="app-main">
-        <Routes>
-          <Route path="/" element={<DemoHome />} />
-          <Route path="/table/:tableId" element={<TableView workspace={workspace} syncCount={changeCount} />} />
-          <Route
-            path="/table/:tableId/view/:viewId"
-            element={<ViewRouter workspace={workspace} syncCount={changeCount} />}
-          />
-          <Route path="/table/:tableId/cards" element={<CardView workspace={workspace} syncCount={changeCount} />} />
-          <Route
-            path="/table/:tableId/entry/:rowId"
-            element={<EntryView workspace={workspace} syncCount={changeCount} key={location.key} />}
-          />
-          <Route
-            path="/table/:tableId/entry/new"
-            element={<EntryView workspace={workspace} syncCount={changeCount} key={location.key} />}
-          />
-        </Routes>
+      <div className="app">
+        <Sidebar
+          workspace={workspace}
+          workspaceId={DEMO_WORKSPACE_ID}
+          syncCount={changeCount}
+          mobileOpen={navOpen}
+        />
+        {navOpen && (
+          <div className="app__nav-backdrop" onClick={() => setNavOpen(false)} aria-hidden="true" />
+        )}
+        <div className="app-main">
+          <div className="app-mobile-bar">
+            <button
+              className="app-mobile-bar__menu"
+              onClick={() => setNavOpen(o => !o)}
+              aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+              aria-expanded={navOpen}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
+                <line x1="2" y1="4" x2="14" y2="4" />
+                <line x1="2" y1="8" x2="14" y2="8" />
+                <line x1="2" y1="12" x2="14" y2="12" />
+              </svg>
+            </button>
+          </div>
+          <Routes>
+            <Route path="/" element={<DemoHome />} />
+            <Route path="/table/:tableId" element={<TableView workspace={workspace} syncCount={changeCount} />} />
+            <Route
+              path="/table/:tableId/view/:viewId"
+              element={<ViewRouter workspace={workspace} syncCount={changeCount} />}
+            />
+            <Route path="/table/:tableId/cards" element={<CardView workspace={workspace} syncCount={changeCount} />} />
+            <Route
+              path="/table/:tableId/entry/:rowId"
+              element={<EntryView workspace={workspace} syncCount={changeCount} key={location.key} />}
+            />
+            <Route
+              path="/table/:tableId/entry/new"
+              element={<EntryView workspace={workspace} syncCount={changeCount} key={location.key} />}
+            />
+          </Routes>
+        </div>
       </div>
     </div>
   )
@@ -108,9 +155,14 @@ function DemoHome() {
       <div className="welcome-content">
         <div className="welcome-logo" />
         <h1 className="welcome-title">A sample workspace</h1>
+        {/* "on the left" is only true where there IS a left. Below 768px the
+            sidebar is a drawer behind the ☰ button, so the instruction has to
+            change with it — an empty screen telling you to use something that is
+            not on it is worse than saying nothing at all. */}
         <p className="welcome-subtitle">
-          Pick a table or a board on the left. Edit anything you like — it is
-          yours until you close the tab.
+          <span className="only-wide">Pick a table or a board on the left.</span>
+          <span className="only-narrow">Tap ☰ to pick a table or a board.</span> Edit
+          anything you like — it is yours until you close the tab.
         </p>
       </div>
     </div>

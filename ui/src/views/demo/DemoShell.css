@@ -1,11 +1,24 @@
 /* The demo banner. Persistent and unmissable without being alarming: it is a
    statement of fact, not a warning. */
+.demo-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* The shell fills what the banner leaves. `min-height: 0` is what lets it
+   SHRINK rather than overflow the column — without it a flex item refuses to go
+   below its content height, and the app's own scrolling regions stop working. */
+.demo-shell > .app {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
 .demo-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 900;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -48,14 +61,26 @@
   background: var(--accent-hover, var(--accent));
 }
 
-/* The banner is fixed, so the shell below it needs the height back. */
-.app:has(.demo-banner) {
-  padding-top: 37px;
-}
-
 @media (max-width: 640px) {
   .demo-banner__text {
     /* The CTA is the point on a phone; the explanation can wrap away. */
     font-size: 12px;
+  }
+}
+
+/* Copy that has to differ by width, because the sidebar is a column on a
+   desktop and a drawer behind ☰ on a phone. Two spans rather than JavaScript:
+   the breakpoint that moves the sidebar is a CSS fact, so the sentence
+   describing it should be one too, and they can never drift apart. */
+.only-narrow {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .only-wide {
+    display: none;
+  }
+  .only-narrow {
+    display: inline;
   }
 }
