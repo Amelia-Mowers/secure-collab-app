@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get up and running with Secure Collaborative Workspace in 5 minutes.
+Get up and running with TideWork in 5 minutes.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ Choose one:
 
 ```bash
 git clone <repository-url>
-cd secure-collab-app
+cd tidework
 
 # Enter Nix shell (all dependencies included!)
 nix develop
@@ -90,7 +90,7 @@ make help
 ## Project Structure
 
 ```
-secure-collab-app/
+tidework/
 ├── crates/
 │   ├── tables-over-matrix/    # Core library
 │   └── app-core/              # App logic + WASM bridge

@@ -28,7 +28,6 @@
   strong { color:var(--foam); }
   code { font-family:var(--mono); font-size:13px; background:rgba(154,203,212,0.10); padding:1px 5px; border-radius:4px; }
 
-  /* The banner is the whole page as far as most visitors are concerned. */
   .banner {
     display:flex; align-items:center; gap:14px;
     margin:26px 0 8px; padding:20px 22px;
@@ -69,14 +68,6 @@
 <main class="wrap">
   <h1>Service status</h1>
 
-  <!-- ════════════════ EDIT DURING AN INCIDENT ════════════════
-       1. Swap the dot and text classes below: dot--ok / dot--degraded / dot--down
-       2. Change the banner text.
-       3. Update the "Last checked" date.
-       4. Change any affected row in the components table (state--ok/degraded/down).
-       5. Add an entry to Recent incidents.
-       Commit and push — Pages deploys on merge to main.
-       ═════════════════════════════════════════════════════════ -->
   <div class="banner">
     <span class="dot dot--ok" aria-hidden="true"></span>
     <span class="banner__text">All systems operational</span>
@@ -97,8 +88,6 @@
   </table>
 
   <h2>Recent incidents</h2>
-  <!-- Newest first. Keep roughly the last six months; a page that has never
-       recorded an incident reads as unmaintained rather than reliable. -->
   <p>No incidents recorded since this page was published.</p>
 
   <h2>How this page works</h2>

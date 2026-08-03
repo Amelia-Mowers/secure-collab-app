@@ -17,7 +17,7 @@
  */
 import { chromium } from '@playwright/test'
 
-const APP_URL = process.env.PROD_APP_URL ?? 'https://amelia-mowers.github.io/secure-collab-app/'
+const APP_URL = process.env.PROD_APP_URL ?? 'https://amelia-mowers.github.io/tidework/'
 const USER = process.env.PROD_USER
 const PASSWORD = process.env.PROD_PASSWORD
 const READ_ROOM = process.env.PERF_READ_ROOM ?? '!pFyyGiiyVkWnZvESZs:tidework.io'

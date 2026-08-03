@@ -8,7 +8,6 @@
 <link rel="stylesheet" href="/fonts/fonts.css" />
 <link rel="stylesheet" href="/tokens.css" />
 <style>
-  /* ── Deep-water system ─────────────────────────────────────────────── */
   * { margin: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
@@ -23,7 +22,6 @@
   }
   ::selection { background: var(--spray); color: var(--abyss); }
 
-  /* grain — faint, so the gradient doesn't band */
   body::before {
     content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1;
     opacity: 0.05; mix-blend-mode: overlay;
@@ -32,7 +30,6 @@
 
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; position: relative; }
 
-  /* ── Depth rail: the page is a sounding line ───────────────────────── */
   .depth {
     position: absolute; left: -2px; top: 0; bottom: 0; width: 1px;
     background: linear-gradient(180deg, transparent, var(--line) 6%, var(--line) 94%, transparent);
@@ -43,7 +40,6 @@
   }
   .tick::before { content: "— "; color: var(--spray); }
 
-  /* ── Header ────────────────────────────────────────────────────────── */
   header {
     position: sticky; top: 0; z-index: 10;
     backdrop-filter: blur(10px);
@@ -64,23 +60,13 @@
     font-weight: 600; transition: background 0.15s ease;
   }
   .nav .go:hover { background: var(--buoy-deep); color: var(--abyss); }
-  /* Narrow screens used to drop every section link, leaving the logo and
-     "Open app" with no hamburger to bring them back — so a phone visitor had
-     no way to reach pricing except by scrolling the whole page and hoping.
-     Wrapping to a second row costs nothing and needs no JavaScript, which a
-     hamburger would. */
   @media (max-width: 640px) {
     .nav { flex-wrap: wrap; gap: 0 18px; padding-bottom: 12px; }
-    .brand { order: 1; }          /* keeps its margin-right:auto, so ↓ sits right */
-    .nav .go { order: 2; }
-    /* A zero-height full-width break after the CTA, which forces the section
-       links onto their own row. Cheaper than a second container, and it means
-       adding a nav item needs no change here. */
+    .brand { order: 1; }    .nav .go { order: 2; }
     .nav::after { content: ""; order: 2; flex: 0 0 100%; height: 0; }
     .nav a:not(.go):not(.brand) { order: 3; flex: 0 0 auto; font-size: 13.5px; padding-top: 12px; }
   }
 
-  /* ── Hero — the surface ────────────────────────────────────────────── */
   .hero { padding: 110px 0 150px; position: relative; }
   .hero h1 {
     font-family: var(--serif); font-optical-sizing: auto;
@@ -89,15 +75,7 @@
     max-width: 26ch;
   }
   .hero h1 .cant { font-style: italic; color: var(--spray); }
-  /* "open-source" and "end-to-end" are single words that happen to contain
-     hyphens, and a break at one reads as a different phrase — "The first
-     open- / source," is not a thing anyone wrote. Never split them, at any
-     width; the 38px floor above is what keeps that promise affordable on a
-     320px screen. */
   .hero h1 .nb { white-space: nowrap; }
-  /* Once there is room for the longest line, take the wrapping decision away
-     from the browser: one clause per line. Below that the spans stay inline
-     and wrap naturally, because a fixed break would overflow a phone. */
   @media (min-width: 700px) {
     .hero h1 .l { display: block; }
   }
@@ -109,9 +87,6 @@
     font-weight: 600; text-decoration: none; transition: transform 0.08s, background 0.15s, border-color 0.15s;
   }
   .btn:active { transform: translateY(1px); }
-  /* A second line inside the primary CTA: "no account needed" is the single
-     most persuasive thing the button can say, and it belongs on the button
-     rather than in fine print somewhere below it. */
   .btn__sub {
     display: block;
     font-size: 12px;
@@ -126,7 +101,6 @@
   .btn-line:hover { border-color: var(--spray); }
   .hero .fine { margin-top: 18px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
 
-  /* staggered surfacing */
   @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
   .hero > .wrap > * { animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
   .hero > .wrap > *:nth-child(2) { animation-delay: 0.1s; }
@@ -134,7 +108,6 @@
   .hero > .wrap > *:nth-child(4) { animation-delay: 0.32s; }
   .hero > .wrap > *:nth-child(5) { animation-delay: 0.42s; }
 
-  /* drifting waves at the hero's waterline */
   .waves { position: absolute; left: 0; right: 0; bottom: 0; height: 90px; overflow: hidden; opacity: 0.55; }
   .wave { position: absolute; left: 0; bottom: 0; width: 200%; height: 100%; background-repeat: repeat-x; background-size: 50% 100%; }
   .w1 { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 90' preserveAspectRatio='none'%3E%3Cpath d='M0,55 C200,25 400,85 600,55 C800,25 1000,85 1200,55 L1200,90 L0,90 Z' fill='%23103e58'/%3E%3C/svg%3E");
@@ -146,21 +119,11 @@
     .wave, .hero > .wrap > * { animation: none !important; }
   }
 
-
-  /* Comparison table. Tools are COLUMNS and properties are ROWS, which is the
-     shape people expect and which lets a reader scan one property across every
-     tool in a single line. */
-  /* Opaque, so the sticky first column below has something solid to sit on —
-     a translucent panel over the page gradient can't be matched by a fixed
-     colour. */
   .cmp-wrap { margin-top: 34px; overflow-x: auto; border: 1px solid var(--line);
     border-radius: 14px; background: #051d2c; }
   .cmp { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 14px; }
   .cmp th, .cmp td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
   .cmp thead th { color: var(--foam); font-weight: 600; font-size: 13px; background: rgba(4, 22, 35, 0.5); }
-  /* The property column stays put while the tools scroll past it. Transposed,
-     the row label is the only thing that tells you what a "Yes" is answering,
-     and on a phone it would otherwise be the first thing off-screen. */
   .cmp tbody th, .cmp thead th:first-child {
     position: sticky; left: 0; z-index: 1;
     background: #051d2c;
@@ -168,30 +131,22 @@
   }
   .cmp tbody th { color: var(--mist); font-weight: 600; }
   .cmp tbody tr:last-child th, .cmp tbody tr:last-child td { border-bottom: none; }
-  /* Our own column is marked, not hidden: a comparison that pretends to be
-     neutral while being written by one of the entrants fools nobody. */
   .cmp tr > *:nth-child(2) { background: rgba(103, 226, 212, 0.06); }
   .cmp thead th:nth-child(2)::after { content: " (us)"; color: var(--faint); font-weight: 400; }
   .cmp--good { color: var(--spray); }
   .cmp--warn { color: var(--buoy); }
-  /* A negative reads as a negative. Grey said "unremarkable" about the one
-     fact this whole page exists to make remarkable. */
   .cmp--bad { color: var(--reef); }
-  /* The corner cell reads as empty but must not BE empty: a screen reader
-     announcing the row headers needs something to call this column. */
   .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .cmp__note { margin-top: 18px; font-size: 13.5px; color: var(--faint); max-width: 68ch; }
   .cmp__note a { color: var(--mist); }
   @media (max-width: 640px) { .cmp { min-width: 860px; font-size: 13px; } }
 
-  /* ── Sections ─────────────────────────────────────────────────────── */
   section { padding: 96px 0; position: relative; }
   .eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--spray); }
   h2 { font-family: var(--serif); font-size: clamp(28px, 4vw, 40px); font-weight: 560; color: var(--foam);
     letter-spacing: -0.015em; margin: 10px 0 14px; max-width: 24ch; }
   .lede { max-width: 58ch; }
 
-  /* ── The decrypt table — hover to read ─────────────────────────────── */
   .vault { margin-top: 44px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
     background: rgba(4, 22, 35, 0.6); }
   .vault-head { display: grid; grid-template-columns: 1fr 1fr; font-family: var(--mono); font-size: 12px;
@@ -211,30 +166,17 @@
   .row:hover { background: rgba(103, 226, 212, 0.04); }
   .vault-cap { font-size: 13.5px; color: var(--faint); padding: 14px 18px; border-top: 1px solid var(--line); }
   .vault-cap b { color: var(--mist); font-weight: 600; }
-  @media (hover: none) { /* touch: show plaintext, the metaphor still reads */
-    .row .cell.plain .txt { opacity: 1 !important; filter: none !important; }
+  @media (hover: none) {    .row .cell.plain .txt { opacity: 1 !important; filter: none !important; }
     .row .cell.plain .hid { opacity: 0; }
   }
-  /* Copy that only makes sense in one layout. Zero JavaScript on this page, so
-     the swap is CSS: the wide sentence talks about left and right columns and
-     hovering, neither of which exists on a phone. */
   .only-narrow { display: none; }
   @media (max-width: 640px) {
-    /* The comparison IS the section. Hiding the ciphertext column — which is
-       what a one-column collapse used to do — left a panel headed "your
-       device: decrypted" with three plain rows and nothing to compare them
-       against. So stack instead: each row becomes the ciphertext followed by
-       the same row decrypted, and the pair carries its own labels now that the
-       column headings are gone. */
     .vault-head { display: none; }
     .row { grid-template-columns: 1fr; padding: 4px 0; }
     .cell { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
     .cell.cipher, .cell.plain { padding: 6px 18px; }
     .cell.cipher { font-size: 12px; }
     .cell.plain { border-left: none; }
-    /* The label rides on the cell so the pairing survives without a heading
-       row, and the indent makes "decrypted" read as derived from the line
-       above it rather than as a separate item. */
     .cell::before {
       display: block;
       font-size: 10.5px;
@@ -246,14 +188,11 @@
     .cell.cipher::before { content: "server sees"; }
     .cell.plain::before { content: "you see"; color: var(--spray); }
     .cell.plain { margin-left: 14px; border-left: 1px solid var(--line); }
-    /* Absolutely positioned over a fixed-height cell in the two-column layout;
-       here the cell grows, so the dots would sit on top of the text. */
     .cell.plain .hid { display: none; }
     .only-wide { display: none; }
     .only-narrow { display: inline; }
   }
 
-  /* ── Feature soundings ─────────────────────────────────────────────── */
   .soundings { margin-top: 44px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
   .sound { border: 1px solid var(--line); border-radius: 14px; padding: 26px 24px;
     background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent);
@@ -265,7 +204,6 @@
   .sound code { font-family: var(--mono); font-size: 12.5px; color: var(--spray); background: rgba(103,226,212,0.08);
     padding: 1px 6px; border-radius: 5px; }
 
-  /* ── Pricing — the deep ────────────────────────────────────────────── */
   .fares { margin-top: 44px; display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); max-width: 760px; }
   .fare { border: 1px solid var(--line); border-radius: 16px; padding: 30px 28px; background: rgba(3, 16, 28, 0.7); }
   .fare.hosted { border-color: rgba(255, 158, 87, 0.4); position: relative; }
@@ -280,7 +218,6 @@
   .fare li::before { content: "~"; position: absolute; left: 2px; color: var(--spray); font-family: var(--mono); }
   .fare .btn { width: 100%; text-align: center; }
 
-  /* ── Footer — the seafloor ─────────────────────────────────────────── */
   footer { border-top: 1px solid var(--line); padding: 40px 0 48px; background: var(--abyss); position: relative; }
   .foot { display: flex; gap: 20px; flex-wrap: wrap; justify-content: space-between; align-items: baseline; }
   footer a { color: var(--mist); }
@@ -298,21 +235,16 @@
     <a href="#charts">How it works</a>
     <a href="#compare">Compare</a>
     <a href="#fares">Pricing</a>
-    <a href="https://github.com/Amelia-Mowers/secure-collab-app">GitHub</a>
+    <a href="https://github.com/Amelia-Mowers/tidework">GitHub</a>
     <a href="https://app.tidework.io/demo">Demo</a>
     <a class="go" href="https://app.tidework.io">Open app</a>
   </div>
 </header>
 
 <main>
-  <!-- 0 m ─ the surface -->
   <div class="hero">
     <div class="wrap">
       <span class="tick">0 m · the surface</span>
-      <!-- Three deliberate lines. Left to wrap on its own the headline broke
-           mid-hyphen — "end-" / "to-end" — and split the claim across lines
-           that don't match its clauses. The spans go back to flowing inline on
-           narrow screens, where forced line lengths would overflow instead. -->
       <h1>
         <span class="l">The first <span class="nb">open-source,</span></span>
         <span class="l cant"><span class="nb">end-to-end</span> encrypted</span>
@@ -325,23 +257,18 @@
         <strong>Your server stores ciphertext. So do we.</strong>
       </p>
       <div class="cta">
-        <!-- The demo leads. Asking a stranger to create an account, accept
-             terms and save an unrecoverable recovery key BEFORE they have seen
-             a single table is a lot to ask of someone who does not yet know
-             what this is. -->
         <a class="btn btn-buoy" href="https://app.tidework.io/demo">
           Try the demo
           <span class="btn__sub">no account needed</span>
         </a>
         <a class="btn btn-line" href="https://app.tidework.io">Open TideWork</a>
-        <a class="btn btn-line" href="https://github.com/Amelia-Mowers/secure-collab-app">Read the source</a>
+        <a class="btn btn-line" href="https://github.com/Amelia-Mowers/tidework">Read the source</a>
       </div>
       <p class="fine">open source · federated · no telemetry — and this page runs zero JavaScript</p>
     </div>
     <div class="waves" aria-hidden="true"><div class="wave w1"></div><div class="wave w2"></div></div>
   </div>
 
-  <!-- −40 m ─ the proof -->
   <section id="vault">
     <div class="wrap">
       <span class="depth" aria-hidden="true"></span>
@@ -379,10 +306,18 @@
         Verified in the open: encryption, key backup, and device verification are
         <b>tested end-to-end in CI on every change</b> — against a real homeserver, in real browsers.
       </div></div>
+      <p class="lede" style="margin-top:1.25rem; font-size:var(--size-sm); color:var(--mist);">
+        <b>What that isn't:</b> TideWork has had <b>no third-party security audit</b>.
+        Continuously verified cryptography is not the same thing as an
+        independent review, and we won't imply otherwise — CI proves the
+        guarantees hold as the code changes; it cannot tell you the design was
+        right to begin with. An external audit is what the hosted revenue is
+        for, and we'll publish the report and the findings, including the
+        unflattering ones.
+      </p>
     </div>
   </section>
 
-  <!-- −200 m ─ the charts -->
   <section id="charts">
     <div class="wrap">
       <span class="tick">−200 m · the charts</span>
@@ -391,8 +326,9 @@
         <div class="sound">
           <span class="no">SOUNDING 01</span>
           <h3>Everything is a table</h3>
-          <p>Rows, schema, even view configurations — one cell format,
-          <code>io.tidework.cell.update</code>, one merge rule, one code path.
+          <p>Rows, schema, even view configurations — one cell format, one merge
+          rule, one code path: <code>io.tidework.cell.update</code>, and
+          <code>io.tidework.cell.batch</code> when many cells change at once.
           Kanban and documents are just projections of the same encrypted cells.</p>
         </div>
         <div class="sound">
@@ -413,7 +349,6 @@
     </div>
   </section>
 
-  <!-- −600 m ─ the fleet -->
   <section id="compare">
     <div class="wrap">
       <span class="tick">−600 m · the fleet</span>
@@ -506,7 +441,6 @@
     </div>
   </section>
 
-  <!-- −1000 m ─ the fares -->
   <section id="fares">
     <div class="wrap">
       <span class="tick">−1000 m · the fares</span>
@@ -533,16 +467,28 @@
             <li>The same app, pointed at your homeserver</li>
             <li>Full data &amp; identity sovereignty</li>
             <li>Apache-2.0 licensed, auditable</li>
-            <li>Deploy configs included in the repo</li>
+            <li>Our production deploy is in <code>infra/</code> — a worked
+              example, not yet a parameterised, supported path</li>
           </ul>
-          <a class="btn btn-line" href="https://github.com/Amelia-Mowers/secure-collab-app">Run your own</a>
+          <a class="btn btn-line" href="https://github.com/Amelia-Mowers/tidework">Run your own</a>
         </div>
+      </div>
+
+      <div class="cmp__note" style="margin-top:2.5rem;">
+        <b>Who's behind this.</b> TideWork is built and run by one person —
+        Amelia Mowers, trading as an individual, not a company. That is the
+        honest bus factor for a service holding your data, so here is what it
+        means concretely: your keys are already yours and never reach the
+        server, every workspace exports to plain CSV from the app or the CLI at
+        any time, and the whole thing is Apache-2.0 and runs against any Matrix
+        homeserver. If I stopped tomorrow you would keep your data, your
+        identity and the software — which is the point of building it this way,
+        rather than a promise you would have to take on trust.
       </div>
     </div>
   </section>
 </main>
 
-<!-- the seafloor -->
 <footer>
   <div class="wrap">
     <div class="foot">
@@ -555,7 +501,7 @@
         <a href="/terms">Terms</a> ·
         <a href="/privacy">Privacy</a> ·
         <a href="mailto:tideworksupport@proton.me">Support</a> ·
-        <a href="https://github.com/Amelia-Mowers/secure-collab-app">GitHub</a> ·
+        <a href="https://github.com/Amelia-Mowers/tidework">GitHub</a> ·
         <a href="https://matrix.org">Built on Matrix</a>
       </span>
     </div>
