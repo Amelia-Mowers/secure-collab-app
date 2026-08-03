@@ -573,3 +573,38 @@ jobs:
           check site https://tidework.io/version.json || failed=1
           check app https://app.tidework.io/version.json || failed=1
           exit $failed
+
+      # A purge costs nothing and closes a gap nothing else covers: a PoP that
+      # still holds an HTML copy from before a fix. Cloudflare Pages invalidates
+      # its OWN assets on deploy, but a zone-level cached HTML response — which
+      # is what an edge-injected analytics beacon lives in — is not that.
+      #
+      # Skipped, loudly, when the token is absent: this needs Zone.Cache Purge,
+      # which the DNS token does not carry. A silent skip would be worse than no
+      # step at all, since it would read as "purged".
+      - name: Purge the Cloudflare cache
+        env:
+          PURGE_TOKEN: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
+          ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          if [ -z "$PURGE_TOKEN" ]; then
+            echo "::warning::CLOUDFLARE_PURGE_TOKEN is not set — cache NOT purged. Create a token with Zone.Cache Purge on the tidework.io zone and add it as that secret."
+            exit 0
+          fi
+          resp=$(curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/purge_cache" \
+            -H "Authorization: Bearer $PURGE_TOKEN" -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}')
+          if echo "$resp" | jq -e '.success == true' >/dev/null 2>&1; then
+            echo "  cache purged"
+          else
+            echo "::error::cache purge failed: $resp"
+            exit 1
+          fi
+
+      # The bytes a browser actually receives are the only place an edge-injected
+      # script exists. It is in no repository, no `dist/`, and no test fixture, so
+      # nothing else in this pipeline can see it — and on a product whose whole
+      # claim is that the client is the trust boundary, a third-party script on
+      # the app origin can read decrypted cells out of the DOM.
+      - name: Audit the live pages for injected scripts
+        run: python3 scripts/check-live-scripts.py --verbose
