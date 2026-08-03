@@ -2,8 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-22
-- **Context refs:** `ARCHITECTURE_REVIEW.md` §4.1 (HLC fix — the clock layer
-  below this), backlog issue `399d63e1`, the interim offline guard (#2,
+- **Context refs:** the HLC fix (the clock layer below this), backlog issue `399d63e1`, the interim offline guard (#2,
   `OfflineOverlay`), incremental cold start (issue `6f092cf4`,
   `snapshotStore`), at-rest encryption (issue `c72ec5df`).
 

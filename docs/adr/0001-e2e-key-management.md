@@ -7,7 +7,7 @@
   *own-device* history access (the verify gate), not policing other users'
   devices (see Phase D).
 - **Date:** 2026-06-07 (status updated 2026-06-09)
-- **Context refs:** `ARCHITECTURE_REVIEW.md` §4.2, `TODO.md` P0 §4.2
+- **Context refs:** `TODO.md` P0 §4.2
 
 ## Context
 

@@ -40,5 +40,5 @@ git history. To file or update work, prefer the workspace over editing markdown.
 ## Conventions
 
 - Ship work as small PRs; merge when CI is green.
-- Architecture rationale: `ARCHITECTURE_REVIEW.md` + `docs/adr/`. Status
+- Architecture rationale: `docs/adr/`. Status
   snapshot: `STATUS.md`.
