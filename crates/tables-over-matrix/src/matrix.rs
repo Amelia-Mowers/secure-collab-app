@@ -28,6 +28,30 @@ mod matrix_impl {
     use serde::{Deserialize, Serialize};
     use tracing::{debug, info};
 
+    /// Events per /messages round-trip.
+    ///
+    /// Large on purpose: a round-trip costs far more than the events in it.
+    /// The coverage stop below is page-granular, so smaller pages would let a
+    /// walk stop after fewer EVENTS — but only by paying for more round-trips,
+    /// which trades a cheap saving for an expensive one. Under this size a room
+    /// is a single request and there is nothing left to save.
+    pub const DEFAULT_PAGE_LIMIT: u32 = 1000;
+
+    /// Events per round-trip when resuming from a snapshot.
+    ///
+    /// Deliberately much smaller than [`DEFAULT_PAGE_LIMIT`], because the two
+    /// walks want opposite things. A cold start reads a whole room and wants as
+    /// few round-trips as possible. An incremental start expects a handful of
+    /// new events and stops at the first page that trails the marker — so a
+    /// 1000-event page means fetching and DECRYPTING a thousand events to pick
+    /// up five, on every load, growing with the room rather than with what
+    /// changed.
+    ///
+    /// Measured: seeding through the CLI cost ~1.5s per single-cell edit, and
+    /// the walk stats showed every one of those loads pulling a full
+    /// 1000-event page to reach "stopped: reached marker".
+    pub const INCREMENTAL_PAGE_LIMIT: u32 = 100;
+
     /// Default client encryption settings (ADR 0001 / review §4.2): auto-enable
     /// cross-signing and key backup, and download backup keys on startup so a
     /// new device can decrypt and materialize encrypted workspace history.
@@ -611,6 +635,21 @@ mod matrix_impl {
                 .as_u64()
         }
 
+        /// Best-effort read of a raw event's `event_id`.
+        ///
+        /// Undecryptable events are remembered BY ID rather than merely counted,
+        /// so the client can re-fetch exactly those events once the missing room
+        /// key arrives and clear the warning. A count can only ever go up.
+        pub fn extract_event_id(event_json: &str) -> Option<String> {
+            Some(
+                serde_json::from_str::<serde_json::Value>(event_json)
+                    .ok()?
+                    .get("event_id")?
+                    .as_str()?
+                    .to_string(),
+            )
+        }
+
         /// Parse a raw Matrix event JSON into a single `CellUpdate`, if it is a
         /// single `io.tidework.cell.update` event. (Batch events return `None`;
         /// use [`extract_cell_updates`] for the read path.) Retained for callers
@@ -1169,7 +1208,60 @@ mod matrix_impl {
             &self,
             marker_ts: u64,
         ) -> Result<(Vec<CellUpdate>, u64)> {
+            let (u, ts, _) = self.load_room_cell_updates_bounded(marker_ts, true).await?;
+            Ok((u, ts))
+        }
+
+        /// The walk, with the two ways it is allowed to stop early.
+        ///
+        /// `stop_when_covered` is the one order-based compaction exists for.
+        /// Every write refreshes several stale cells, so the newest slice of the
+        /// timeline contains a current value for EVERY live cell — walking past
+        /// it only re-reads values that have since been superseded. Until now
+        /// nothing acted on that: the bumps were written on every edit and the
+        /// walk still ran to the beginning of the room, so compaction was pure
+        /// write-side cost with no read benefit.
+        ///
+        /// The stop rule is "a whole page contributed no cell we had not already
+        /// seen". A page rather than an event, because events within a page are
+        /// not strictly ordered; and cells rather than a count, because the
+        /// question is coverage, not distance.
+        ///
+        /// Pass `false` where the walk must be exhaustive regardless — the
+        /// integrity check compares a FULL re-gather against local state, so
+        /// letting it stop early would make it agree with itself by
+        /// construction.
+        pub async fn load_room_cell_updates_bounded(
+            &self,
+            marker_ts: u64,
+            stop_when_covered: bool,
+        ) -> Result<(Vec<CellUpdate>, u64, crate::WalkStats)> {
+            // Resuming (marker_ts > 0) is a different problem from a cold
+            // start, and takes a different page size — see the constants.
+            let page = if marker_ts > 0 {
+                INCREMENTAL_PAGE_LIMIT
+            } else {
+                DEFAULT_PAGE_LIMIT
+            };
+            self.load_room_cell_updates_paged(marker_ts, stop_when_covered, page)
+                .await
+        }
+
+        /// As above, with the page size exposed.
+        ///
+        /// Production always uses [`DEFAULT_PAGE_LIMIT`]. This exists because
+        /// the coverage stop is page-granular, so exercising it otherwise needs
+        /// a room of thousands of events — the rule and the room size are
+        /// independent, and only the rule needs a test.
+        #[doc(hidden)]
+        pub async fn load_room_cell_updates_paged(
+            &self,
+            marker_ts: u64,
+            stop_when_covered: bool,
+            page_limit: u32,
+        ) -> Result<(Vec<CellUpdate>, u64, crate::WalkStats)> {
             use matrix_sdk::room::MessagesOptions;
+            use std::collections::HashSet;
 
             let room = self.get_room()?;
             // Cold-start key restore: a freshly recovered device has backup
@@ -1192,21 +1284,46 @@ mod matrix_impl {
             let mut updates = Vec::new();
             let mut newest_ts: u64 = marker_ts;
             let mut from_token: Option<String> = None;
+            let mut seen_cells: HashSet<(String, String, String)> = HashSet::new();
+            // Observability, not decoration: every claim about what the bounded
+            // walk saves has so far been INFERRED from wall-clock. These counters
+            // make the walk say what it actually did.
+            let mut pages = 0usize;
+            let mut events = 0usize;
+            // Every exit from the loop below is a `break` that names itself, so
+            // this needs no placeholder value.
+            let stop_reason: &'static str;
+            let mut last_page_new = 0usize;
+            let mut undecryptable = 0usize;
+            let mut last_page_sample: Vec<String> = Vec::new();
             loop {
                 let mut options = MessagesOptions::backward();
                 if let Some(ref token) = from_token {
                     options = options.from(token.as_str());
                 }
-                options.limit = UInt::from(1000u32);
+                options.limit = UInt::from(page_limit);
 
                 let response = room
                     .messages(options)
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to fetch room history: {e}"))?;
                 if response.chunk.is_empty() {
+                    stop_reason = "empty page";
                     break;
                 }
+                pages += 1;
+                events += response.chunk.len();
                 let mut page_oldest: Option<u64> = None;
+                let mut page_new_cells = 0usize;
+                // Which cells this page contributed that nothing newer had. On
+                // the FINAL page these are the cells nothing ever refreshed —
+                // the ones pinning the walk to the start of the room. Naming
+                // them is the difference between fixing the cause and guessing
+                // at a plausible one, which has cost this feature two wrong
+                // suspects already.
+                let mut page_first_seen: Vec<String> = Vec::new();
+                // A page we could not READ is not a page that told us nothing.
+                let mut page_undecryptable = 0usize;
                 for ev in &response.chunk {
                     let ts: u64 = ev
                         .raw()
@@ -1225,11 +1342,35 @@ mod matrix_impl {
                     // skipping by timestamp here would drop events whose stream
                     // order disagrees with their origin_server_ts.
                     if let Ok(json_str) = serde_json::to_string(ev.raw().json()) {
+                        if Self::is_undecryptable_event(&json_str) {
+                            page_undecryptable += 1;
+                            undecryptable += 1;
+                        }
                         for received in Self::extract_cell_updates(&json_str) {
-                            updates.push(received.into_update());
+                            let u = received.into_update();
+                            // Walking backwards, the FIRST time a cell is seen
+                            // is its newest value; anything older is superseded
+                            // by LWW anyway.
+                            if seen_cells.insert((
+                                u.table_id.clone(),
+                                u.row_id.clone(),
+                                u.column_id.clone(),
+                            )) {
+                                page_new_cells += 1;
+                                if page_first_seen.len() < 8 {
+                                    page_first_seen.push(format!(
+                                        "{}/{}/{}",
+                                        u.table_id, u.row_id, u.column_id
+                                    ));
+                                }
+                            }
+                            updates.push(u);
                         }
                     }
                 }
+                last_page_new = page_new_cells;
+                last_page_sample = std::mem::take(&mut page_first_seen);
+
                 // Stop only once a whole page trails the marker by more than the
                 // reorder grace. The naive rule — stop at the first event older
                 // than the marker — assumes stream order and origin_server_ts
@@ -1238,14 +1379,53 @@ mod matrix_impl {
                 // 2026-07-25, because the running marker had already advanced
                 // past them so no later run would ever fetch them.
                 if crate::backfill_caught_up(marker_ts > 0, page_oldest, marker_ts) {
+                    stop_reason = "reached marker";
+                    break;
+                }
+                // Coverage stop: this page told us nothing new, so compaction
+                // has already put a current value for every live cell in the
+                // slice we have walked. Requires having seen something at all,
+                // so an empty first page cannot end the walk immediately.
+                // The undecryptable guard is the difference between "compaction
+                // already covered everything" and "we could not read this page".
+                // Both look like zero new cells; only the first means we are done.
+                if stop_when_covered
+                    && page_new_cells == 0
+                    && page_undecryptable == 0
+                    && !seen_cells.is_empty()
+                {
+                    stop_reason = "covered";
                     break;
                 }
                 match response.end {
                     Some(token) => from_token = Some(token),
-                    None => break,
+                    None => {
+                        stop_reason = "start of room";
+                        break;
+                    }
                 }
             }
-            Ok((updates, newest_ts))
+            info!(
+                "history walk: {events} events over {pages} page(s), {} distinct cells, stopped: {stop_reason}",
+                seen_cells.len()
+            );
+            if last_page_new > 0 {
+                info!(
+                    "  last page still had {last_page_new} unseen cells, e.g. {}",
+                    last_page_sample.join(", ")
+                );
+            }
+            Ok((
+                updates,
+                newest_ts,
+                crate::WalkStats {
+                    events,
+                    pages,
+                    cells: seen_cells.len(),
+                    stopped: stop_reason,
+                    undecryptable,
+                },
+            ))
         }
     }
 

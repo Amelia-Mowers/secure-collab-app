@@ -100,9 +100,10 @@ snapshot**.
 
 Two things keep that from being worse than it sounds:
 
-- **It is bounded by cell count, not edit history.** Every write bumps the
-  stalest cell, so the backward walk stops once the table is filled. A workspace
-  does not get slower as it ages.
+- **It is bounded by cell count, not edit history** — but only since
+  2026-08-02. Every write bumps the stalest cells, and the walk now stops once
+  a page adds no cell it has not already seen. Before that the bumps were
+  written and nothing ever acted on them, so compaction was pure write cost.
 - **Both fixes are known and filed.** Batched compaction bumps (`74931dfa`) cut
   the walk ~100× by refreshing many cells per event; native incremental load
   (`3ddb4e74`) skips the walk entirely for a device that has a snapshot. They
@@ -140,6 +141,60 @@ Both are why the trigger is now stateless: every write refreshes up to 16 stale
 cells. Same total write cost as any batching scheme with the same refresh rate,
 but it fires everywhere and raises the quantity that actually governs walk
 length.
+
+### What was actually wrong (2026-08-02)
+
+The table above was arithmetic from measured constants, and two of its premises
+were false. Both were found by making the walk report what it did
+(`TIDEWORK_WALK_STATS=1`) rather than inferring from wall-clock.
+
+**Nothing stopped the walk.** The bumps existed; no code used them. Every cold
+start read to the beginning of the room regardless of how well the room was
+compacted.
+
+**And bumps could not cover the workspace anyway.** They were selected only from
+the table being written. `_schema`/`_views`/`_tables` are never written by
+ordinary editing, so those cells stayed pinned at the room's start forever —
+and one unreachable cell forces a full walk no matter what the data tables do.
+Measured on a 100-row workspace of ~1961 events: the newest 1000 events covered
+all 438 `tasks` cells and **none** of the 109 system cells.
+
+That is why every "after compaction" figure here was unobservable rather than
+merely optimistic — including the ~41 s, which no measurement ever supported.
+Treat the row as a projection, not a result, until a 10k corpus is walked.
+
+**Warm loads over-fetched too.** Resuming pulled a full 1000-event page to pick
+up a handful of new events, so incremental cost scaled with room size instead
+of with what changed: ~1.5 s per single-cell CLI edit. At a 100-event
+incremental page the same seeding runs at ~0.5 s per edit.
+
+### What the bound is worth (measured 2026-08-02)
+
+A 100-row workspace (547 cells) hand-edited to 3,312 events, walked by one
+binary against one room, `--cold` both times:
+
+| | events read | pages | cold start |
+|---|---:|---:|---|
+| bounded (`stopped: covered`) | 2,000 | 2 | 8393 / 8498 / 8301 ms |
+| unbounded (`TIDEWORK_UNBOUNDED_WALK=1`) | 3,312 | 4 | 14234 / 14869 / 14148 ms |
+
+**41% faster, 40% fewer events** — but the ratio is the least interesting part
+of it. The bounded walk read 2,000 events because that is what covering 547
+cells takes at this page size; it would read the same 2,000 from a room ten
+times longer. The unbounded one reads the room. So the gap widens with age
+rather than holding proportional, which is the property that makes a workspace
+not get slower as it is used.
+
+Two smaller rooms measured on the way, worth keeping because they explain why
+earlier attempts looked like nothing was happening:
+
+- **412 events** — one page. Nothing to save; the walk ends by running out of
+  room, not by detecting coverage. Correct, and indistinguishable from broken.
+- **1,712 events** — exactly two pages. The bound saved one empty round-trip
+  and zero events.
+
+Below ~2 pages the stop cannot pay, because a round-trip is the floor. Any
+benchmark at that size measures page granularity, not compaction.
 
 ### The remaining shape
 

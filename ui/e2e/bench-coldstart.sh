@@ -63,6 +63,10 @@ timed() {
 echo "instrument=cli  homeserver=$HS  cli=$CLI"
 echo
 
+# Rows of the summary table, accumulated as we go so a run that dies partway
+# still reports what it managed to measure.
+SUMMARY=()
+
 for rows in "${SIZES[@]}"; do
   ws="bench-$rows"
   echo "=== $rows rows ==="
@@ -87,15 +91,95 @@ for rows in "${SIZES[@]}"; do
   done
   echo "  seed: ${seed_ms}ms across $(ls -d "$CORPUS/$rows"/chunk-* | wc -l) chunks"
 
-  # ── Measure. A fresh state dir per sample, so every one is genuinely cold.
+  # ── Hand-edit the room into a realistic SHAPE.
+  #
+  # Import alone is not a workspace anyone has: it packs ~250 cells per event,
+  # so a 10k-row corpus lands as a few hundred events and every cold start is
+  # trivially fast. Real rooms are mostly single-cell edits, one event each,
+  # and that is what the walk pays for.
+  #
+  # How many: compaction refreshes BUMP_CELLS_PER_WRITE (16) stale cells per
+  # write, so covering the workspace takes ~cells/16 events. Seeding twice that
+  # puts the room past the point where coverage is reachable, which is the only
+  # regime where cold start is bounded rather than proportional to history.
+  # Below it the numbers describe page granularity, not compaction.
+  cells=$(( rows * 7 ))
+  # Two things have to be true before a cold start can be bounded, and they are
+  # different requirements:
+  #
+  #   1. COVERAGE. Bumps per write is a MEASURED 16 (`seed-edits` reports it),
+  #      so refreshing every cell takes ~cells/16 events. Seed twice that, so
+  #      the room is past the point where coverage is reachable rather than
+  #      sitting exactly on it.
+  #   2. ROOM ENOUGH TO STOP IN. The stop is page-granular at 1000 events per
+  #      page, and it needs one page that contributes nothing new AFTER a page
+  #      that did. Under ~2 pages there is no such page and "empty page" is the
+  #      correct, uninteresting answer.
+  #
+  # An earlier version seeded cells/4 on the theory that a 10k room reading its
+  # whole history was sitting too near the coverage boundary. The interval test
+  # disproved it — the same room stops on "covered" at t+0 — so the extra cycle
+  # bought nothing but seeding time, and it is gone.
+  want=$(( cells / 8 ))
+  [ "$want" -lt 3000 ] && want=3000
+  # Seeded through `tidework seed-edits`, which writes one event per edit — the
+  # same events interactive editing produces — without repeating the
+  # restore/sync/load cycle around each one. Driving `row set` per edit costs
+  # a full snapshot rehydration every time (~0.14 ms per cell, so ~10 s per edit
+  # at 10k rows) and simply cannot reach a realistic room; measured, the bulk
+  # path is ~0.057 s per edit against ~0.5 s.
+  #
+  # The cap is now a guard against a runaway run, not a hard limit of the
+  # method. When it binds, the room holds fewer events than coverage needs, the
+  # walk cannot be bounded, and the cold number is proportional to history
+  # rather than to the workspace — reported rather than hidden, since a silently
+  # truncated run reads as "10k rows costs this" when what was measured is a
+  # 10k-row room nobody had used.
+  max="${BENCH_MAX_EDITS:-20000}"
+  edits="${BENCH_EDITS:-$want}"
+  if [ "$edits" -gt "$max" ]; then
+    edits="$max"
+    echo "  NOTE: capped at $max edits (wanted $want). This room will hold fewer"
+    echo "        events than coverage needs, so expect an unbounded walk."
+  fi
+  echo "  editing: $edits single-cell writes (~${cells} cells, coverage needs ~$(( cells / 16 )))"
+  edit_start=$(date +%s)
+  "$CLI" seed-edits "$ws" "$TABLE" "$edits" >/dev/null 2>&1     || { echo "  edit seeding failed" >&2; exit 1; }
+  echo "  edited in $(( $(date +%s) - edit_start ))s"
+
+  # No settle step. One was added here on the theory that reading a room
+  # straight after a burst of writes measures whatever the server is still
+  # finishing rather than the steady state — the 5k and 10k rooms had read their
+  # whole history when measured immediately and stopped on "covered" later. The
+  # interval test then measured a 1000-row room at t+0, t+30, t+60 … t+600 after
+  # a 3000-edit burst and got "covered" at EVERY point, including t+0. There is
+  # no time dependence to wait out, so waiting only made the sweep slower while
+  # implying a cause that had been ruled out.
+
+  # ── Measure. One state dir, one login; `--cold` makes each sample ignore
+  #    the saved snapshot and replay history in full.
+  #
+  #    The old shape wiped the dir and logged in again per sample. That is a
+  #    colder cold start than any real user has — it also discards the Matrix
+  #    store, so the run re-downloads keys and re-syncs room state, and those
+  #    costs are constant while the history walk is the part that grows with
+  #    the workspace. Isolating the walk is the whole point of the sweep, and
+  #    the wipe also meant cold and warm numbers came from different dirs.
+  d=$(fresh_dir "measure-$rows")
+  export TIDEWORK_DATA_DIR="$d"
+  "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
+  # Prime the store once, untimed, so no sample pays the first-run key
+  # download and room-state sync.
+  "$CLI" table show "$ws" "$TABLE" >/dev/null 2>&1
+  # What the walk DID, not just how long it took — a cold-start number without
+  # the event count cannot be told apart from a room that was simply small.
+  stats=$(TIDEWORK_WALK_STATS=1 "$CLI" --cold table show "$ws" "$TABLE" 2>&1 >/dev/null | grep "^walk:" | tail -1)
+  echo "  $stats"
+
   samples=()
-  for i in 1 2 3; do
-    d=$(fresh_dir "cold-$rows-$i")
-    export TIDEWORK_DATA_DIR="$d"
-    "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
-    ms=$(timed "$CLI" table show "$ws" "$TABLE") || { echo "  table show failed" >&2; exit 1; }
+  for _ in 1 2 3; do
+    ms=$(timed "$CLI" --cold table show "$ws" "$TABLE") || { echo "  table show failed" >&2; exit 1; }
     samples+=("$ms")
-    rm -rf "$d"
   done
 
   # Median of three: enough to reject one unlucky sample without pretending
@@ -103,18 +187,15 @@ for rows in "${SIZES[@]}"; do
   median=$(printf '%s\n' "${samples[@]}" | sort -n | sed -n 2p)
   echo "  cold start: ${samples[0]}ms ${samples[1]}ms ${samples[2]}ms  -> median ${median}ms"
 
-  # ── WARM start: the same command again in the SAME state dir, so the
-  #    snapshot written by the first run is reused and only events newer than
-  #    its marker are fetched. This is what a returning user experiences, and
-  #    it is the number worth quoting.
+  # ── WARM start: the same command, same dir, WITHOUT --cold — so the
+  #    snapshot the cold runs already wrote is reused and only events newer
+  #    than its marker are fetched. This is what a returning user experiences,
+  #    and it is the number worth quoting.
   #
-  #    Median of three warm runs, not one: the first run in a fresh dir also
-  #    WRITES the snapshot, so timing that would charge incremental load for
-  #    the work it saves rather than the work it costs.
-  d=$(fresh_dir "warm-$rows")
-  export TIDEWORK_DATA_DIR="$d"
-  "$CLI" login --homeserver "$HS" --user "$USER_NAME" >/dev/null 2>&1
-  cold_once=$(timed "$CLI" table show "$ws" "$TABLE")
+  #    Because both halves now run against one dir and one room, the saving
+  #    below is a real before/after rather than two measurements of two
+  #    different setups that happen to share a label.
+  cold_once="$median"
   warm=()
   for _ in 1 2 3; do
     warm+=("$(timed "$CLI" table show "$ws" "$TABLE")")
@@ -126,8 +207,31 @@ for rows in "${SIZES[@]}"; do
     saved=0
   fi
   echo "  warm start:  ${warm[0]}ms ${warm[1]}ms ${warm[2]}ms  -> median ${warm_med}ms  (${saved}% off ${cold_once}ms)"
+  # Field-split rather than capture groups. An earlier version used sed with
+  # backslash groups, lost the backslashes on the way into the file, and
+  # silently printed "?" for both columns — the two that distinguish a bounded
+  # walk from a room that was simply small, i.e. the point of the table.
+  walked=$(printf '%s' "$stats" | awk '{print $2}')
+  stopped=$(printf '%s' "$stats" | sed 's/.*stopped: //')
+  SUMMARY+=("$rows|$cells|${walked:-?}|${stopped:-?}|$median|$warm_med|$saved")
   rm -rf "$d"
   echo
 done
 
 unset TIDEWORK_DATA_DIR
+
+# ── The table. This is the deliverable; everything above is working.
+echo
+echo "| rows | cells | events walked | stop | cold | warm | warm saves |"
+echo "|-----:|------:|--------------:|------|-----:|-----:|-----------:|"
+for line in "${SUMMARY[@]}"; do
+  IFS='|' read -r r c w st cold warm saved <<<"$line"
+  printf "| %s | %s | %s | %s | %sms | %sms | %s%% |\n" "$r" "$c" "$w" "$st" "$cold" "$warm" "$saved"
+done
+echo
+echo "cold = no snapshot, full history walk (--cold). warm = resuming from the"
+echo "snapshot the cold runs wrote. Both against the same room and the same"
+echo "binary, so the saving is a before/after rather than two setups."
+echo "A stop of 'covered' means compaction bounded the walk; 'empty page' or"
+echo "'start of room' means it read the whole room — expected below ~2 pages,"
+echo "where one round-trip is the floor and there is nothing to save."

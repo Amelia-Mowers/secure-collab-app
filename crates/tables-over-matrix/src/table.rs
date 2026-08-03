@@ -286,6 +286,23 @@ impl Table {
         cutoffs: &HashMap<String, u64>,
         n: usize,
     ) -> Vec<CellId> {
+        self.get_stalest_bumpable_cells_with_age(cutoffs, n)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// The same selection, carrying each cell's age.
+    ///
+    /// Callers that bump across MORE than one table need the ages to merge the
+    /// per-table shortlists into one globally-stalest set — picking the top n
+    /// from each table and concatenating would refresh recently-touched cells
+    /// in a quiet table ahead of genuinely stale ones in a busy one.
+    pub fn get_stalest_bumpable_cells_with_age(
+        &self,
+        cutoffs: &HashMap<String, u64>,
+        n: usize,
+    ) -> Vec<(CellId, u64)> {
         if n == 0 {
             return Vec::new();
         }
@@ -308,7 +325,7 @@ impl Table {
         eligible
             .into_iter()
             .take(n)
-            .map(|((row_id, column_id), _)| CellId::new(&self.id, row_id, column_id))
+            .map(|((row_id, column_id), &ts)| (CellId::new(&self.id, row_id, column_id), ts))
             .collect()
     }
 

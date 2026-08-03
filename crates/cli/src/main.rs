@@ -28,12 +28,40 @@ mod session;
     version
 )]
 struct Cli {
+    /// Ignore any saved snapshot and replay the room's history in full.
+    ///
+    /// Measurement aid: cold and warm start differ only in whether the snapshot
+    /// is read, so this gives both numbers against the same room without
+    /// wiping the data directory — which would also discard the Matrix store
+    /// and turn the comparison into something else.
+    #[arg(long, global = true)]
+    cold: bool,
+
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Write many single-cell edits in one client cycle (benchmark seeding).
+    ///
+    /// Produces the same events interactive editing does — one per edit, each
+    /// carrying its compaction bumps — without repeating the restore/sync/load
+    /// cycle around every one. Seeding through `row set` cannot reach a
+    /// realistic room: each invocation rehydrates the whole snapshot, so a
+    /// 10k-row workspace costs seconds per edit.
+    #[command(hide = true)]
+    SeedEdits {
+        /// Workspace name or room id.
+        workspace: String,
+        /// Table name or id.
+        table: String,
+        /// How many edits to write.
+        count: usize,
+        /// Column to rewrite. Defaults to the first text column's usual name.
+        #[arg(long, default_value = "Title")]
+        column: String,
+    },
     /// Log in to a homeserver and persist the session. Uses password auth by
     /// default; pass `--sso` for OAuth/MAS browser sign-in (required by the
     /// production server, which has password login disabled).
@@ -382,6 +410,9 @@ fn real_main() -> i32 {
 
 async fn run() -> Result<()> {
     let cli = Cli::parse();
+    if cli.cold {
+        crud::COLD_START.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     match cli.command {
         Command::Login {
             homeserver,
@@ -492,6 +523,12 @@ async fn run() -> Result<()> {
             table,
             dry_run,
         } => crud::import(workspace, src, table, dry_run).await,
+        Command::SeedEdits {
+            workspace,
+            table,
+            count,
+            column,
+        } => crud::seed_edits(workspace, table, column, count).await,
     }
 }
 

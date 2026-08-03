@@ -63,6 +63,19 @@ async fn resolve_workspace(client: &MatrixClient, arg: &str) -> Result<String> {
     }
 }
 
+/// Ignore any persisted snapshot for this run, forcing a full history walk.
+///
+/// Set by `--cold`. It exists for measurement: cold and warm start differ only
+/// in whether a snapshot is read, and the alternative way to get a cold number
+/// — wiping the data directory — also throws away the Matrix store, so it
+/// re-downloads keys and re-syncs room state and stops being a comparison.
+/// Re-seeding a room to get one back is the expensive part.
+///
+/// Note what this does NOT simulate: a device that has never seen the room.
+/// The Matrix store is still warm, so this isolates the cost of the history
+/// walk, which is the part that grows with the workspace.
+pub static COLD_START: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Load a `Workspace`, resuming from a local snapshot when there is one.
 ///
 /// Every CLI invocation used to re-paginate the ENTIRE room and replay every
@@ -79,10 +92,16 @@ async fn load_workspace(client: &mut MatrixClient, room_id: &str) -> Result<Work
 
     let paths = session::Paths::resolve()?;
     let snapshot_path = paths.snapshot_file(room_id);
-    let snapshot = std::fs::read_to_string(&snapshot_path)
-        .ok()
-        .and_then(|raw| WorkspaceSnapshot::from_json(&raw).ok())
-        .filter(|snap| snap.is_fast_path_usable());
+    let cold = COLD_START.load(std::sync::atomic::Ordering::Relaxed)
+        || std::env::var("TIDEWORK_COLD_START").is_ok();
+    let snapshot = if cold {
+        None
+    } else {
+        std::fs::read_to_string(&snapshot_path)
+            .ok()
+            .and_then(|raw| WorkspaceSnapshot::from_json(&raw).ok())
+            .filter(|snap| snap.is_fast_path_usable())
+    };
 
     let mut ws = Workspace::new(room_id);
     let marker_ts = match &snapshot {
@@ -95,10 +114,52 @@ async fn load_workspace(client: &mut MatrixClient, room_id: &str) -> Result<Work
         None => 0,
     };
 
-    let (updates, newest_ts) = client
-        .load_room_cell_updates_since(marker_ts)
-        .await
-        .context("loading workspace history")?;
+    // TIDEWORK_UNBOUNDED_WALK exists so the coverage stop can be measured
+    // against itself on ONE room with ONE binary. Without it, "the bounded walk
+    // saves X" is a comparison between two builds and two seeded rooms, which is
+    // not a comparison at all.
+    let bounded = std::env::var("TIDEWORK_UNBOUNDED_WALK").is_err();
+
+    // Undecryptable history means the keys have not arrived yet, which is
+    // normal for a moment after a burst of writes: megolm sessions rotate and
+    // backup download is asynchronous. Materializing anyway would print a
+    // workspace with holes in it and no indication of which rows are missing —
+    // so wait for the keys instead, and fail rather than lie if they never
+    // come. A CLI can afford to be correct and delayed; it has no way to show
+    // the "still catching up" state a UI can.
+    let mut attempt = 0u32;
+    let (updates, newest_ts, stats) = loop {
+        let (u, ts, st) = client
+            .load_room_cell_updates_bounded(marker_ts, bounded)
+            .await
+            .context("loading workspace history")?;
+        if st.undecryptable == 0 || attempt >= 5 {
+            if st.undecryptable > 0 {
+                return Err(anyhow!(
+                    "{} events in this workspace could not be decrypted after {}                      attempts — the keys have not reached this device. Wait and                      retry; if it persists, the history may need recovering from                      backup.",
+                    st.undecryptable,
+                    attempt + 1
+                ));
+            }
+            break (u, ts, st);
+        }
+        // 1s, 2s, 4s, 8s, 16s — long enough to cover key delivery, short
+        // enough that an interactive command does not appear hung.
+        let wait = 1u64 << attempt;
+        eprintln!(
+            "{} events not yet decryptable; waiting {wait}s for keys",
+            st.undecryptable
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        let _ = client.sync_once().await;
+        attempt += 1;
+    };
+    if std::env::var("TIDEWORK_WALK_STATS").is_ok() {
+        eprintln!(
+            "walk: {} events, {} page(s), {} cells, stopped: {}",
+            stats.events, stats.pages, stats.cells, stats.stopped
+        );
+    }
     for update in updates {
         let _ = ws.apply_update(update);
     }
@@ -838,6 +899,105 @@ pub async fn row_set(
         .await
         .context("sending row update")?;
     println!("Updated row {row_id} in \"{}\"", schema.name);
+    Ok(())
+}
+
+/// Write `count` single-cell edits in ONE client cycle, for benchmark seeding.
+///
+/// The shape it produces is the shape the walk pays for: one Matrix event per
+/// edit, each carrying the user write plus its compaction bumps — the same
+/// events `row set` produces. What it does NOT repeat per edit is the client
+/// cycle around them: restore, sync, load the workspace, write the snapshot.
+///
+/// That cycle is the reason seeding through `row set` cannot reach a realistic
+/// room. Each invocation rehydrates the whole snapshot (~0.14 ms per cell), so
+/// a 10k-row workspace costs ~10 s per edit and the ~70k events such a
+/// workspace really accumulates would take about a day to lay down. Here the
+/// per-edit cost is the send alone.
+///
+/// It is deliberately NOT a general bulk-import path: values are throwaway and
+/// every edit hits the same column. Use `import` to load data.
+pub async fn seed_edits(
+    workspace: String,
+    table: String,
+    column: String,
+    count: usize,
+) -> Result<()> {
+    let mut client = restore_client().await?;
+    client.sync_once().await.context("initial sync")?;
+    let room_id = resolve_workspace(&client, &workspace).await?;
+    let mut ws = load_workspace(&mut client, &room_id).await?;
+
+    let table_id = resolve_table(&ws, &table)?;
+    let schema = ws
+        .get_table_schema(&table_id)
+        .ok_or_else(|| anyhow!("table {table_id} has no schema"))?;
+    let col_id = resolve_column(&schema, &column)?;
+
+    let rows: Vec<String> = ws
+        .get_table_rows(&table_id)
+        .map_err(|e| anyhow!("reading rows: {e}"))?
+        .iter()
+        .filter_map(|r| {
+            r.get("_row_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    if rows.is_empty() {
+        return Err(anyhow!(
+            "table {table_id} has no rows — seed data with `import` first"
+        ));
+    }
+
+    let started = std::time::Instant::now();
+    // Bumps actually emitted, counted rather than assumed. The nominal figure
+    // is BUMP_CELLS_PER_WRITE (16), but BUMP_BYTE_BUDGET can bind first, and
+    // the difference decides how many events coverage really takes — the
+    // quantity every cold-start projection rests on.
+    let mut total_bumps = 0usize;
+    for i in 0..count {
+        // Cycle the rows so edits spread across the table rather than piling
+        // onto one row, which would make every bump target the same cells.
+        let row_id = &rows[i % rows.len()];
+        let value = serde_json::json!(format!("seeded {i}"));
+        let updates = ws
+            .update_cell_with_bump(&table_id, row_id, &col_id, value)
+            .map_err(|e| anyhow!("writing cell: {e}"))?;
+        total_bumps += updates.len().saturating_sub(1);
+        // One event per edit, exactly as an interactive write produces.
+        client
+            .send_cell_batch(&updates)
+            .await
+            .context("sending seeded edit")?;
+        if (i + 1) % 250 == 0 {
+            eprintln!("  {}/{count} ({:?})", i + 1, started.elapsed());
+        }
+    }
+
+    // No snapshot written. load_workspace already persisted one on the way in,
+    // and its marker predates these writes — so the next load walks the events
+    // just sent, which is correct and is also exactly what a benchmark wants to
+    // measure. Writing a fresher one here would hide the history from the very
+    // runs that exist to read it.
+    println!(
+        "Wrote {count} edits to {table_id} in {:?}",
+        started.elapsed()
+    );
+    if count > 0 {
+        println!(
+            "Bumps per write: {:.2} (nominal {}); coverage of {} cells needs ~{} events",
+            total_bumps as f64 / count as f64,
+            16,
+            ws.export_cells().len(),
+            if total_bumps > 0 {
+                (ws.export_cells().len() as f64 / (total_bumps as f64 / count as f64)).ceil()
+                    as usize
+            } else {
+                0
+            }
+        );
+    }
     Ok(())
 }
 

@@ -129,6 +129,8 @@ export interface WorkspaceHandle {
   rejectedWrites?(): string
   isEncrypted?(): boolean
   undecryptableCount?(): number
+  /** Re-fetch the events that failed to decrypt; resolves to how many still do. */
+  retryUndecryptable?(): Promise<number>
   myRole?(): Promise<string>
   setUserRole?(userId: string, role: string): Promise<void>
   leaveWorkspace?(removeEveryone: boolean): Promise<void>
