@@ -36,7 +36,7 @@
 .demo-banner__cta {
   background: var(--accent);
   border: none;
-  color: #fff;
+  color: var(--accent-text);
   border-radius: 7px;
   padding: 6px 14px;
   font-size: 12.5px;

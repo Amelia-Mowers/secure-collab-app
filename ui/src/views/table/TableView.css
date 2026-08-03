@@ -231,7 +231,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cell-display--mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+.cell-display--mono { font-family: var(--font-mono); font-size: 12px; }
 .cell-display--bool { font-weight: 600; color: var(--green, #4ade80); }
 
 /* Computed (formula) cells. Deliberately quiet rather than decorated: the
@@ -243,7 +243,7 @@
    from an empty one, which is how a broken formula stays broken. */
 .cell-display--formula-error {
   color: var(--red, #f87171);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 .cell-editor--computed { padding: 4px 6px; }
@@ -263,7 +263,7 @@
   background: var(--red-muted, rgba(248, 113, 113, 0.14));
   color: var(--red, #f87171);
   text-decoration: line-through;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
 }
 
 .cell-display--tags { flex-wrap: wrap; }
@@ -286,7 +286,7 @@
 }
 
 .cell-input--json {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   resize: vertical;
 }
 

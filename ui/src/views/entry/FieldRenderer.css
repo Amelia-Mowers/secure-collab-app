@@ -88,7 +88,7 @@
 /* JSON / document textarea */
 .field-renderer .cell-input--json,
 .field-renderer textarea.cell-input {
-  font-family: 'JetBrains Mono', 'Monaco', monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   min-height: 120px;
   resize: vertical;

@@ -1,0 +1,65 @@
+/* ============================================================================
+   TideWork brand tokens — the ONE definition, used by the marketing site and
+   by the app.
+
+   Why it lives in site/: the site has no build step (it is deployed as-is to
+   Cloudflare Pages), so a file here is served directly. The app imports it at
+   build time from `ui/src/styles/theme.css`. One file, two consumers, no copy
+   step to forget — which is the whole point. Before this, the palette existed
+   in six places: five inline <style> blocks across the site pages and a
+   separate set in the app, and they had already diverged into two products
+   that shared only a name.
+
+   NAMING. The deep-water names (--abyss … --buoy) are the brand layer and are
+   what the site's page CSS already references, so they keep those names. The
+   app maps them onto its own semantic tokens (--bg, --text, --accent …) in
+   theme.css rather than referencing brand names directly — a grid needs a
+   surface hierarchy and a light mode that a marketing page does not.
+   ============================================================================ */
+
+:root {
+  /* ── The deep-water ramp: the floor, then up toward the light ───────── */
+  --abyss:      #03101c;  /* the floor */
+  --deep:       #062338;  /* mid-water */
+  --water:      #0a3a52;  /* upper water */
+  --surface:    #0d4664;  /* near the light */
+
+  /* ── Text on that ramp ──────────────────────────────────────────────── */
+  --foam:       #eaf6f6;  /* brightest text */
+  --mist:       #9fc3cd;  /* secondary text */
+  --faint:      #5c8292;  /* tertiary / ticks */
+
+  /* ── The two signature accents ──────────────────────────────────────── */
+  --spray:      #67e2d4;  /* luminous accent — selection, focus, links */
+  --buoy:       #ff9e57;  /* the call to action */
+  --buoy-deep:  #f08236;
+  --reef:       #ff7a6b;  /* the negative — coral, not alarm-red */
+  --kelp:       #5fd6a4;  /* the positive */
+  --lantern:    #f5c451;  /* the caution */
+
+  --line:       rgba(154, 203, 212, 0.16);
+
+  /* ── Type ───────────────────────────────────────────────────────────── */
+  --serif: 'Fraunces', Georgia, serif;
+  --sans:  'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono:  'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Scale. Named rather than numeric so a size can be reasoned about at the
+     call site, and so raising the whole scale is one edit here instead of the
+     181 hard-coded px declarations the app shipped with. --size-base is the
+     body size: the app sat at 14px with most of its chrome at 11–13, which is
+     a large part of why it read as denser and less considered than the site. */
+  --size-xs:      12px;
+  --size-sm:      13px;
+  --size-md:      14px;
+  --size-base:    15px;
+  --size-lg:      17px;
+  --size-xl:      20px;
+  --size-2xl:     24px;
+  --size-display: 34px;
+
+  /* ── Shape ──────────────────────────────────────────────────────────── */
+  --radius-sm: 4px;
+  --radius:    8px;
+  --radius-lg: 14px;
+}

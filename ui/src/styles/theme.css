@@ -1,52 +1,75 @@
 /* ============================================================
-   Design tokens — derived from the DM Sans / JetBrains Mono
-   mockup.  Both light and dark palettes are defined here so
-   every component can reference CSS variables instead of
-   hard-coded hex values.
+   The app's semantic tokens, mapped onto the shared brand ramp.
+
+   `../../../site/tokens.css` is the ONE definition of the palette and the
+   type, shared with the marketing site (it lives there because the site is
+   deployed with no build step, so a file in site/ is served as-is; the app
+   inlines it at build time). Brand names — --abyss, --spray, --buoy — come
+   from there. This file turns them into the names components use.
+
+   WHY THE INDIRECTION rather than referencing brand names directly: a
+   marketing page is one screen, read once, in one mode. A grid is read for
+   hours and needs a surface hierarchy (five backgrounds, two borders), a
+   light mode, and muted variants for every semantic colour. So the app keeps
+   the site's HUE and its two accents, and keeps its own density and
+   structure — which is exactly the split the design-system issue proposed.
    ============================================================ */
+
+@import '../../../site/tokens.css';
 
 /* ---- Dark theme (default) --------------------------------- */
 :root,
 [data-theme="dark"] {
-  /* Backgrounds */
-  --bg:           #0a0a0b;
-  --bg-surface:   #111113;
-  --bg-elevated:  #18181b;
-  --bg-hover:     #1e1e22;
-  --bg-active:    #252529;
+  /* Backgrounds — the deep-water ramp, desaturated a little from the site's
+     marketing gradient. The site can afford full saturation for one screen;
+     a grid at this saturation vibrates over a long session. Same hue family,
+     lower chroma. */
+  --bg:           #04121c;
+  --bg-surface:   #071a27;
+  --bg-elevated:  #0a2231;
+  --bg-hover:     #0e2a3b;
+  --bg-active:    #123246;
 
   /* Borders — raised for clearer structure/separators in dark mode. */
-  --border:        #33333a;
-  --border-subtle: #29292e;
+  --border:        #1d3f53;
+  --border-subtle: #16303f;
 
-  /* Text — muted tones raised for legibility. The old --text-tertiary
-     (#55555c) sat at ~2.4:1 on --bg, well under the 4.5:1 AA threshold;
-     these reach AA for normal text while preserving the primary > secondary
-     > tertiary hierarchy. */
-  --text:           #ececef;
-  --text-secondary: #a1a1aa;
-  --text-tertiary:  #7c7c85;
+  /* Text — the brand's foam/mist, with the tertiary tone raised. The site's
+     --faint (#5c8292) sits at ~3.4:1 on this background, under the 4.5:1 AA
+     threshold; a marketing tick label can carry that and a table's secondary
+     column cannot. */
+  --text:           #eaf6f6;  /* foam */
+  --text-secondary: #9fc3cd;  /* mist */
+  --text-tertiary:  #7ba0af;
 
-  /* Accent (blue) */
-  --accent:       #6d9fff;
-  --accent-muted: rgba(109,159,255,0.12);
-  --accent-hover: #85b0ff;
+  /* Accent — spray. Selection, focus, links, active state. */
+  --accent:       #67e2d4;
+  --accent-muted: rgba(103,226,212,0.14);
+  --accent-hover: #8dece1;
 
-  /* Semantic colours */
-  --green:        #4ade80;
-  --green-muted:  rgba(74,222,128,0.12);
-  --amber:        #f59e0b;
-  --amber-muted:  rgba(245,158,11,0.12);
-  --red:          #f87171;
-  --red-muted:    rgba(248,113,113,0.12);
-  --purple:       #a78bfa;
-  --purple-muted: rgba(167,139,250,0.12);
-  --pink:         #f472b6;
-  --pink-muted:   rgba(244,114,182,0.12);
+  /* Action — buoy. The one colour that means "this is the thing to press",
+     kept distinct from --accent so that a page full of focus rings and
+     selected rows still has exactly one primary button. */
+  --action:       #ff9e57;
+  --action-hover: #ffb27a;
+  --action-text:  #03101c;
 
-  /* Shadows */
-  --shadow:    0 1px 3px rgba(0,0,0,0.4);
-  --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+  /* Semantic colours, pulled into the same family: kelp, lantern, reef. */
+  --green:        #5fd6a4;
+  --green-muted:  rgba(95,214,164,0.14);
+  --amber:        #f5c451;
+  --amber-muted:  rgba(245,196,81,0.14);
+  --red:          #ff7a6b;
+  --red-muted:    rgba(255,122,107,0.14);
+  --purple:       #a9a0f5;
+  --purple-muted: rgba(169,160,245,0.14);
+  --pink:         #f08fb6;
+  --pink-muted:   rgba(240,143,182,0.14);
+
+  /* Shadows — cast against the abyss rather than neutral black, so elevated
+     surfaces read as depth in water instead of a grey drop shadow. */
+  --shadow:    0 1px 3px rgba(1,8,14,0.5);
+  --shadow-lg: 0 8px 32px rgba(1,8,14,0.6);
 
   /* Legacy aliases (keeps old components from breaking) */
   --bg-primary:   var(--bg);
@@ -57,47 +80,68 @@
   --border-hover: var(--border-subtle);
   --accent-primary: var(--accent);
   --accent-hover-color: var(--accent-hover);
-  --accent-text:  #ffffff;
+  /* Text ON the accent. White over spray is unreadable (1.5:1) — the accent
+     is now a bright colour rather than a mid blue, so anything sitting on it
+     takes the floor colour instead. */
+  --accent-text:  #03101c;
   --success:      var(--green);
   --warning:      var(--amber);
   --error:        var(--red);
   --shadow-sm:    var(--shadow);
-  --shadow-md:    0 4px 12px rgba(0,0,0,0.4);
+  --shadow-md:    0 4px 12px rgba(1,8,14,0.5);
   --shadow-lg-var: var(--shadow-lg);
+
+  /* Seven stylesheets already said `var(--font-mono, ui-monospace, …)`. It was
+     never defined anywhere, so every one of them silently took the fallback —
+     which is why recovery keys and cell values rendered in the OS mono face
+     while the site used IBM Plex Mono. Defining it is the whole fix. */
+  --font-mono:  var(--mono);
+  --font-sans:  var(--sans);
+  --font-serif: var(--serif);
 }
 
 /* ---- Light theme ------------------------------------------ */
+/* Light is the surface, not a different brand: the same hue family read from
+   above the water rather than below it. Neutral greys here would put the app
+   back to looking like a different product every time someone flips the
+   theme, which is half of how it drifted in the first place. */
 [data-theme="light"] {
-  --bg:           #f8f8fa;
+  --bg:           #f2f7f8;
   --bg-surface:   #ffffff;
   --bg-elevated:  #ffffff;
-  --bg-hover:     #f0f0f3;
-  --bg-active:    #e8e8ec;
+  --bg-hover:     #e8f1f3;
+  --bg-active:    #dceaee;
 
-  --border:        #e2e2e6;
-  --border-subtle: #ededf0;
+  --border:        #cbdde3;
+  --border-subtle: #e3eef1;
 
-  --text:           #111113;
-  --text-secondary: #65656d;
-  --text-tertiary:  #9c9ca5;
+  --text:           #062338;  /* deep */
+  --text-secondary: #3f6377;
+  --text-tertiary:  #64879a;
 
-  --accent:       #3b7ddd;
-  --accent-muted: rgba(59,125,221,0.08);
-  --accent-hover: #2d6bc4;
+  /* Spray is a dark-mode accent — on white it is 1.4:1. Light mode takes the
+     same hue pushed down until it carries text. */
+  --accent:       #0d7684;
+  --accent-muted: rgba(13,118,132,0.10);
+  --accent-hover: #0a616d;
 
-  --green:        #16a34a;
-  --green-muted:  rgba(22,163,74,0.08);
-  --amber:        #d97706;
-  --amber-muted:  rgba(217,119,6,0.08);
-  --red:          #dc2626;
-  --red-muted:    rgba(220,38,38,0.08);
-  --purple:       #7c3aed;
-  --purple-muted: rgba(124,58,237,0.08);
-  --pink:         #db2777;
-  --pink-muted:   rgba(219,39,119,0.08);
+  --action:       #c2620f;  /* buoy, deep enough to hold white text */
+  --action-hover: #a5520b;
+  --action-text:  #ffffff;
 
-  --shadow:    0 1px 3px rgba(0,0,0,0.06);
-  --shadow-lg: 0 8px 32px rgba(0,0,0,0.08);
+  --green:        #12805a;
+  --green-muted:  rgba(18,128,90,0.10);
+  --amber:        #a86a10;
+  --amber-muted:  rgba(168,106,16,0.10);
+  --red:          #c2453a;
+  --red-muted:    rgba(194,69,58,0.10);
+  --purple:       #6d5fd0;
+  --purple-muted: rgba(109,95,208,0.10);
+  --pink:         #c0447f;
+  --pink-muted:   rgba(192,68,127,0.10);
+
+  --shadow:    0 1px 3px rgba(6,35,56,0.08);
+  --shadow-lg: 0 8px 32px rgba(6,35,56,0.10);
 
   --bg-primary:   var(--bg);
   --bg-secondary: var(--bg-surface);
@@ -134,14 +178,29 @@ body,
 }
 
 body {
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px;
+  font-family: var(--sans);
+  font-size: var(--size-base);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bg);
   color: var(--text);
   transition: background-color 0.3s, color 0.3s;
+}
+
+/* ============================================================
+   Headings
+
+   Fraunces on h1/h2 only. It is the site's voice and the most recognisable
+   part of the identity, but it is a display face: below ~17px it stops
+   helping, and h3 in this app is mostly a small UI label (a modal section,
+   a settings group) rather than a heading anyone reads as one.
+   ============================================================ */
+h1, h2 {
+  font-family: var(--serif);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
 }
 
 /* ============================================================
@@ -162,7 +221,7 @@ input,
 textarea,
 select {
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--size-md);
   color: var(--text);
   background-color: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -328,7 +387,7 @@ button:active {
 
 button.primary {
   background-color: var(--accent);
-  color: #fff;
+  color: var(--accent-text);
   border-color: var(--accent);
   font-weight: 500;
 }
