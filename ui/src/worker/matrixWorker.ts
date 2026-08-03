@@ -50,6 +50,50 @@ function broadcast(event: Event) {
   for (const port of [...clients.keys()]) post(port, event)
 }
 
+/**
+ * Forward this worker's own console to every tab.
+ *
+ * `dispatch.ts` already reports what it CATCHES (`[worker] snapshot failed:
+ * RuntimeError: unreachable executed`) — but a Rust panic's actual message and
+ * source location are not in that error. They are printed separately, by
+ * `console_error_panic_hook`, straight to this worker's console. Firefox does
+ * not surface a SharedWorker's console in the tab, so a production bug report
+ * arrives as the trap and nothing else: the one line that says WHERE never
+ * leaves the machine it happened on. We spent a session on exactly that.
+ *
+ * Anything the module prints at warn/error goes over the same channel the
+ * dispatcher's diagnostics use, so it lands in the page console — and in a
+ * Playwright console listener, which is why the e2e panic assertions can see it
+ * at all.
+ */
+function describe(arg: unknown): string {
+  if (typeof arg === 'string') return arg
+  if (arg instanceof Error) return arg.stack || `${arg.name}: ${arg.message}`
+  try {
+    return JSON.stringify(arg)
+  } catch {
+    return String(arg)
+  }
+}
+
+for (const level of ['error', 'warn'] as const) {
+  const original = console[level].bind(console)
+  console[level] = (...args: unknown[]) => {
+    original(...args)
+    // Logging must never be the thing that kills the worker.
+    try {
+      broadcast({
+        kind: 'event',
+        event: 'log',
+        level,
+        message: `console.${level}: ${args.map(describe).join(' ')}`,
+      })
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 // NOTE: nothing here may reference `__BUILD_ID__` or any other Vite `define`.
 // Those replacements do not reach a worker module served by the dev server, and
 // the resulting ReferenceError kills the worker before it can answer a single
