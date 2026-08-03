@@ -33,10 +33,13 @@ cryptography included, is Apache-2.0 and self-hostable.
 Deployed, in daily use, and holding real data — including this project's own backlog.
 The core is stable; the surface is narrower than the products it resembles.
 
-Before relying on it, read **[LAUNCH_AUDIT.md](./LAUNCH_AUDIT.md)** for the honest
-list of what is missing (notably: no mobile layout, no comments or attachments, and
-search is not implemented). Current state is in **[STATUS.md](./STATUS.md)**; design
-decisions are in **[docs/adr/](./docs/adr/)**.
+**There has been no third-party security audit.** CI proves the cryptographic
+guarantees still hold as the code changes; it cannot tell you the design was right
+to begin with. Those are different claims and we don't conflate them.
+
+Current state, including the honest list of what is missing, is in
+**[STATUS.md](./STATUS.md)**; design decisions are in **[docs/adr/](./docs/adr/)**;
+security scope and reporting are in **[SECURITY.md](./SECURITY.md)**.
 
 Schema and event formats may still change in ways that need migration.
 
@@ -61,8 +64,8 @@ path — kanban and documents are projections of the same encrypted cells.
 structure. **Order-based bumping** on every write bounds the cold-start lookback to
 roughly the number of cells in a table.
 
-Full detail in [architecture.md](./architecture.md) and
-[ARCHITECTURE_REVIEW.md](./ARCHITECTURE_REVIEW.md).
+Full detail in [architecture.md](./architecture.md), with the reasoning behind each
+decision in [docs/adr/](./docs/adr/).
 
 ## Quick start
 

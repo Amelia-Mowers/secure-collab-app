@@ -3,10 +3,8 @@
 **As of:** 2026-07-31
 
 A point-in-time snapshot. The prioritized backlog lives in the product itself (see
-[TODO.md](./TODO.md)); design decisions are in **[docs/adr/](./docs/adr/)**; the
-launch-readiness review is **[LAUNCH_AUDIT.md](./LAUNCH_AUDIT.md)**; the structural
-review behind the current architecture is
-**[ARCHITECTURE_REVIEW.md](./ARCHITECTURE_REVIEW.md)**.
+[TODO.md](./TODO.md)); design decisions and the reasoning behind the architecture
+are in **[docs/adr/](./docs/adr/)**.
 
 ## What works (implemented and test-verified)
 
@@ -71,19 +69,24 @@ saved-view reads, CSV import/export, against production.
 
 ## Known gaps (the honest list)
 
-[LAUNCH_AUDIT.md](./LAUNCH_AUDIT.md) has the full assessment. The load-bearing items:
-
+- **No third-party security audit.** CI proves the cryptographic guarantees still
+  hold as the code changes; it does not tell anyone the design was right to begin
+  with. The two claims are different and the site says so.
 - **The published terms and privacy policy have not been reviewed by a lawyer**, and
   the provider is an individual rather than an entity — so personal liability sits
   behind the cap. Live at `/terms` and `/privacy`, with acceptance enforced at
   registration by MAS.
-- **Search does not exist.** The placeholder is gone; the feature is not built, and
-  needs a client-side design (the server cannot index ciphertext).
 - **No comments, attachments, notifications, per-action undo, or trash/restore** —
   ordinary expectations of this product class.
-- **No demo route**, though ADR 0002 specifies one as the top of the funnel.
+- **Search is per-table and under-discoverable.** Free-text search across all columns
+  exists in the Filter panel, with a live row count and savable as a view — but it is
+  behind a button labelled "Filter", has no `⌘F` binding, and is grid-only. Cross-
+  workspace search is a design boundary rather than a to-do: the server cannot index
+  ciphertext.
+- **Usable on a phone, not built for one.** The main views have media queries and the
+  sidebar is a drawer below 768px; several dialogs and the cell editors do not yet.
 - **Self-hosting works but is not a supported path**: the `infra/` configs are written
-  for our deployment, not parameterised.
+  for our deployment, not parameterised, with no upgrade story yet.
 
 ## How to update this file
 

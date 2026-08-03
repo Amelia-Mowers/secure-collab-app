@@ -35,6 +35,6 @@ tidework column set "TideWork PM" Issues status \
 - The detailed **completed-work log** (everything shipped, with notes and ADR
   refs) that used to live here is preserved in this file's **git history** — see
   the commit before the "repoint task management" change.
-- Architecture rationale: [`ARCHITECTURE_REVIEW.md`](./ARCHITECTURE_REVIEW.md)
+- Architecture rationale: [`docs/adr/`](./docs/adr/)
   and [`docs/adr/`](./docs/adr/).
 - Current status snapshot: [`STATUS.md`](./STATUS.md).
