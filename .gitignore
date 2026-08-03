@@ -48,3 +48,4 @@ result-*
 .env.*.local
 infra/secrets/*
 !infra/secrets/*.sops.*
+__pycache__/
