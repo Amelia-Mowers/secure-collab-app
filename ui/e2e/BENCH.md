@@ -25,8 +25,8 @@ be trusted. Playwright keeps the real path but puts a browser in every sample.
 
 | | | |
 |---|---|---|
-| **M1** cold start vs size | **run 2026-08-01** | results below |
-| **M2** incremental load | **shipped** | 373 ms cold → 258 ms warm at 1000 rows; the win scales with events skipped |
+| **M1** cold start vs size | **swept 2026-08-03** | 100 → 10k rows, every size bounded; table below |
+| **M2** incremental load | **shipped** | warm 0.8–2.1 s across a hundredfold range, 78–89% off cold |
 | **M3** concurrent users | not started | needs M1's seeding first |
 | **M4** native propagation | not started | lowest priority; duplicates M3 |
 
@@ -195,6 +195,54 @@ earlier attempts looked like nothing was happening:
 
 Below ~2 pages the stop cannot pay, because a round-trip is the floor. Any
 benchmark at that size measures page granularity, not compaction.
+
+### The sweep (measured 2026-08-03)
+
+Four sizes, one binary, one Synapse, one login per size. `--cold` ignores the
+snapshot and replays history in full; warm is the same command against the same
+state dir, resuming from the snapshot the cold runs wrote — so the saving is a
+before/after and not two setups wearing the same label.
+
+| rows | cells | events walked | stop | cold | warm | warm saves |
+|-----:|------:|--------------:|------|-----:|-----:|-----------:|
+| 100 | 700 | 2,000 | covered | 7164 ms | 782 ms | 89% |
+| 1,000 | 7,000 | 2,000 | covered | 7222 ms | 1559 ms | 78% |
+| 5,000 | 35,000 | 3,000 | covered | 10776 ms | 2065 ms | 80% |
+| 10,000 | 70,000 | 4,000 | covered | 14673 ms | 1743 ms | 88% |
+
+**Every size stops on coverage, and events walked grows with the workspace
+rather than with the room.** A hundredfold more rows costs twice the events —
+2,000 to 4,000 — because what the walk pays for is covering cells, not reading
+history. Cold start does still grow (7.2 s → 14.7 s), and the extra is replay:
+43,859 cells is 80× the 547-cell room's work no matter how few events carried
+them.
+
+Warm start is where a returning user lives, and it is 0.8–2.1 s across a
+hundredfold range.
+
+The 10k row is a **measurement now**, not the projection the ~41 s figure below
+was. It came in at a third of that projection.
+
+### One trap this sweep walked into, worth not repeating
+
+The first attempt at this table failed outright: the measuring device could not
+decrypt 2,903 of the events it had just been seeded with. The seeding CLI exits
+seconds after writing, and the SDK backs new megolm sessions up from a background
+task that had not gotten to them — so a device logging in afterwards had no way
+to read them, permanently.
+
+That is also the real explanation for the 5k/10k rooms that used to read their
+whole history, and it had nothing to do with compaction. Undecryptable events
+correctly block the coverage stop (a page you could not read contributes no new
+cells; calling that "covered" would truncate the walk exactly when data is at
+risk), so those walks ran to the start of the room. Three compaction-flavoured
+explanations were proposed and disproved before this one — the earlier binaries
+counted undecryptable events and carried on, so the cause could never show itself
+as itself.
+
+Fixed in the client (`wait_for_key_backup` before a write command exits), not in
+the harness. **A benchmark that skips undecryptable events reports a fast cold
+start for a workspace it could not read.**
 
 ### The remaining shape
 
