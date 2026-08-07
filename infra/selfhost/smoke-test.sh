@@ -35,7 +35,7 @@ COMPOSE=(docker compose -p "$PROJECT" -f docker-compose.yml -f docker-compose.sm
 cleanup() {
   echo "--- cleaning up"
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-  rm -rf data .env
+  rm -rf data .env setup.log
 }
 trap cleanup EXIT
 
@@ -53,7 +53,13 @@ EOF
 # `bash ./setup.sh`, not `./setup.sh`: the executable bit does not survive every
 # checkout (Windows, a downloaded zip), and CI failed on exactly that — "Permission
 # denied" from a script that is committed as 100755.
-bash ./setup.sh >/dev/null || fail "setup.sh"
+# Show setup's output when it fails. Suppressing it turned a one-line cause
+# ("Permission denied") into a job that just said FAIL: setup.sh.
+if ! bash ./setup.sh > setup.log 2>&1; then
+  echo "--- setup.sh output ---"
+  cat setup.log
+  fail "setup.sh"
+fi
 ok "setup.sh rendered the config and generated the key"
 
 # The rendered config must be valid YAML and must not still contain a

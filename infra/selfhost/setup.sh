@@ -65,24 +65,14 @@ if [ -z "${SYNAPSE_REGISTRATION_SHARED_SECRET:-}" ]; then
   echo "  generated SYNAPSE_REGISTRATION_SHARED_SECRET"
 fi
 
+# Synapse must run as whoever owns ./data — see the comment on `user:` in
+# docker-compose.yml. Recorded in .env so `docker compose` sees it too.
+persist SYNAPSE_UID "$(id -u)"
+persist SYNAPSE_GID "$(id -g)"
+
 mkdir -p data/synapse/media_store
 
-# ── 1. Signing key ──────────────────────────────────────────────────────────
-# Synapse's `generate` writes a whole starter config AND a signing key. We want
-# only the key; our config is rendered over the top in step 2. It needs no
-# database, so it runs before the stack is up.
-SIGNING_KEY="data/synapse/${TIDEWORK_SERVER_NAME}.signing.key"
-if [ ! -f "$SIGNING_KEY" ]; then
-  echo "generating the signing key ..."
-  docker run --rm \
-    -v "$PWD/data/synapse:/data" \
-    -e SYNAPSE_SERVER_NAME="$TIDEWORK_SERVER_NAME" \
-    -e SYNAPSE_REPORT_STATS=no \
-    "$SYNAPSE_IMAGE" generate >/dev/null
-  [ -f "$SIGNING_KEY" ] || die "signing key was not generated (is the docker daemon running?)"
-fi
-
-# ── 2. Our config, over whatever `generate` left ────────────────────────────
+# ── Our config ──────────────────────────────────────────────────────────────
 export TIDEWORK_SERVER_NAME TIDEWORK_HOSTNAME POSTGRES_PASSWORD
 export SYNAPSE_REGISTRATION_SHARED_SECRET
 export SYNAPSE_OPEN_REGISTRATION="${SYNAPSE_OPEN_REGISTRATION:-false}"
@@ -133,6 +123,32 @@ root:
   handlers: [console]
 disable_existing_loggers: false
 YAML
+
+# ── The signing key, generated LAST and as us ───────────────────────────────
+#
+# Order matters, on Linux only. The image's `generate` entrypoint runs as root
+# and ends with "Setting ownership on /data to 991:991" — after which the host
+# user cannot write into that directory, so rendering the config afterwards
+# fails with a bare permission error. Docker Desktop on macOS and Windows fakes
+# bind-mount ownership, so this breaks ONLY on the platform people actually
+# self-host on. CI found it; otherwise a first-time user would have.
+#
+# So everything we write goes first, and then only the key is generated, with
+# `--user` so nothing is chowned out from under us. `--generate-keys` creates
+# just what is missing and takes the path from the config we already wrote, so
+# the two cannot disagree. It needs no database.
+SIGNING_KEY="data/synapse/${TIDEWORK_SERVER_NAME}.signing.key"
+if [ ! -f "$SIGNING_KEY" ]; then
+  echo "generating the signing key ..."
+  docker run --rm \
+    --entrypoint python \
+    --user "$(id -u):$(id -g)" \
+    -v "$PWD/data/synapse:/data" \
+    "$SYNAPSE_IMAGE" \
+    -m synapse.app.homeserver --config-path /data/homeserver.yaml --generate-keys \
+    || die "could not generate the signing key (is the docker daemon running?)"
+  [ -f "$SIGNING_KEY" ] || die "signing key was not created at $SIGNING_KEY"
+fi
 
 echo
 echo "ready. start it with:"

@@ -36,6 +36,18 @@ services:
   synapse:
     image: ${SYNAPSE_IMAGE:-matrixdotorg/synapse:v1.148.0}
     restart: unless-stopped
+    # Run as the user who owns ./data, rather than the image's built-in 991.
+    #
+    # The image normally starts as root, chowns /data to 991 and drops
+    # privileges. That fights with a bind mount: setup.sh writes the config and
+    # the signing key as YOU, and Synapse then cannot read a key it does not own
+    # — "[Errno 13] Permission denied: /data/<server>.signing.key", on every
+    # start. Owning everything as one user is simpler than passing the directory
+    # back and forth, and needs no chmod 777.
+    #
+    # setup.sh writes these; the 991 fallbacks match the image's own user for
+    # anyone who brings the stack up without running it.
+    user: "${SYNAPSE_UID:-991}:${SYNAPSE_GID:-991}"
     environment:
       SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
     volumes:
