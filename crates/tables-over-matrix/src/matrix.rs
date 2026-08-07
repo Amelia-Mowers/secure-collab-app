@@ -28,6 +28,102 @@ mod matrix_impl {
     use serde::{Deserialize, Serialize};
     use tracing::{debug, info};
 
+    /// Complete a registration's user-interactive auth, one stage at a time.
+    ///
+    /// Registration is a handshake, not a single call: the server answers the
+    /// first request with 401 and a list of FLOWS, each an ordered set of
+    /// stages. This walks whichever flow it can satisfy, resubmitting the same
+    /// request with the next stage's auth data until the server accepts it.
+    ///
+    /// Two stages are supported, which is what a TideWork-shaped homeserver
+    /// needs:
+    ///
+    ///   * `m.login.registration_token` — the invitation-token flow. This is the
+    ///     answer to "open registration is an abuse magnet, but creating every
+    ///     account by hand does not scale": the operator mints one token, shares
+    ///     it with their team, and people sign themselves up.
+    ///   * `m.login.dummy` — the no-op stage an open server asks for.
+    ///
+    /// Anything else (captcha, email, terms) is reported by NAME rather than as
+    /// a generic failure, because the user can act on "this server requires a
+    /// captcha" and cannot act on "registration failed".
+    pub async fn complete_registration(
+        client: &Client,
+        base: matrix_sdk::ruma::api::client::account::register::v3::Request,
+        registration_token: Option<&str>,
+    ) -> Result<()> {
+        use matrix_sdk::ruma::api::client::{account::register, uiaa};
+
+        const DUMMY: &str = "m.login.dummy";
+        const TOKEN: &str = "m.login.registration_token";
+
+        // Bounded: each iteration must complete a stage, and a server that
+        // keeps asking for one we have already satisfied would otherwise spin
+        // forever.
+        let mut attempts = 0;
+        let mut request: register::v3::Request = base;
+
+        loop {
+            let err = match client.matrix_auth().register(request.clone()).await {
+                Ok(_) => return Ok(()),
+                Err(e) => e,
+            };
+
+            let Some(info) = err.as_uiaa_response() else {
+                return Err(anyhow::anyhow!("registration failed: {err}"));
+            };
+
+            attempts += 1;
+            if attempts > 4 {
+                return Err(anyhow::anyhow!(
+                    "registration did not complete after {attempts} authentication stages"
+                ));
+            }
+
+            let completed: Vec<String> = info.completed.iter().map(|s| s.to_string()).collect();
+            let done = |stage: &str| completed.iter().any(|c| c == stage);
+
+            // Every stage this server would accept, across all its flows.
+            let offered: Vec<String> = info
+                .flows
+                .iter()
+                .flat_map(|f| f.stages.iter().map(|s| s.to_string()))
+                .collect();
+            let offers = |stage: &str| offered.iter().any(|o| o == stage);
+
+            let auth = if offers(TOKEN) && !done(TOKEN) {
+                let Some(token) = registration_token else {
+                    return Err(anyhow::anyhow!(
+                        "this homeserver requires an invitation token to register"
+                    ));
+                };
+                let mut stage = uiaa::RegistrationToken::new(token.to_owned());
+                stage.session = info.session.clone();
+                uiaa::AuthData::RegistrationToken(stage)
+            } else if offers(DUMMY) && !done(DUMMY) {
+                let mut stage = uiaa::Dummy::new();
+                stage.session = info.session.clone();
+                uiaa::AuthData::Dummy(stage)
+            } else {
+                let remaining: Vec<&str> = offered
+                    .iter()
+                    .map(|s| s.as_str())
+                    .filter(|s| !done(s))
+                    .collect();
+                return Err(anyhow::anyhow!(
+                    "this homeserver requires a registration step TideWork cannot do: {}",
+                    if remaining.is_empty() {
+                        "none offered".to_owned()
+                    } else {
+                        remaining.join(", ")
+                    }
+                ));
+            };
+
+            request.auth = Some(auth);
+        }
+    }
+
     /// Events per /messages round-trip.
     ///
     /// Large on purpose: a round-trip costs far more than the events in it.
@@ -872,17 +968,19 @@ mod matrix_impl {
         /// every native caller — the CLI, any harness — previously had to go
         /// around the product: raw CS-API calls, or `mas-cli` on the server.
         ///
-        /// Mirrors the wasm flow: probe with a bare request, and if the server
-        /// answers with UIAA, satisfy it with the dummy stage. Anything else is
-        /// a real error. Only works where registration is open — production
-        /// closes it, and accounts there come from MAS.
+        /// Mirrors the wasm flow: probe with a bare request and walk whichever
+        /// UIA stages the server asks for — the invitation token when it wants
+        /// one, the dummy stage otherwise. Production closes registration
+        /// entirely and its accounts come from MAS.
         pub async fn register(
             homeserver_url: &str,
             store_path: &std::path::Path,
             username: &str,
             password: &str,
+            // An invitation token, when the homeserver requires one.
+            registration_token: Option<&str>,
         ) -> Result<Self> {
-            use matrix_sdk::ruma::api::client::{account::register, uiaa};
+            use matrix_sdk::ruma::api::client::account::register;
 
             let this = Self::with_sqlite_store(homeserver_url, store_path).await?;
 
@@ -891,23 +989,7 @@ mod matrix_impl {
             request.password = Some(password.to_owned());
             request.initial_device_display_name = Some("TideWork CLI".to_owned());
 
-            if let Err(err) = this.client.matrix_auth().register(request.clone()).await {
-                // A server with no UIAA flows registers on the first call; most
-                // ask for at least the dummy stage, which is not an error but a
-                // handshake.
-                let Some(info) = err.as_uiaa_response() else {
-                    return Err(anyhow::anyhow!("registration failed: {err}"));
-                };
-                let mut dummy = uiaa::Dummy::new();
-                dummy.session = info.session.clone();
-                let mut retry = request;
-                retry.auth = Some(uiaa::AuthData::Dummy(dummy));
-                this.client
-                    .matrix_auth()
-                    .register(retry)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("registration failed: {e}"))?;
-            }
+            complete_registration(&this.client, request, registration_token).await?;
 
             Ok(this)
         }

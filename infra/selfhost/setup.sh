@@ -76,6 +76,7 @@ mkdir -p data/synapse/media_store
 export TIDEWORK_SERVER_NAME TIDEWORK_HOSTNAME POSTGRES_PASSWORD
 export SYNAPSE_REGISTRATION_SHARED_SECRET
 export SYNAPSE_OPEN_REGISTRATION="${SYNAPSE_OPEN_REGISTRATION:-false}"
+export SYNAPSE_REGISTRATION_REQUIRES_TOKEN="${SYNAPSE_REGISTRATION_REQUIRES_TOKEN:-false}"
 # Federation off is a config block, not a flag — an empty whitelist means
 # "federate with nobody".
 if [ "${TIDEWORK_FEDERATION:-true}" = "false" ]; then
@@ -89,7 +90,7 @@ render() {
   if command -v envsubst >/dev/null 2>&1; then
     # Named substitutions only: a bare `envsubst` would also eat any `$` that
     # Synapse's own syntax might use in this template later.
-    envsubst '${TIDEWORK_SERVER_NAME} ${TIDEWORK_HOSTNAME} ${POSTGRES_PASSWORD} ${SYNAPSE_OPEN_REGISTRATION} ${SYNAPSE_REGISTRATION_SHARED_SECRET} ${FEDERATION_BLOCK}' \
+    envsubst '${TIDEWORK_SERVER_NAME} ${TIDEWORK_HOSTNAME} ${POSTGRES_PASSWORD} ${SYNAPSE_OPEN_REGISTRATION} ${SYNAPSE_REGISTRATION_REQUIRES_TOKEN} ${SYNAPSE_REGISTRATION_SHARED_SECRET} ${FEDERATION_BLOCK}' \
       < synapse/homeserver.yaml.tmpl
   else
     # gettext is not installed everywhere; python is.
@@ -97,7 +98,8 @@ render() {
 import os, sys
 text = open("synapse/homeserver.yaml.tmpl", encoding="utf-8").read()
 for k in ("TIDEWORK_SERVER_NAME", "TIDEWORK_HOSTNAME", "POSTGRES_PASSWORD",
-          "SYNAPSE_OPEN_REGISTRATION", "SYNAPSE_REGISTRATION_SHARED_SECRET",
+          "SYNAPSE_OPEN_REGISTRATION", "SYNAPSE_REGISTRATION_REQUIRES_TOKEN",
+          "SYNAPSE_REGISTRATION_SHARED_SECRET",
           "FEDERATION_BLOCK"):
     text = text.replace("${%s}" % k, os.environ.get(k, ""))
 sys.stdout.write(text)

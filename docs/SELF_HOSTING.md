@@ -127,15 +127,43 @@ setting rather than a fault, and to ask whoever runs the server. It used to
 surface Synapse's raw `M_FORBIDDEN: Registration has been disabled`, which reads
 as "you are not allowed" and sends people to the wrong conclusion.
 
-**If you would rather let people sign themselves up**, set
-`SYNAPSE_OPEN_REGISTRATION=true` and re-run `./setup.sh`. The app's Create
-account tab then works end to end — that is the configuration our e2e harness
-runs. But turn on email or captcha verification with it, or you will be relaying
-someone else's spam within the week. Synapse's own documentation covers both.
+### Invitation tokens — the option worth reaching for
 
-There is no invitation-token flow in the app yet. If your server requires a
-registration token, the app will say so and tell the user to ask you for one,
-but it cannot prompt for it.
+Creating every account by hand does not scale past a few people, and an open
+server is found and abused within days. Tokens are the middle: people sign
+themselves up, but only with an invitation you minted.
+
+```sh
+# in .env
+SYNAPSE_OPEN_REGISTRATION=true
+SYNAPSE_REGISTRATION_REQUIRES_TOKEN=true
+```
+
+then `./setup.sh && docker compose up -d`, and:
+
+```sh
+./register-user.sh admin --admin     # once, an admin to mint with
+./make-token.sh --uses 10 --days 7   # an invitation for ten people, good for a week
+```
+
+Share the token. Your users open the app, choose **Custom server**, enter your
+homeserver, and paste it into the **Invitation token** field on the Create
+account tab. Nobody without a token can sign up.
+
+The whole handshake is covered by `smoke-test.sh`, both halves: a sign-up
+without a token is challenged for one, and the same sign-up with a valid token
+completes. So this cannot quietly stop working.
+
+### Fully open
+
+`SYNAPSE_OPEN_REGISTRATION=true` on its own means anyone who finds your server
+can create an account, with no email, no captcha and no invitation. Synapse does
+**not** stop you — there is no config error for it, checked against 1.148. The
+cost is not hypothetical: open Matrix servers are found by automation within
+days, and an abused server gets defederated by others, which breaks the
+cross-server collaboration your users wanted and is hard to undo.
+
+Reach for tokens instead unless you actually want a public service.
 
 ## Why Synapse
 

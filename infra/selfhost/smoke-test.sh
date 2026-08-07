@@ -165,5 +165,79 @@ curl -fsS -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application
   || fail "could not send TideWork's custom event type"
 ok "io.tidework.cell.update accepted"
 
+# ── The invitation-token flow ───────────────────────────────────────────────
+#
+# This is the configuration worth recommending — self-serve sign-up that is not
+# open to the world — so it is the one that must not quietly break. Re-render
+# with tokens required, restart, and prove BOTH halves: a sign-up without a
+# token is refused, and the same sign-up with one succeeds.
+echo "--- invitation-token registration"
+
+"$PY_BIN" - <<'PYTOKEN'
+import re, pathlib
+p = pathlib.Path(".env")
+s = p.read_text()
+s = re.sub(r"^SYNAPSE_OPEN_REGISTRATION=.*$", "SYNAPSE_OPEN_REGISTRATION=true", s, flags=re.M)
+if "SYNAPSE_REGISTRATION_REQUIRES_TOKEN" in s:
+    s = re.sub(r"^SYNAPSE_REGISTRATION_REQUIRES_TOKEN=.*$",
+               "SYNAPSE_REGISTRATION_REQUIRES_TOKEN=true", s, flags=re.M)
+else:
+    s += "SYNAPSE_REGISTRATION_REQUIRES_TOKEN=true\n"
+p.write_text(s)
+PYTOKEN
+
+bash ./setup.sh >/dev/null 2>&1 || fail "setup.sh (token mode)"
+"${COMPOSE[@]}" restart synapse >/dev/null 2>&1 || fail "restart"
+for i in $(seq 1 60); do
+  curl -fsS "http://localhost:8008/_matrix/client/versions" >/dev/null 2>&1 && break
+  [ "$i" = 60 ] && fail "synapse did not come back after enabling token registration"
+  sleep 2
+done
+ok "restarted with registration_requires_token"
+
+# Without a token: the server must OFFER the token stage and refuse to proceed.
+FLOWS=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"username":"tokenless","password":"smoke-password-12345"}' \
+  "http://localhost:8008/_matrix/client/v3/register" \
+  | "$PY_BIN" -c "import json,sys; d=json.load(sys.stdin); print(' '.join(sorted({s for f in d.get('flows',[]) for s in f.get('stages',[])})))")
+case "$FLOWS" in
+  *m.login.registration_token*) ;;
+  *) fail "server did not ask for a registration token (offered: ${FLOWS:-nothing})" ;;
+esac
+ok "sign-up without a token is challenged for one"
+
+# Mint one through the admin API, the way make-token.sh does.
+"${COMPOSE[@]}" exec -T synapse register_new_matrix_user \
+  -c /data/homeserver.yaml -u smokeadmin -p smoke-password-12345 --admin \
+  http://localhost:8008 >/dev/null || fail "could not create an admin"
+ADMIN_TOKEN=$(curl -fsS -X POST "http://localhost:8008/_matrix/client/v3/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"smokeadmin"},"password":"smoke-password-12345"}' \
+  | "$PY_BIN" -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+REG_TOKEN=$(curl -fsS -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"uses_allowed": 1}' \
+  "http://localhost:8008/_synapse/admin/v1/registration_tokens/new" \
+  | "$PY_BIN" -c "import json,sys; print(json.load(sys.stdin)['token'])")
+[ -n "$REG_TOKEN" ] || fail "admin API did not mint a token"
+ok "minted an invitation token"
+
+# With the token: the same two-stage handshake `complete_registration` performs.
+SESSION=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"username":"tokenuser","password":"smoke-password-12345"}' \
+  "http://localhost:8008/_matrix/client/v3/register" \
+  | "$PY_BIN" -c "import json,sys; print(json.load(sys.stdin).get('session',''))")
+[ -n "$SESSION" ] || fail "no UIA session offered"
+
+curl -sS -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"tokenuser\",\"password\":\"smoke-password-12345\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"$REG_TOKEN\",\"session\":\"$SESSION\"}}" \
+  "http://localhost:8008/_matrix/client/v3/register" >/dev/null
+
+FINAL=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"tokenuser\",\"password\":\"smoke-password-12345\",\"auth\":{\"type\":\"m.login.dummy\",\"session\":\"$SESSION\"}}" \
+  "http://localhost:8008/_matrix/client/v3/register")
+echo "$FINAL" | grep -q '"user_id"' \
+  || fail "registration with a valid token did not complete: $(echo "$FINAL" | head -c 200)"
+ok "@tokenuser registered with the invitation token"
+
 echo
 echo "PASS — this stack serves a homeserver TideWork can use."

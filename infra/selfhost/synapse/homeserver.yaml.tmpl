@@ -57,6 +57,15 @@ enable_registration: ${SYNAPSE_OPEN_REGISTRATION}
 enable_registration_without_verification: ${SYNAPSE_OPEN_REGISTRATION}
 registration_shared_secret: "${SYNAPSE_REGISTRATION_SHARED_SECRET}"
 
+# The middle ground, and the one worth reaching for: registration is ON, but
+# every sign-up must present an invitation token you minted with
+# ./make-token.sh. Nobody can sign up without one, so the server is not open,
+# and you do not create an account by hand per person.
+#
+# Requires SYNAPSE_OPEN_REGISTRATION=true as well — "registration is enabled,
+# and here is the verification it requires".
+registration_requires_token: ${SYNAPSE_REGISTRATION_REQUIRES_TOKEN}
+
 # Off by default. Presence is the single most expensive feature in Synapse for
 # the least benefit to TideWork, which shows collaborators by their edits.
 presence:
