@@ -41,11 +41,20 @@ max_upload_size: 50M
 log_config: "/data/log.config"
 report_stats: false
 
-enable_registration: ${SYNAPSE_ENABLE_REGISTRATION}
-# Open registration without email or captcha verification is how a Matrix server
-# becomes somebody else's spam relay. If you turn registration on, turn one of
-# those on with it.
-enable_registration_without_verification: ${SYNAPSE_ENABLE_REGISTRATION}
+# `SYNAPSE_OPEN_REGISTRATION=true` means ANYONE WHO FINDS THIS SERVER CAN CREATE
+# AN ACCOUNT, with no email, no captcha and no invitation. Both settings move
+# together because that is what Synapse needs to actually allow it — enabling
+# registration without a verification mechanism leaves a server that accepts
+# sign-ups and then refuses every one of them, which is worse than either.
+#
+# Synapse does NOT stop you (checked against 1.148: there is no config error for
+# this). The cost is not hypothetical: open Matrix servers are found by
+# automation within days, and an abused server gets its domain defederated by
+# others, which is hard to undo.
+#
+# Default is `false`: create accounts with ./register-user.sh.
+enable_registration: ${SYNAPSE_OPEN_REGISTRATION}
+enable_registration_without_verification: ${SYNAPSE_OPEN_REGISTRATION}
 registration_shared_secret: "${SYNAPSE_REGISTRATION_SHARED_SECRET}"
 
 # Off by default. Presence is the single most expensive feature in Synapse for

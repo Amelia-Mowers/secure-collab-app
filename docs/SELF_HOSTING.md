@@ -128,7 +128,7 @@ surface Synapse's raw `M_FORBIDDEN: Registration has been disabled`, which reads
 as "you are not allowed" and sends people to the wrong conclusion.
 
 **If you would rather let people sign themselves up**, set
-`SYNAPSE_ENABLE_REGISTRATION=true` and re-run `./setup.sh`. The app's Create
+`SYNAPSE_OPEN_REGISTRATION=true` and re-run `./setup.sh`. The app's Create
 account tab then works end to end — that is the configuration our e2e harness
 runs. But turn on email or captcha verification with it, or you will be relaying
 someone else's spam within the week. Synapse's own documentation covers both.

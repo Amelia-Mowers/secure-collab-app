@@ -43,7 +43,7 @@ but ciphertext is not smaller than plaintext.
 | `TIDEWORK_SERVER_NAME` | Permanent. The `:server` half of every user ID |
 | `TIDEWORK_HOSTNAME` | Where Synapse answers; what the certificate is for |
 | `TIDEWORK_ACME_EMAIL` | Let's Encrypt expiry warnings |
-| `SYNAPSE_ENABLE_REGISTRATION` | `false` by default — see below |
+| `SYNAPSE_OPEN_REGISTRATION` | `false` by default — see below |
 | `TIDEWORK_FEDERATION` | `true` lets your users collaborate across servers |
 | `*_IMAGE` | Pinned to the versions our suites test against |
 
