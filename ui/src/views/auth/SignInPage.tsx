@@ -99,12 +99,20 @@ export function SignInPage() {
     }
   }, [homeserver, checkOauthSupport])
 
-  // Show the SSO flow whenever the server does next-gen auth — and, for the
+  // Show the SSO flow whenever the server does next-gen auth — and, for OUR
   // hosted server, while we are still asking and even if the probe failed.
-  const showOauth = authKind === 'oauth' || isSuggestedServer
+  //
+  // That optimism is specific to the server we run, which is MAS-backed and
+  // therefore known to do SSO. It must NOT extend to whatever server a
+  // self-hosted build suggests: `infra/selfhost/` is a plain Synapse with
+  // password accounts, and offering its users an SSO button that cannot work —
+  // while hiding the username and password fields that can — would make a
+  // correctly configured self-hosted deployment look broken on its first screen.
+  const optimisticSso = isSuggestedServer && IS_OFFICIAL_BUILD
+  const showOauth = authKind === 'oauth' || optimisticSso
   /** The hosted server should do SSO but the probe says otherwise: MAS is
    *  unreachable. Say so rather than silently offering a button that fails. */
-  const ssoUnavailable = isSuggestedServer && authKind === 'password'
+  const ssoUnavailable = optimisticSso && authKind === 'password'
 
   const handleOauthSignIn = async () => {
     setLocalError(null)

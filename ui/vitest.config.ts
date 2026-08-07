@@ -34,12 +34,6 @@ export default defineConfig({
     },
   },
   test: {
-    // Tests run as the build WE ship, so the sign-in page offers the official
-    // server exactly as a user of app.tidework.io sees it. A self-hosted build
-    // is a different case and is covered explicitly in branding.test.ts.
-    env: {
-      VITE_DEFAULT_HOMESERVER: 'https://matrix.tidework.io',
-    },
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',

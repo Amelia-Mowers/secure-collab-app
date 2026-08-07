@@ -50,7 +50,10 @@ SYNAPSE_REGISTRATION_SHARED_SECRET=
 TIDEWORK_FEDERATION=true
 EOF
 
-./setup.sh >/dev/null || fail "setup.sh"
+# `bash ./setup.sh`, not `./setup.sh`: the executable bit does not survive every
+# checkout (Windows, a downloaded zip), and CI failed on exactly that — "Permission
+# denied" from a script that is committed as 100755.
+bash ./setup.sh >/dev/null || fail "setup.sh"
 ok "setup.sh rendered the config and generated the key"
 
 # The rendered config must be valid YAML and must not still contain a
