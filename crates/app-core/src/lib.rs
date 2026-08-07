@@ -31,11 +31,23 @@
 //! let updates = workspace.create_table(table_def).unwrap();
 //! ```
 
-// Use wee_alloc as the global allocator in WASM builds
-// wee_alloc is optimized for code size and works well with moderate allocations
-#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+// NO custom global allocator. The default (dlmalloc) is used on wasm32.
+//
+// This was `wee_alloc`, chosen for code size, and it was the production
+// out-of-memory bug. wee_alloc does not reuse freed memory: it grows the wasm
+// heap monotonically in proportion to how much a program has EVER allocated,
+// not to how much it holds. Measured on the no-Matrix demo, `getTableRows` on a
+// four-row table grew the heap by ~12.6 KiB per call, dead linear, with no
+// plateau across 10,000 calls (35 MiB -> 160 MiB) — while the JSON it returned
+// was 933 bytes and the workspace never changed.
+//
+// wasm linear memory never shrinks, so that growth is permanent, and it ends at
+// whichever ceiling `--max-memory` sets: a bare `unreachable` trap with no panic
+// message, and a poisoned module. wee_alloc has been unmaintained since 2020
+// with this defect open; the wasm ecosystem stopped recommending it for exactly
+// this reason.
+//
+// The cost of dropping it is a few KB of code size in a multi-megabyte module.
 
 pub mod archive;
 pub mod filter_eval;
