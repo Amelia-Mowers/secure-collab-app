@@ -3,8 +3,13 @@ name: CI
 on:
   push:
     branches: [ main ]
+    # A version tag is what ships. Merging to main proves a change is good;
+    # tagging is the separate, deliberate act of putting it in front of users.
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
+  # Hotfix hatch: deploy the current ref without cutting a version.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,14 +17,13 @@ env:
 # A newer push on the same ref cancels the in-flight run, so we don't pay for
 # two ~10-minute runs when commits land in quick succession.
 #
-# EXCEPT on main, where that run also deploys. Cancelling it throws away a
-# finished build that was about to go live, so a burst of merges left the site
-# on an older commit with every check green — observed 2026-08-01, five merges
-# and one surviving deploy. On main the runs queue instead; everywhere else the
-# saving is real and the cost is nothing.
+# EXCEPT where the run can deploy — a tag, or a manual dispatch. Cancelling one
+# of those throws away a finished build that was about to go live, and a
+# cancelled queued run is indistinguishable from a slow one. Pull requests are
+# the only place the saving is free, so they are the only place it applies.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Gate the expensive jobs (integration + both E2E suites) so doc/markdown-only
@@ -234,7 +238,7 @@ jobs:
     name: Matrix Integration Tests
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.relevant == 'true'
+    if: needs.changes.outputs.relevant == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -299,7 +303,7 @@ jobs:
     name: E2E (two-browser)
     runs-on: ubuntu-latest
     needs: [changes, wasm]
-    if: needs.changes.outputs.relevant == 'true'
+    if: needs.changes.outputs.relevant == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -356,7 +360,7 @@ jobs:
     name: E2E (OAuth / Synapse+MAS)
     runs-on: ubuntu-latest
     needs: [changes, wasm]
-    if: needs.changes.outputs.relevant == 'true'
+    if: needs.changes.outputs.relevant == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -434,8 +438,7 @@ jobs:
     needs: [test, fmt, clippy, ui, wasm, billing, integration, e2e, e2e-oauth]
     if: >-
       always()
-      && github.ref == 'refs/heads/main'
-      && github.event_name == 'push'
+      && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
       && !contains(needs.*.result, 'failure')
       && !contains(needs.*.result, 'cancelled')
     env:

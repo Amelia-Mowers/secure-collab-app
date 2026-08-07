@@ -8,6 +8,24 @@ export default defineConfig({
   // behavior against this fixed value).
   define: {
     __BUILD_ID__: JSON.stringify('test-build'),
+    // Fixed, so the what's-new tests assert against a known version and a known
+    // changelog rather than against whatever the repo happens to say today.
+    __APP_VERSION__: JSON.stringify('1.2.3'),
+    __CHANGELOG__: JSON.stringify(`# Changelog
+
+## 1.2.3 — 2026-01-03
+
+- **Third** thing
+
+## 1.2.2 — 2026-01-02
+
+- Second thing
+  continued on the next line
+
+## 1.1.9 — 2026-01-01
+
+- First thing
+`),
   },
   plugins: [react(), wasm()],
   resolve: {

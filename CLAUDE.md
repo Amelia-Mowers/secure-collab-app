@@ -40,5 +40,8 @@ git history. To file or update work, prefer the workspace over editing markdown.
 ## Conventions
 
 - Ship work as small PRs; merge when CI is green.
+- **Merging to main does NOT deploy.** A `v*` tag does. See
+  [docs/RELEASING.md](./docs/RELEASING.md) — write the `CHANGELOG.md` entry
+  first, then `scripts/release.sh <version>`.
 - Architecture rationale: `docs/adr/`. Status
   snapshot: `STATUS.md`.

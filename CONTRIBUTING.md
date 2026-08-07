@@ -64,6 +64,9 @@ git push origin feature/your-feature-name
 
 Then create a pull request on GitHub.
 
+Merging does not deploy. Releases are cut deliberately from a version tag — see
+[docs/RELEASING.md](./docs/RELEASING.md).
+
 ## Coding Standards
 
 ### Rust Code

@@ -18,6 +18,7 @@ import { TrialGate } from './components/TrialStatus'
 import { UpdateBanner } from './components/UpdateBanner'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { WorkspacesPage } from './views/workspaces/WorkspacesPage'
+import { WhatsNewModal } from './components/WhatsNewModal'
 import { DemoShell } from './views/demo/DemoShell'
 import './App.css'
 
@@ -258,6 +259,10 @@ export default function App() {
           component also watches homeserver health. */}
       <ConnectionStatus />
       <UpdateBanner />
+      {/* Release notes for the version this user has not seen yet. Rendered at
+          the root rather than per-route so it survives navigation, and shown at
+          most once per release — a first-time visitor sees nothing. */}
+      <WhatsNewModal />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
         {/* OAuth popup redirect target — posts the callback URL to the opener
