@@ -7,9 +7,12 @@ import {
   APP_NAME,
   TAGLINE,
   DEFAULT_HOMESERVER_URL,
+  DEFAULT_HOMESERVER_LABEL,
+  IS_OFFICIAL_BUILD,
   OFFICIAL_HOMESERVER_URL,
   OFFICIAL_HOMESERVER_LABEL,
 } from '@/branding'
+import { describeSignupError } from '@/lib/signupErrors'
 import './SignInPage.css'
 
 // ── Suggested homeservers ────────────────────────────────────────────────────
@@ -23,12 +26,26 @@ interface HomeserverOption {
 // Two ways in, both first-class: the hosted server, or any server you run.
 // (General public servers were removed — they aren't a supported path; the
 // custom entry covers every self-host/BYO case, including local dev.)
+/**
+ * The one server this build offers, plus "Custom server" for anything else.
+ *
+ * Derived from the build rather than hardcoded, because a self-hosted TideWork
+ * must not advertise OUR homeserver: their users would be offered "TideWork —
+ * the official hosted server" above the operator's own, on a page the operator
+ * is hosting, and some would sign up on a stranger's service by accident.
+ */
 const SUGGESTED_SERVERS: HomeserverOption[] = [
-  {
-    label: OFFICIAL_HOMESERVER_LABEL,
-    url: OFFICIAL_HOMESERVER_URL,
-    description: 'The official hosted server — secure sign-in, managed & backed up',
-  },
+  IS_OFFICIAL_BUILD
+    ? {
+        label: OFFICIAL_HOMESERVER_LABEL,
+        url: OFFICIAL_HOMESERVER_URL,
+        description: 'The official hosted server — secure sign-in, managed & backed up',
+      }
+    : {
+        label: DEFAULT_HOMESERVER_LABEL,
+        url: DEFAULT_HOMESERVER_URL,
+        description: 'This server',
+      },
 ]
 
 type AuthMode = 'signin' | 'signup'
@@ -127,7 +144,11 @@ export function SignInPage() {
       }
       navigate('/workspaces')
     } catch (err: any) {
-      setLocalError(err?.message ?? `${mode === 'signup' ? 'Registration' : 'Sign-in'} failed`)
+      setLocalError(
+        mode === 'signup'
+          ? describeSignupError(err, homeserver.trim())
+          : (err?.message ?? 'Sign-in failed'),
+      )
     }
   }
 

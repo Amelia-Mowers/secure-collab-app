@@ -89,10 +89,53 @@ Serve `ui/dist` from any static host or web server. Two things matter:
 - **Serve it over HTTPS.** WebCrypto, which does the encryption, is unavailable
   on insecure origins. The app will not work over plain HTTP.
 
-To point a self-hosted app at a default homeserver, set `VITE_DEFAULT_HOMESERVER`
-at build time. Users can still choose another.
+**Point it at your homeserver at build time**, or your users are offered a
+server with no address:
+
+```sh
+VITE_DEFAULT_HOMESERVER=https://matrix.example.org \
+VITE_HOMESERVER_LABEL="Acme Internal" \
+  npm run build
+```
+
+A build that is not ours does **not** advertise our homeserver — the sign-in
+page offers yours and "Custom server", and nothing else. That is asserted by a
+test, because it used to list `matrix.tidework.io` unconditionally: an operator
+hosting the app for their own team was serving a page that offered a stranger's
+service above their own.
 
 ---
+
+## How accounts get created
+
+**Registration is closed by default**, and that is deliberate: an open Matrix
+server is found and abused within days, and you would be the one paying for it.
+
+So the default flow is:
+
+```sh
+./register-user.sh alice          # you create the account
+```
+
+and the user then signs in normally. The app's **Sign in** tab works against
+your server exactly as it does against ours — password login is what the whole
+browser end-to-end suite exercises.
+
+**What the app does when someone presses "Create account" anyway:** it tells
+them your server does not allow self-service sign-up, that this is a deliberate
+setting rather than a fault, and to ask whoever runs the server. It used to
+surface Synapse's raw `M_FORBIDDEN: Registration has been disabled`, which reads
+as "you are not allowed" and sends people to the wrong conclusion.
+
+**If you would rather let people sign themselves up**, set
+`SYNAPSE_ENABLE_REGISTRATION=true` and re-run `./setup.sh`. The app's Create
+account tab then works end to end — that is the configuration our e2e harness
+runs. But turn on email or captcha verification with it, or you will be relaying
+someone else's spam within the week. Synapse's own documentation covers both.
+
+There is no invitation-token flow in the app yet. If your server requires a
+registration token, the app will say so and tell the user to ask you for one,
+but it cannot prompt for it.
 
 ## Why Synapse
 

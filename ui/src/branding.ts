@@ -14,13 +14,48 @@ export const OFFICIAL_HOMESERVER_URL = 'https://matrix.tidework.io'
 export const OFFICIAL_HOMESERVER_LABEL = 'TideWork'
 
 /**
- * The homeserver pre-selected on the sign-in page. Build-time configurable so
- * the hosted deployment can default to the official server the moment phase B
- * goes live (set VITE_DEFAULT_HOMESERVER=https://matrix.tidework.io in that
- * build) without breaking dev/self-host builds, which keep the local Conduit.
+ * The homeserver this BUILD offers, set at build time with
+ * `VITE_DEFAULT_HOMESERVER`. Our deploy sets it to the official server; a
+ * self-hosted build sets it to theirs; a dev build gets the local Synapse.
+ *
+ * The fallback used to be `http://localhost:6167`, which was Conduit's port
+ * from before the harnesses moved to Synapse — dead for everybody, including us.
  */
-export const DEFAULT_HOMESERVER_URL: string =
-  (import.meta.env.VITE_DEFAULT_HOMESERVER as string | undefined) ?? 'http://localhost:6167'
+// `?? ` is not enough: `VITE_DEFAULT_HOMESERVER=` with nothing after it is a
+// realistic thing to leave in a .env, and an empty string is not nullish — the
+// sign-in page would offer a server with no address.
+const configuredHomeserver = (
+  import.meta.env.VITE_DEFAULT_HOMESERVER as string | undefined
+)?.trim()
+
+export const DEFAULT_HOMESERVER_URL: string = configuredHomeserver || 'http://localhost:8008'
+
+/**
+ * Is this the build we host? Everything user-facing that names TideWork as a
+ * SERVICE keys off this, rather than being hardcoded.
+ *
+ * A self-hosted build must not advertise our homeserver. Their users would see
+ * "TideWork — the official hosted server" offered above the operator's own, and
+ * some of them would pick it: signing up on a stranger's service, on a page the
+ * operator is hosting. The sign-in page listed it unconditionally.
+ */
+export const IS_OFFICIAL_BUILD: boolean = DEFAULT_HOMESERVER_URL === OFFICIAL_HOMESERVER_URL
+
+/**
+ * What to call this build's homeserver. `VITE_HOMESERVER_LABEL` overrides;
+ * otherwise the hostname, which is honest and needs no configuration.
+ */
+export const DEFAULT_HOMESERVER_LABEL: string =
+  (import.meta.env.VITE_HOMESERVER_LABEL as string | undefined)?.trim() ||
+  (IS_OFFICIAL_BUILD
+    ? OFFICIAL_HOMESERVER_LABEL
+    : (() => {
+        try {
+          return new URL(DEFAULT_HOMESERVER_URL).host
+        } catch {
+          return DEFAULT_HOMESERVER_URL
+        }
+      })())
 
 /** Where new users subscribe to get a hosted account (ADR 0002 phase D). */
 /**
