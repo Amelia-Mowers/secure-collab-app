@@ -20,6 +20,20 @@ set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# Find a real Python 3, by RUNNING each candidate rather than trusting that it
+# exists. Both halves of that were learned the hard way on the first use of this
+# script: `python3` is absent from Git Bash on Windows, and worse, Windows ships
+# a `python3` stub on PATH that only prints an advert for the Microsoft Store —
+# so `command -v python3` succeeds and the interpreter does not.
+PY_BIN=""
+for candidate in python3 python py; do
+  resolved="$(command -v "$candidate" 2>/dev/null)" || continue
+  "$resolved" -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)'     >/dev/null 2>&1 || continue
+  PY_BIN="$resolved"
+  break
+done
+[ -n "$PY_BIN" ] || die "python 3 is required (tried python3, python, py)"
+
 VERSION="${1:-}"
 [ -n "$VERSION" ] || die "usage: scripts/release.sh <version>   e.g. 0.1.2"
 echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
@@ -69,7 +83,7 @@ echo "  main is green"
 # ── Bump the version everywhere it is stated ────────────────────────────────
 # Three files say the version and nothing links them; the app reads the npm one
 # to decide which changelog entry to show, so drift there is user-visible.
-python3 - "$VERSION" <<'PY'
+"$PY_BIN" - "$VERSION" <<'PY'
 import pathlib, re, sys
 version = sys.argv[1]
 
@@ -88,7 +102,7 @@ PY
 
 # package-lock carries the version too; keep it consistent without a full install.
 if [ -f ui/package-lock.json ]; then
-  python3 - "$VERSION" <<'PY'
+  "$PY_BIN" - "$VERSION" <<'PY'
 import json, pathlib, sys
 version = sys.argv[1]
 p = pathlib.Path("ui/package-lock.json")
