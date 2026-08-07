@@ -87,13 +87,13 @@ rc_message:
   burst_count: 50
 
 # A single invitation-token sign-up is THREE requests, not one: the probe, the
-# token stage, and the dummy stage. At 0.5/s with a burst of 5 that throttles
-# part-way through the handshake — intermittently, depending on timing, which is
-# the worst way for it to fail. It produced a smoke-test failure in which the
-# server reported the dummy stage complete and the token stage outstanding, with
-# no mention of a rate limit anywhere in the response.
+# token stage, and the dummy stage. Synapse's 0.5/s with a burst of 5 is sized
+# for one, so a team arriving together would be throttled part-way through the
+# handshake.
 #
-# Sized for a team arriving at once, not for a public server.
+# (This was also blamed, wrongly, for an intermittent smoke-test failure. That
+# turned out to be a truncated token in the test's own parsing. The limits are
+# still worth raising for the reason above; they were not the bug.)
 rc_registration:
   per_second: 2
   burst_count: 30

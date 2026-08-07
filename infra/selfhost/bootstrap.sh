@@ -114,6 +114,16 @@ if 'token' not in d:
 print(d['token'])") || die "could not mint an invitation token"
 fi
 
+# Written where a machine can read it exactly. Scraping the pretty block below
+# is what broke the smoke test: its regex assumed the token alphabet and
+# silently TRUNCATED any token containing a character outside it, which failed
+# about one run in four and looked like a flake rather than a parsing bug.
+if [ -n "$INVITE" ]; then
+  printf '%s
+' "$INVITE" > data/invitation.txt
+  chmod 600 data/invitation.txt 2>/dev/null || true
+fi
+
 cat <<EOF
 
 ──────────────────────────────────────────────────────────────────────────────
@@ -125,7 +135,7 @@ EOF
 
 if [ -n "$INVITE" ]; then
   cat <<EOF
-  Invitation  $INVITE   (5 uses)
+  Invitation  $INVITE   (5 uses, also in data/invitation.txt)
 
 Give the invitation to the people you want on this server. They open
 https://app.tidework.io, choose "Custom server", enter https://$TIDEWORK_HOSTNAME,

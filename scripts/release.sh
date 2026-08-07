@@ -116,7 +116,16 @@ PY
 fi
 
 git add Cargo.toml ui/package.json ui/package-lock.json
-git commit -q -m "chore(release): $VERSION"
+# A re-cut of the same version has nothing to bump, and `git commit` with no
+# staged change exits non-zero — which under `set -e` aborts a release that is
+# otherwise perfectly valid. That happens whenever a tag's CI fails and the tag
+# is deleted and re-cut, which is exactly when you least want the tooling to
+# argue with you.
+if git diff --cached --quiet; then
+  echo "  version files already say $VERSION — nothing to bump"
+else
+  git commit -q -m "chore(release): $VERSION"
+fi
 
 # The tag message is the changelog entry, so `git show $TAG` and the GitHub
 # release say the same thing as the app's what's-new.
