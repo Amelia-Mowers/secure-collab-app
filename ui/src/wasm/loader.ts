@@ -17,6 +17,14 @@ export async function getWasmModule() {
       const out = await mod.default()
       linearMemory = out?.memory ?? null
       mod.init_panic_hook()
+      // Published so a test can watch the heap from outside the module. The
+      // wee_alloc leak (see `crates/app-core/src/lib.rs`) was invisible to every
+      // other kind of test we had — it changed no output, failed no assertion,
+      // and only ever showed up as a bare trap once the ceiling was reached, in
+      // production. `ui/e2e/heap.spec.ts` is the guard, and this is what it
+      // reads. Diagnostic only: a byte count, nothing writable.
+      const scope = globalThis as unknown as { __twWasmHeapBytes?: () => number | null }
+      scope.__twWasmHeapBytes = () => linearMemory?.buffer.byteLength ?? null
       return mod
     })()
   }
