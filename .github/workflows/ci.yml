@@ -356,6 +356,30 @@ jobs:
             ui/test-results/
           retention-days: 7
 
+  selfhost:
+    name: Self-host stack
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      # `infra/selfhost/` is documented as a supported path, which is only true
+      # if something runs it. This brings the stack up from nothing on every
+      # change: renders the config, starts Postgres and Synapse, registers a
+      # user, signs in the way TideWork signs in, and checks the homeserver
+      # capabilities the product depends on.
+      #
+      # Docker and compose are preinstalled on the runner; no setup step needed.
+      - name: Bring up the self-host stack and exercise it
+        run: bash infra/selfhost/smoke-test.sh
+
+      - name: Synapse logs on failure
+        if: ${{ failure() }}
+        run: |
+          cd infra/selfhost
+          docker compose -p tidework-selfhost-smoke -f docker-compose.yml -f docker-compose.smoke.yml             logs --tail 200 || true
+
   e2e-oauth:
     name: E2E (OAuth / Synapse+MAS)
     runs-on: ubuntu-latest
@@ -435,7 +459,7 @@ jobs:
     # dependency on a SKIPPED job skips this one too — which would stop a
     # docs-or-site-only push from ever deploying. Skipped is fine here; failed
     # is not.
-    needs: [test, fmt, clippy, ui, wasm, billing, integration, e2e, e2e-oauth]
+    needs: [test, fmt, clippy, ui, wasm, billing, integration, e2e, e2e-oauth, selfhost]
     if: >-
       always()
       && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')

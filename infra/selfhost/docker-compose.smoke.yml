@@ -1,0 +1,11 @@
+# Overrides for the smoke test only — never for a real deployment.
+#
+# The real compose file deliberately gives Synapse no host port, so nothing can
+# reach it except through Caddy over TLS. The smoke test has no public DNS name
+# and no way to obtain a certificate, so it publishes Synapse on localhost and
+# talks to it directly. Keeping that in a separate file means the safe default
+# cannot be weakened by accident: you would have to pass this file explicitly.
+services:
+  synapse:
+    ports:
+      - "127.0.0.1:8008:8008"

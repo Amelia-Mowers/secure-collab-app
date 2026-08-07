@@ -9,7 +9,22 @@ import { SignInPage } from './SignInPage'
  * the credentials form rendered first and was swapped for the SSO button a
  * moment later — a visible flicker on the most common path, and a form that
  * could never have worked.
+ *
+ * These tests are about THE BUILD WE HOST, so they say so rather than relying on
+ * the ambient default. The optimistic-SSO behaviour below is deliberately
+ * scoped to that build: a self-hosted TideWork suggests a plain Synapse with
+ * password accounts, and showing it an SSO button instead of the credentials
+ * form would make a correct deployment look broken on its first screen.
  */
+vi.mock('@/branding', async () => {
+  const actual = await vi.importActual<typeof import('@/branding')>('@/branding')
+  return {
+    ...actual,
+    DEFAULT_HOMESERVER_URL: actual.OFFICIAL_HOMESERVER_URL,
+    DEFAULT_HOMESERVER_LABEL: actual.OFFICIAL_HOMESERVER_LABEL,
+    IS_OFFICIAL_BUILD: true,
+  }
+})
 
 const checkOauthSupport = vi.fn()
 
@@ -34,14 +49,16 @@ function renderPage() {
   )
 }
 
-/** Select the hosted (suggested) server.
+/** Select the suggested server — whichever one this build offers.
  *
- *  Not the default in a dev/self-host build — there `VITE_DEFAULT_HOMESERVER`
- *  is unset and the default is a local Conduit, where a password form is
- *  genuinely right. The flicker this fixes is specific to the hosted build,
- *  whose default IS the MAS-backed server. */
+ *  Deliberately NOT matched by the name "TideWork": the suggestion is derived
+ *  from the build now, so a self-hosted build labels it by its own hostname.
+ *  Matching the brand would make this test assert something the product no
+ *  longer promises, and would fail for the wrong reason on any other build. */
 function selectHostedServer() {
-  fireEvent.click(screen.getByRole('button', { name: /TideWork/ }))
+  const suggested = document.querySelector('.signin__server-option')
+  if (!suggested) throw new Error('no suggested server button rendered')
+  fireEvent.click(suggested)
 }
 
 /** The credentials form, identified by its password field. */

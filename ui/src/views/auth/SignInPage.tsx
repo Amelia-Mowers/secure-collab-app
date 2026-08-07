@@ -7,9 +7,12 @@ import {
   APP_NAME,
   TAGLINE,
   DEFAULT_HOMESERVER_URL,
+  DEFAULT_HOMESERVER_LABEL,
+  IS_OFFICIAL_BUILD,
   OFFICIAL_HOMESERVER_URL,
   OFFICIAL_HOMESERVER_LABEL,
 } from '@/branding'
+import { describeSignupError } from '@/lib/signupErrors'
 import './SignInPage.css'
 
 // ── Suggested homeservers ────────────────────────────────────────────────────
@@ -23,12 +26,26 @@ interface HomeserverOption {
 // Two ways in, both first-class: the hosted server, or any server you run.
 // (General public servers were removed — they aren't a supported path; the
 // custom entry covers every self-host/BYO case, including local dev.)
+/**
+ * The one server this build offers, plus "Custom server" for anything else.
+ *
+ * Derived from the build rather than hardcoded, because a self-hosted TideWork
+ * must not advertise OUR homeserver: their users would be offered "TideWork —
+ * the official hosted server" above the operator's own, on a page the operator
+ * is hosting, and some would sign up on a stranger's service by accident.
+ */
 const SUGGESTED_SERVERS: HomeserverOption[] = [
-  {
-    label: OFFICIAL_HOMESERVER_LABEL,
-    url: OFFICIAL_HOMESERVER_URL,
-    description: 'The official hosted server — secure sign-in, managed & backed up',
-  },
+  IS_OFFICIAL_BUILD
+    ? {
+        label: OFFICIAL_HOMESERVER_LABEL,
+        url: OFFICIAL_HOMESERVER_URL,
+        description: 'The official hosted server — secure sign-in, managed & backed up',
+      }
+    : {
+        label: DEFAULT_HOMESERVER_LABEL,
+        url: DEFAULT_HOMESERVER_URL,
+        description: 'This server',
+      },
 ]
 
 type AuthMode = 'signin' | 'signup'
@@ -82,12 +99,20 @@ export function SignInPage() {
     }
   }, [homeserver, checkOauthSupport])
 
-  // Show the SSO flow whenever the server does next-gen auth — and, for the
+  // Show the SSO flow whenever the server does next-gen auth — and, for OUR
   // hosted server, while we are still asking and even if the probe failed.
-  const showOauth = authKind === 'oauth' || isSuggestedServer
+  //
+  // That optimism is specific to the server we run, which is MAS-backed and
+  // therefore known to do SSO. It must NOT extend to whatever server a
+  // self-hosted build suggests: `infra/selfhost/` is a plain Synapse with
+  // password accounts, and offering its users an SSO button that cannot work —
+  // while hiding the username and password fields that can — would make a
+  // correctly configured self-hosted deployment look broken on its first screen.
+  const optimisticSso = isSuggestedServer && IS_OFFICIAL_BUILD
+  const showOauth = authKind === 'oauth' || optimisticSso
   /** The hosted server should do SSO but the probe says otherwise: MAS is
    *  unreachable. Say so rather than silently offering a button that fails. */
-  const ssoUnavailable = isSuggestedServer && authKind === 'password'
+  const ssoUnavailable = optimisticSso && authKind === 'password'
 
   const handleOauthSignIn = async () => {
     setLocalError(null)
@@ -127,7 +152,11 @@ export function SignInPage() {
       }
       navigate('/workspaces')
     } catch (err: any) {
-      setLocalError(err?.message ?? `${mode === 'signup' ? 'Registration' : 'Sign-in'} failed`)
+      setLocalError(
+        mode === 'signup'
+          ? describeSignupError(err, homeserver.trim())
+          : (err?.message ?? 'Sign-in failed'),
+      )
     }
   }
 
