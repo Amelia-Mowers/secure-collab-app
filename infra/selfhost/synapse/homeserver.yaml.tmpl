@@ -41,21 +41,31 @@ max_upload_size: 50M
 log_config: "/data/log.config"
 report_stats: false
 
-# `SYNAPSE_OPEN_REGISTRATION=true` means ANYONE WHO FINDS THIS SERVER CAN CREATE
-# AN ACCOUNT, with no email, no captcha and no invitation. Both settings move
-# together because that is what Synapse needs to actually allow it — enabling
-# registration without a verification mechanism leaves a server that accepts
-# sign-ups and then refuses every one of them, which is worse than either.
+# Registration is ENABLED by default, and gated by an invitation token below —
+# so people sign themselves up, but only with a token you minted.
 #
-# Synapse does NOT stop you (checked against 1.148: there is no config error for
-# this). The cost is not hypothetical: open Matrix servers are found by
-# automation within days, and an abused server gets its domain defederated by
-# others, which is hard to undo.
+# These two move together because Synapse needs a verification mechanism to
+# actually allow sign-ups: enabling registration without one leaves a server
+# that accepts registrations and then refuses every one, which is worse than
+# either state. `registration_requires_token` below IS that mechanism.
 #
-# Default is `false`: create accounts with ./register-user.sh.
+# Turning the token requirement off leaves this server OPEN TO ANYONE who finds
+# it, with no email, captcha or invitation. Synapse does NOT stop you — checked
+# against 1.148, there is no config error for it. Open Matrix servers are found
+# by automation within days, and an abused one gets defederated by other
+# homeservers.
 enable_registration: ${SYNAPSE_OPEN_REGISTRATION}
 enable_registration_without_verification: ${SYNAPSE_OPEN_REGISTRATION}
 registration_shared_secret: "${SYNAPSE_REGISTRATION_SHARED_SECRET}"
+
+# The middle ground, and the one worth reaching for: registration is ON, but
+# every sign-up must present an invitation token you minted with
+# ./make-token.sh. Nobody can sign up without one, so the server is not open,
+# and you do not create an account by hand per person.
+#
+# Requires SYNAPSE_OPEN_REGISTRATION=true as well — "registration is enabled,
+# and here is the verification it requires".
+registration_requires_token: ${SYNAPSE_REGISTRATION_REQUIRES_TOKEN}
 
 # Off by default. Presence is the single most expensive feature in Synapse for
 # the least benefit to TideWork, which shows collaborators by their edits.
@@ -76,9 +86,17 @@ rc_message:
   per_second: 5
   burst_count: 50
 
+# A single invitation-token sign-up is THREE requests, not one: the probe, the
+# token stage, and the dummy stage. At 0.5/s with a burst of 5 that throttles
+# part-way through the handshake — intermittently, depending on timing, which is
+# the worst way for it to fail. It produced a smoke-test failure in which the
+# server reported the dummy stage complete and the token stage outstanding, with
+# no mention of a rate limit anywhere in the response.
+#
+# Sized for a team arriving at once, not for a public server.
 rc_registration:
-  per_second: 0.5
-  burst_count: 5
+  per_second: 2
+  burst_count: 30
 
 rc_login:
   address:

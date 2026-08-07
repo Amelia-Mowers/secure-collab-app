@@ -52,9 +52,8 @@ cd tidework/infra/selfhost
 cp .env.example .env
 $EDITOR .env          # set your domain and email; secrets are generated
 
-./setup.sh
-docker compose up -d
-./register-user.sh alice
+./setup.sh            # renders the config, makes the keys
+./bootstrap.sh        # starts it, creates your admin, prints your first invitation
 ```
 
 Then sign in at <https://app.tidework.io> with **Custom server**.
@@ -108,16 +107,20 @@ service above their own.
 
 ## How accounts get created
 
-**Registration is closed by default**, and that is deliberate: an open Matrix
-server is found and abused within days, and you would be the one paying for it.
+**The default is invitation-only.** People sign themselves up in the app, but
+only with a token you minted — so the server is not open to whoever finds it,
+and you are not creating an account by hand for every person.
 
-So the default flow is:
+`./bootstrap.sh` prints your first invitation; `./make-token.sh --uses 10
+--days 7` mints more. Users paste it into the *Invitation token* field on the
+Create account tab.
+
+You can still create accounts directly, and it is the right thing for a
+one-off:
 
 ```sh
-./register-user.sh alice          # you create the account
-```
-
-and the user then signs in normally. The app's **Sign in** tab works against
+./register-user.sh alice
+``` The app's **Sign in** tab works against
 your server exactly as it does against ours — password login is what the whole
 browser end-to-end suite exercises.
 
@@ -127,15 +130,43 @@ setting rather than a fault, and to ask whoever runs the server. It used to
 surface Synapse's raw `M_FORBIDDEN: Registration has been disabled`, which reads
 as "you are not allowed" and sends people to the wrong conclusion.
 
-**If you would rather let people sign themselves up**, set
-`SYNAPSE_OPEN_REGISTRATION=true` and re-run `./setup.sh`. The app's Create
-account tab then works end to end — that is the configuration our e2e harness
-runs. But turn on email or captcha verification with it, or you will be relaying
-someone else's spam within the week. Synapse's own documentation covers both.
+### Invitation tokens — the option worth reaching for
 
-There is no invitation-token flow in the app yet. If your server requires a
-registration token, the app will say so and tell the user to ask you for one,
-but it cannot prompt for it.
+Creating every account by hand does not scale past a few people, and an open
+server is found and abused within days. Tokens are the middle: people sign
+themselves up, but only with an invitation you minted.
+
+```sh
+# in .env
+SYNAPSE_OPEN_REGISTRATION=true
+SYNAPSE_REGISTRATION_REQUIRES_TOKEN=true
+```
+
+then `./setup.sh && docker compose up -d`, and:
+
+```sh
+./register-user.sh admin --admin     # once, an admin to mint with
+./make-token.sh --uses 10 --days 7   # an invitation for ten people, good for a week
+```
+
+Share the token. Your users open the app, choose **Custom server**, enter your
+homeserver, and paste it into the **Invitation token** field on the Create
+account tab. Nobody without a token can sign up.
+
+The whole handshake is covered by `smoke-test.sh`, both halves: a sign-up
+without a token is challenged for one, and the same sign-up with a valid token
+completes. So this cannot quietly stop working.
+
+### Fully open
+
+`SYNAPSE_OPEN_REGISTRATION=true` on its own means anyone who finds your server
+can create an account, with no email, no captcha and no invitation. Synapse does
+**not** stop you — there is no config error for it, checked against 1.148. The
+cost is not hypothetical: open Matrix servers are found by automation within
+days, and an abused server gets defederated by others, which breaks the
+cross-server collaboration your users wanted and is hard to undo.
+
+Reach for tokens instead unless you actually want a public service.
 
 ## Why Synapse
 

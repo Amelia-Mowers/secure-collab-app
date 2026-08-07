@@ -35,20 +35,15 @@ COMPOSE=(docker compose -p "$PROJECT" -f docker-compose.yml -f docker-compose.sm
 cleanup() {
   echo "--- cleaning up"
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-  rm -rf data .env setup.log
+  rm -rf data .env setup.log bootstrap.log
 }
 trap cleanup EXIT
 
 echo "--- setup"
-cat > .env <<EOF
-TIDEWORK_SERVER_NAME=$SERVER_NAME
-TIDEWORK_HOSTNAME=$SERVER_NAME
-TIDEWORK_ACME_EMAIL=smoke@$SERVER_NAME
-POSTGRES_PASSWORD=
-SYNAPSE_OPEN_REGISTRATION=false
-SYNAPSE_REGISTRATION_SHARED_SECRET=
-TIDEWORK_FEDERATION=true
-EOF
+# Derived from .env.example, NOT hand-written here: the point is to exercise the
+# defaults a real user gets. A test with its own config proves that config works
+# and says nothing about the one we ship.
+sed -e "s#^TIDEWORK_SERVER_NAME=.*#TIDEWORK_SERVER_NAME=$SERVER_NAME#"     -e "s#^TIDEWORK_HOSTNAME=.*#TIDEWORK_HOSTNAME=$SERVER_NAME#"     -e "s#^TIDEWORK_ACME_EMAIL=.*#TIDEWORK_ACME_EMAIL=smoke@$SERVER_NAME#"     .env.example > .env
 
 # `bash ./setup.sh`, not `./setup.sh`: the executable bit does not survive every
 # checkout (Windows, a downloaded zip), and CI failed on exactly that — "Permission
@@ -164,6 +159,67 @@ curl -fsS -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application
   "http://localhost:8008/_matrix/client/v3/rooms/$ROOM/send/io.tidework.cell.update/smoke1" >/dev/null \
   || fail "could not send TideWork's custom event type"
 ok "io.tidework.cell.update accepted"
+
+# ── The invitation-token flow ───────────────────────────────────────────────
+#
+# This is the configuration worth recommending — self-serve sign-up that is not
+# open to the world — so it is the one that must not quietly break. Re-render
+# with tokens required, restart, and prove BOTH halves: a sign-up without a
+# token is refused, and the same sign-up with one succeeds.
+echo "--- invitation-token registration"
+
+# No re-render here: invitation-only IS the default now, so this is the shipped
+# configuration rather than a variant the test switched into.
+grep -q '^registration_requires_token: true' data/synapse/homeserver.yaml   || fail "the default config does not require an invitation token"
+ok "invitation tokens are the shipped default"
+
+# Without a token: the server must OFFER the token stage and refuse to proceed.
+FLOWS=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"username":"tokenless","password":"smoke-password-12345"}' \
+  "http://localhost:8008/_matrix/client/v3/register" \
+  | "$PY_BIN" -c "import json,sys; d=json.load(sys.stdin); print(' '.join(sorted({s for f in d.get('flows',[]) for s in f.get('stages',[])})))")
+case "$FLOWS" in
+  *m.login.registration_token*) ;;
+  *) fail "server did not ask for a registration token (offered: ${FLOWS:-nothing})" ;;
+esac
+ok "sign-up without a token is challenged for one"
+
+# The real first-run path, not a reimplementation of it: bootstrap.sh is what a
+# user runs, so it is what gets tested. It starts the stack, creates the admin
+# and mints the first invitation.
+SMOKE_COMPOSE="${COMPOSE[*]}" TIDEWORK_ADMIN_USER=smokeadmin TIDEWORK_ADMIN_PASSWORD=smoke-password-12345   bash ./bootstrap.sh > bootstrap.log 2>&1 || { cat bootstrap.log; fail "bootstrap.sh"; }
+REG_TOKEN=$(grep -oE 'Invitation  [A-Za-z0-9_-]+' bootstrap.log | awk '{print $2}')
+[ -n "$REG_TOKEN" ] || { cat bootstrap.log; fail "bootstrap.sh printed no invitation token"; }
+ok "bootstrap.sh created the admin and minted an invitation"
+
+# With the token: the same two-stage handshake `complete_registration` performs.
+SESSION=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d '{"username":"tokenuser","password":"smoke-password-12345"}' \
+  "http://localhost:8008/_matrix/client/v3/register" \
+  | "$PY_BIN" -c "import json,sys; print(json.load(sys.stdin).get('session',''))")
+[ -n "$SESSION" ] || fail "no UIA session offered"
+
+# Keep this response and check it. Discarding it turned "the token stage was
+# rejected" into a confusing failure two steps later, where the server reported
+# the dummy stage complete and the token stage still outstanding, with no hint
+# as to why.
+TOKEN_STAGE=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"tokenuser\",\"password\":\"smoke-password-12345\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"$REG_TOKEN\",\"session\":\"$SESSION\"}}" \
+  "http://localhost:8008/_matrix/client/v3/register")
+# Assert on `completed`, NOT on the string appearing anywhere in the response:
+# a UIA challenge always LISTS the token stage under `flows`, so a grep for the
+# name passes even when the token was rejected. A check that cannot fail is
+# worse than no check — this one silently passed through two flaky runs.
+echo "$TOKEN_STAGE" \
+  | "$PY_BIN" -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if 'm.login.registration_token' in d.get('completed',[]) else 1)" \
+  || fail "the token stage did not complete: $(echo "$TOKEN_STAGE" | head -c 400)"
+
+FINAL=$(curl -sS -X POST -H 'Content-Type: application/json' \
+  -d "{\"username\":\"tokenuser\",\"password\":\"smoke-password-12345\",\"auth\":{\"type\":\"m.login.dummy\",\"session\":\"$SESSION\"}}" \
+  "http://localhost:8008/_matrix/client/v3/register")
+echo "$FINAL" | grep -q '"user_id"' \
+  || fail "registration with a valid token did not complete: $(echo "$FINAL" | head -c 200)"
+ok "@tokenuser registered with the invitation token"
 
 echo
 echo "PASS — this stack serves a homeserver TideWork can use."

@@ -92,8 +92,9 @@ enum Command {
     /// account from a script, because login always verifies against secure
     /// backup and the CLI could not previously mint a key at all.
     ///
-    /// Only works where registration is open. Production closes it — accounts
-    /// there come from MAS.
+    /// Needs a homeserver that allows registration — open, or gated behind an
+    /// invitation token (`--registration-token`). Production closes it
+    /// entirely; accounts there come from MAS.
     Register {
         /// Homeserver URL, e.g. http://localhost:8448
         #[arg(long)]
@@ -105,6 +106,11 @@ enum Command {
         /// it out of shell history and out of argv).
         #[arg(long)]
         password: Option<String>,
+        /// Invitation token, for a homeserver that requires one
+        /// (`registration_requires_token`). Also read from
+        /// TIDEWORK_REGISTRATION_TOKEN.
+        #[arg(long)]
+        registration_token: Option<String>,
     },
     /// Show the currently logged-in user, or report that none is.
     Whoami,
@@ -431,7 +437,8 @@ async fn run() -> Result<()> {
             homeserver,
             user,
             password,
-        } => do_register(homeserver, user, password).await,
+            registration_token,
+        } => do_register(homeserver, user, password, registration_token).await,
         Command::Whoami => whoami().await,
         Command::Logout => logout(),
         Command::Workspace { command } => match command {
@@ -614,7 +621,12 @@ fn reset_local_state(paths: &session::Paths) -> Result<()> {
 /// capture it with `$(...)` without also capturing the chatter. It is shown
 /// exactly once and never stored — same contract as the web client's
 /// "save your recovery key" screen, for the same reason.
-async fn do_register(homeserver: String, user: String, password: Option<String>) -> Result<()> {
+async fn do_register(
+    homeserver: String,
+    user: String,
+    password: Option<String>,
+    registration_token: Option<String>,
+) -> Result<()> {
     let password = password
         .or_else(|| std::env::var("TIDEWORK_PASSWORD").ok())
         .filter(|p| !p.is_empty())
@@ -626,9 +638,21 @@ async fn do_register(homeserver: String, user: String, password: Option<String>)
     reset_local_state(&paths)?;
     paths.ensure_dirs()?;
 
-    let client = MatrixClient::register(&homeserver, &paths.store_dir, &user, &password)
-        .await
-        .context("registration failed")?;
+    // Env var as well as flag, for the same reason as the password: a token
+    // pasted into argv ends up in shell history and in `ps`.
+    let registration_token = registration_token
+        .or_else(|| std::env::var("TIDEWORK_REGISTRATION_TOKEN").ok())
+        .filter(|t| !t.is_empty());
+
+    let client = MatrixClient::register(
+        &homeserver,
+        &paths.store_dir,
+        &user,
+        &password,
+        registration_token.as_deref(),
+    )
+    .await
+    .context("registration failed")?;
 
     // One sync before enabling recovery. enable_recovery waits for the backup
     // to finish uploading, and on a client that has never synced that wait does

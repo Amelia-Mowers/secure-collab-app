@@ -64,6 +64,7 @@ export function SignInPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [registrationToken, setRegistrationToken] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(isAddAccount || accounts.length === 0)
   /** What kind of auth the selected homeserver offers (MSC3861 next-gen auth
@@ -146,7 +147,7 @@ export function SignInPage() {
 
     try {
       if (mode === 'signup') {
-        await signUp(homeserver.trim(), username.trim(), password)
+        await signUp(homeserver.trim(), username.trim(), password, registrationToken.trim())
       } else {
         await signIn(homeserver.trim(), username.trim(), password)
       }
@@ -408,6 +409,30 @@ export function SignInPage() {
                 value={confirmPassword}
                 onChange={e => setConfirmPassword(e.target.value)}
                 autoComplete="new-password"
+              />
+            </div>
+          )}
+
+          {/* Optional, because most servers do not ask for one — but a
+              self-hosted server that gates sign-up behind an invitation token
+              has no other way to accept it, and without this field its users
+              could only be created by the operator running a shell command per
+              person. Always shown rather than revealed after a failure: a
+              server cannot be asked whether it wants a token without first
+              attempting a registration. */}
+          {mode === 'signup' && (
+            <div>
+              <label className="signin__label" htmlFor="registration-token">
+                Invitation token <span className="signin__optional">optional</span>
+              </label>
+              <input
+                id="registration-token"
+                className="signin__input"
+                type="text"
+                placeholder="Only if your server requires one"
+                value={registrationToken}
+                onChange={e => setRegistrationToken(e.target.value)}
+                autoComplete="off"
               />
             </div>
           )}

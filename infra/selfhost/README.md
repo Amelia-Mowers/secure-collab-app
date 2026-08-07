@@ -12,13 +12,16 @@ self-hoster needs. TideWork signs in here with a username and password.
 ```sh
 cp .env.example .env
 $EDITOR .env          # domain + email; secrets are generated for you
-./setup.sh
-docker compose up -d
-./register-user.sh alice
+./setup.sh            # renders the config, makes the keys
+./bootstrap.sh        # starts it, creates your admin, prints your first invitation
 ```
 
-Then open <https://app.tidework.io>, choose **Custom server**, and enter your
-homeserver URL.
+`bootstrap.sh` ends by printing an **invitation token**. Give it to the people
+you want on the server: they open <https://app.tidework.io>, choose **Custom
+server**, enter your homeserver URL, and paste the invitation into the
+*Invitation token* field when creating an account.
+
+Nobody without an invitation can sign up. Mint more with `./make-token.sh`.
 
 ## Before you start
 
@@ -44,13 +47,20 @@ but ciphertext is not smaller than plaintext.
 | `TIDEWORK_HOSTNAME` | Where Synapse answers; what the certificate is for |
 | `TIDEWORK_ACME_EMAIL` | Let's Encrypt expiry warnings |
 | `SYNAPSE_OPEN_REGISTRATION` | `false` by default — see below |
+| `SYNAPSE_REGISTRATION_REQUIRES_TOKEN` | With the above, self-serve sign-up gated by an invitation token |
 | `TIDEWORK_FEDERATION` | `true` lets your users collaborate across servers |
 | `*_IMAGE` | Pinned to the versions our suites test against |
 
-**Registration is closed by default.** An open Matrix server is found and abused
-within days. Create accounts with `./register-user.sh`, which uses a shared
-secret and never sends it over the network. If you do open registration, turn on
-email or captcha verification with it.
+**Registration is closed by default.** Create accounts with
+`./register-user.sh`, which uses a shared secret and never puts it on the
+network.
+
+**For a team, use invitation tokens instead of either extreme.** Set both
+`SYNAPSE_OPEN_REGISTRATION=true` and `SYNAPSE_REGISTRATION_REQUIRES_TOKEN=true`,
+then `./make-token.sh --uses 10`. People sign themselves up in the app with the
+token you give them, and nobody without one can. Fully open registration means
+anyone who finds the server can create an account — Synapse does not stop you,
+and an abused server gets defederated by other homeservers.
 
 ## Upgrading
 
@@ -109,7 +119,9 @@ after itself:
 | `Caddyfile` | TLS, reverse proxy, and the `.well-known` delegation documents |
 | `synapse/homeserver.yaml.tmpl` | The Synapse config, with the reasoning in comments |
 | `setup.sh` | Generates secrets and the signing key, renders the config |
-| `register-user.sh` | Creates an account |
+| `bootstrap.sh` | Starts the stack, creates the admin, mints the first invitation |
+| `register-user.sh` | Creates an account directly, without an invitation |
+| `make-token.sh` | Mints an invitation token so others can create their own |
 | `smoke-test.sh` | Brings the whole thing up and proves it works |
 
 Fuller context, including hosting the app itself, is in

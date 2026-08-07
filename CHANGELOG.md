@@ -17,6 +17,13 @@ entry; `scripts/release.sh` refuses to cut a tag without one.
   working. [Guide](https://github.com/Amelia-Mowers/tidework/blob/main/docs/SELF_HOSTING.md).
 - Already have a Matrix homeserver? You never needed any of that: open the app,
   choose **Custom server**, and sign in.
+- **Invitation tokens, and they are the default.** A self-hosted server now
+  starts invitation-only: people sign themselves up in the app, but only with a
+  token the operator minted. Previously the only options were an open server —
+  found and abused within days — or an administrator creating every account by
+  hand. `./bootstrap.sh` starts the stack, creates the admin and prints the
+  first invitation; the app has a field for it on the Create account tab, and
+  the CLI takes `--registration-token`.
 - **A self-hosted copy of the app no longer offers our homeserver.** The sign-in
   page listed the official TideWork server unconditionally, so an operator
   running the app for their own team was serving a page that suggested somebody

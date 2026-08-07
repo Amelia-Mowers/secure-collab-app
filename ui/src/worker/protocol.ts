@@ -418,13 +418,16 @@ export const VERIFICATION_METHODS = new Set([
  * an incoming `session.create` instead of splatting whatever arrived into a
  * wasm constructor.
  *
- *   login/register    (homeserver, user, password, storePassphrase?)
+ *   login             (homeserver, user, password, storePassphrase?)
+ *   register          (homeserver, user, password, storePassphrase?, registrationToken?)
  *   restore           (homeserver, sessionData, storePassphrase?)
  *   finishOauthLogin  (redirectedUrl)
  */
 export const SESSION_FACTORY_ARITY: Record<SessionVia, { min: number; max: number }> = {
   login: { min: 3, max: 4 },
-  register: { min: 3, max: 4 },
+  // 5 args: a homeserver with `registration_requires_token` needs an invitation
+  // token as the last one.
+  register: { min: 3, max: 5 },
   restore: { min: 2, max: 3 },
   finishOauthLogin: { min: 1, max: 1 },
 }

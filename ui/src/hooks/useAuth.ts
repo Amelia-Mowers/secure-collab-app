@@ -287,7 +287,12 @@ interface AuthState {
 
   // Actions
   signIn: (homeserver: string, user: string, password: string) => Promise<void>
-  signUp: (homeserver: string, user: string, password: string) => Promise<void>
+  signUp: (
+    homeserver: string,
+    user: string,
+    password: string,
+    registrationToken?: string,
+  ) => Promise<void>
   /** Next-gen auth (MAS) sign-in via the popup flow (ADR 0002). The popup is
    *  injected: the caller must open it synchronously in its click handler —
    *  popup blockers only allow window.open during user activation. */
@@ -1738,7 +1743,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── signUp: register a new account and log in ────────────────────────────────
   const signUp = useCallback(
-    async (homeserver: string, user: string, password: string) => {
+    async (homeserver: string, user: string, password: string, registrationToken?: string) => {
       setLoading(true)
       setError(null)
 
@@ -1753,6 +1758,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user,
           password,
           await deriveStorePassphraseFromDataKey(dataKey),
+          // Only sent when the user supplied one; a server that does not ask
+          // for a token ignores it, and undefined keeps the argument count at
+          // what older bindings expect.
+          registrationToken?.trim() || undefined,
         ])
         await ms.initialSync()
         await completeSignIn(ms, homeserver, user)

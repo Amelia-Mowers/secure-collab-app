@@ -186,9 +186,9 @@ impl MatrixSession {
 
     /// Register a new account on the homeserver and log in.
     ///
-    /// Uses the Matrix Client-Server `register` endpoint. If the server
-    /// requires a dummy UIAA stage (common for Conduit and Synapse with
-    /// open registration) it is handled automatically.
+    /// Uses the Matrix Client-Server `register` endpoint, walking whichever
+    /// user-interactive auth stages the server asks for: the invitation token
+    /// when it wants one, the dummy stage otherwise.
     #[wasm_bindgen]
     pub async fn register(
         homeserver_url: String,
@@ -196,8 +196,12 @@ impl MatrixSession {
         password: String,
         // At-rest encryption (issue c72ec5df): see `login`. None = plaintext.
         store_passphrase: Option<String>,
+        // Invitation token, for a homeserver with `registration_requires_token`.
+        // The middle ground between an open server (abused within days) and
+        // creating every account by hand (does not scale past a few people).
+        registration_token: Option<String>,
     ) -> Result<MatrixSession, JsValue> {
-        use matrix_sdk::ruma::api::client::{account::register, uiaa};
+        use matrix_sdk::ruma::api::client::account::register;
 
         let store_name = new_store_name(&username);
         let client = Client::builder()
@@ -232,33 +236,16 @@ impl MatrixSession {
         request.password = Some(password.clone());
         request.initial_device_display_name = Some("TideWork".to_owned());
 
-        let result = client.matrix_auth().register(request).await;
-
-        match result {
-            Ok(_response) => {
-                // Registration succeeded without UIAA (rare but possible)
-            }
-            Err(err) => {
-                // Check if the error is a UIAA response requiring a dummy stage
-                if let Some(info) = err.as_uiaa_response() {
-                    let mut dummy = uiaa::Dummy::new();
-                    dummy.session = info.session.clone();
-                    let mut retry = register::v3::Request::new();
-                    retry.username = Some(username.clone());
-                    retry.password = Some(password.clone());
-                    retry.initial_device_display_name = Some("TideWork".to_owned());
-                    retry.auth = Some(uiaa::AuthData::Dummy(dummy));
-
-                    client
-                        .matrix_auth()
-                        .register(retry)
-                        .await
-                        .map_err(|e| JsValue::from_str(&format!("Registration failed: {e}")))?;
-                } else {
-                    return Err(JsValue::from_str(&format!("Registration failed: {err}")));
-                }
-            }
-        }
+        // The same stage-walking used by the CLI, so a homeserver that works for
+        // one client works for the other. It handles the invitation-token stage
+        // as well as the dummy one, and names any stage it cannot do.
+        tables_over_matrix::matrix::complete_registration(
+            &client,
+            request,
+            registration_token.as_deref().filter(|t| !t.is_empty()),
+        )
+        .await
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let user_id = client.user_id().map(|u| u.to_owned());
 
