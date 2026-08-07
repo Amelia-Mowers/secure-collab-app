@@ -1,0 +1,75 @@
+# A Matrix homeserver for TideWork, self-hosted.
+#
+# Three containers and nothing else: Synapse, its database, and a reverse proxy
+# that gets a TLS certificate on its own. Deliberately NOT a copy of the hosted
+# stack in `infra/` — that one also runs an OIDC provider, a Stripe integration
+# and Synapse workers, none of which you need. TideWork signs in to this with a
+# username and password.
+#
+#   cp .env.example .env && $EDITOR .env
+#   ./setup.sh
+#   docker compose up -d
+#
+# See README.md in this directory.
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env — run ./setup.sh}
+      POSTGRES_DB: synapse
+      # Synapse REFUSES to start on a database with any other collation, and the
+      # error arrives long after `docker compose up` appears to have worked.
+      # initdb only honours this when the data directory is first created, so
+      # getting it wrong means deleting the volume and starting again.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  synapse:
+    image: ${SYNAPSE_IMAGE:-matrixdotorg/synapse:v1.148.0}
+    restart: unless-stopped
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+      - ./data/synapse:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8008/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    # No host port. Nothing reaches Synapse except through Caddy, so there is no
+    # way to accidentally expose it unencrypted.
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TIDEWORK_HOSTNAME: ${TIDEWORK_HOSTNAME:?set TIDEWORK_HOSTNAME in .env}
+      TIDEWORK_SERVER_NAME: ${TIDEWORK_SERVER_NAME:?set TIDEWORK_SERVER_NAME in .env}
+      TIDEWORK_ACME_EMAIL: ${TIDEWORK_ACME_EMAIL:?set TIDEWORK_ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - synapse
+
+volumes:
+  postgres:
+  caddy-data:
+  caddy-config:

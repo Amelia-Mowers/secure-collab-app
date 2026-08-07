@@ -7,6 +7,17 @@ these lines are read by people who do not know what a `RefCell` is.
 Format: newest first, `## <version> — <date>`. Every released version has an
 entry; `scripts/release.sh` refuses to cut a tag without one.
 
+## 0.1.2 — 2026-08-07
+
+- **Self-hosting is now a supported path, not a worked example.**
+  `infra/selfhost/` brings up a complete Matrix homeserver — Synapse, Postgres,
+  and a proxy that obtains its own TLS certificate — from one config file and
+  `docker compose up`. It is exercised from nothing on every change by CI, which
+  registers a user and signs in the way the app does, so it cannot quietly stop
+  working. [Guide](https://github.com/Amelia-Mowers/tidework/blob/main/docs/SELF_HOSTING.md).
+- Already have a Matrix homeserver? You never needed any of that: open the app,
+  choose **Custom server**, and sign in.
+
 ## 0.1.1 — 2026-08-07
 
 - **Fixed a memory leak that could make the app stop responding.** After a long

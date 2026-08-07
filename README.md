@@ -129,17 +129,37 @@ Contribution workflow and coding standards are in
 
 ## Self-hosting
 
-The app is a static site; point it at any Matrix homeserver. `infra/` holds the
-deployment used in production (Synapse + MAS behind nginx, with healthchecks), and
-[docs/HOSTING_SETUP.md](./docs/HOSTING_SETUP.md) documents that setup.
+The app is a static site with no backend of its own — it holds your keys and talks
+only to the homeserver you point it at. So there are two things you might host,
+and most people only need the second.
 
-It works — it is Matrix — but the configs are written for *our* deployment, not
-parameterised for yours, and there is no supported upgrade path yet. Treat it as a
-worked example rather than a product.
+**Already have a Matrix homeserver?** Open [app.tidework.io](https://app.tidework.io),
+choose *Custom server*, and sign in. That is the whole procedure.
+
+**Starting from nothing?** [`infra/selfhost/`](./infra/selfhost/) is a
+parameterised stack — Synapse, Postgres, and a proxy that gets its own TLS
+certificate:
+
+```sh
+cd infra/selfhost && cp .env.example .env && $EDITOR .env
+./setup.sh && docker compose up -d && ./register-user.sh alice
+```
+
+**It is tested, not asserted.** `infra/selfhost/smoke-test.sh` brings that stack
+up from nothing on every CI run — renders the config, starts Postgres and
+Synapse, registers a user, signs in the way TideWork signs in, and checks the
+homeserver capabilities the product depends on. A release is blocked if it fails.
+
+Full detail, including hosting the app itself and what we *don't* support yet:
+**[docs/SELF_HOSTING.md](./docs/SELF_HOSTING.md)**.
 
 Use **Synapse**, not Conduit: Conduit omits invite-time fields the shared-history path
 depends on, so collaborator history degrades. The test harnesses run Synapse for the
 same reason.
+
+`infra/` (as opposed to `infra/selfhost/`) is our *production* deployment —
+Synapse + MAS + Stripe + workers — kept in the open for transparency rather than
+for reuse. [docs/OPERATING.md](./docs/OPERATING.md) is its runbook.
 
 ## Project layout
 

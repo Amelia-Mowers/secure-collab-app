@@ -1,0 +1,125 @@
+# Rendered to data/synapse/homeserver.yaml by ./setup.sh. Edit the template,
+# re-run setup.sh, and restart — editing the rendered file works until the next
+# setup.sh overwrites it.
+
+server_name: "${TIDEWORK_SERVER_NAME}"
+public_baseurl: "https://${TIDEWORK_HOSTNAME}/"
+pid_file: /data/homeserver.pid
+# Synapse's `generate` names this after the server, not "signing.key" — so this
+# path has to match, and a mismatch fails at startup rather than at setup.
+signing_key_path: "/data/${TIDEWORK_SERVER_NAME}.signing.key"
+
+# TideWork talks to Synapse over HTTP inside the compose network; Caddy
+# terminates TLS. `x_forwarded` makes Synapse trust the proxy's headers, which
+# is what rate limiting and logging use to see the real client address.
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: true
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: "${POSTGRES_PASSWORD}"
+    database: synapse
+    host: postgres
+    port: 5432
+    cp_min: 5
+    cp_max: 10
+
+media_store_path: /data/media_store
+# Uploaded files are not end-to-end encrypted by TideWork today; the workspace
+# data is. Keep this modest and see README.md before raising it.
+max_upload_size: 50M
+
+log_config: "/data/log.config"
+report_stats: false
+
+enable_registration: ${SYNAPSE_ENABLE_REGISTRATION}
+# Open registration without email or captcha verification is how a Matrix server
+# becomes somebody else's spam relay. If you turn registration on, turn one of
+# those on with it.
+enable_registration_without_verification: ${SYNAPSE_ENABLE_REGISTRATION}
+registration_shared_secret: "${SYNAPSE_REGISTRATION_SHARED_SECRET}"
+
+# Off by default. Presence is the single most expensive feature in Synapse for
+# the least benefit to TideWork, which shows collaborators by their edits.
+presence:
+  enabled: false
+
+# ── Rate limits ─────────────────────────────────────────────────────────────
+#
+# Synapse's default is `rc_message: 0.2/s, burst 10` — one message every five
+# seconds after the first ten. That is sized for chat, and TideWork is not chat:
+# creating a table from a template, importing a CSV, or dragging a card that
+# reorders its neighbours all send a BURST of events. At the default, a template
+# import visibly stalls part-way through and finishes minutes later.
+#
+# These are sized for a small trusted server. If yours is open to the public,
+# lower them — and expect imports to be slow.
+rc_message:
+  per_second: 5
+  burst_count: 50
+
+rc_registration:
+  per_second: 0.5
+  burst_count: 5
+
+rc_login:
+  address:
+    per_second: 0.2
+    burst_count: 5
+  account:
+    per_second: 0.2
+    burst_count: 5
+  failed_attempts:
+    per_second: 0.1
+    burst_count: 3
+
+rc_joins:
+  local:
+    per_second: 1
+    burst_count: 20
+  remote:
+    per_second: 0.1
+    burst_count: 10
+
+rc_invites:
+  per_room:
+    per_second: 1
+    burst_count: 20
+  per_user:
+    per_second: 1
+    burst_count: 20
+
+# ── Federation ──────────────────────────────────────────────────────────────
+federation_domain_whitelist_enabled: false
+${FEDERATION_BLOCK}
+
+# Synapse asks these servers for other servers' signing keys. matrix.org is the
+# default and is a reasonable trust anchor; empty it to talk to nobody but
+# yourself (federation will then only work with servers you fetch keys from
+# directly).
+trusted_key_servers:
+  - server_name: "matrix.org"
+suppress_key_server_warning: true
+
+# ── Things TideWork depends on ──────────────────────────────────────────────
+#
+# End-to-end encryption itself needs no server configuration: keys are made and
+# held by clients, and Synapse only ever stores ciphertext. What the server DOES
+# provide is the encrypted key-backup store and cross-signing key storage, both
+# of which are standard and on by default.
+#
+# One behaviour matters and is the reason this stack specifies Synapse rather
+# than a lighter homeserver: when a user is invited to a workspace, TideWork
+# relies on the invite carrying complete stripped state so the new collaborator
+# can see the room's history properly. Conduit omits the inviter's membership
+# there, which degrades shared history. TideWork's integration and browser
+# end-to-end suites both run against Synapse for the same reason.

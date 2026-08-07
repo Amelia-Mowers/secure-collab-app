@@ -1,0 +1,43 @@
+# Caddy obtains and renews the TLS certificate itself. Nothing to run, nothing
+# to cron, no certbot.
+
+{
+	email {$TIDEWORK_ACME_EMAIL}
+}
+
+{$TIDEWORK_HOSTNAME} {
+	# The Matrix client and federation APIs. Everything TideWork speaks to is
+	# under these two prefixes.
+	handle /_matrix/* {
+		reverse_proxy synapse:8008
+	}
+	handle /_synapse/client/* {
+		reverse_proxy synapse:8008
+	}
+
+	# Delegation, served from the homeserver's own hostname.
+	#
+	# This is what makes `@alice:example.org` work while Synapse actually lives
+	# at `matrix.example.org`. It is served HERE as well as on the apex because
+	# a client that has already been told to talk to this host may still ask —
+	# and answering costs nothing, whereas a missing answer is a confusing
+	# failure much later.
+	handle /.well-known/matrix/server {
+		header Content-Type application/json
+		header Access-Control-Allow-Origin *
+		respond `{"m.server": "{$TIDEWORK_HOSTNAME}:443"}`
+	}
+	handle /.well-known/matrix/client {
+		header Content-Type application/json
+		# CORS matters: this is fetched by a browser from the app's origin. A
+		# missing header here is the classic "works with curl, fails in the
+		# app" self-hosting failure.
+		header Access-Control-Allow-Origin *
+		respond `{"m.homeserver": {"base_url": "https://{$TIDEWORK_HOSTNAME}"}}`
+	}
+
+	# Anything else on this hostname is not ours to answer.
+	handle {
+		respond "Not found" 404
+	}
+}

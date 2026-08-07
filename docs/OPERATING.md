@@ -1,4 +1,12 @@
-# Hosting setup — what *you* have to do
+# Operating tidework.io — what *we* had to do
+
+> **This is not a self-hosting guide.** It is the provisioning runbook for the
+> hosted service: our domain, our Cloudflare account, our Stripe, our droplet.
+> Most of it is already ticked off and specific to `tidework.io`, so following
+> it will not get you a homeserver.
+>
+> To run TideWork yourself, see **[SELF_HOSTING.md](./SELF_HOSTING.md)** and
+> **[`infra/selfhost/`](../infra/selfhost/)**.
 
 The human-action checklist for ADR 0002 phase B (and the phase D
 prerequisites). Everything here needs accounts, payment details, or domain
