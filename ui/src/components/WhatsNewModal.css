@@ -1,0 +1,130 @@
+.whats-new__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 12, 20, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.whats-new {
+  width: min(560px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.whats-new__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.whats-new__head h2 {
+  margin: 0;
+  font-size: var(--size-lg);
+  color: var(--text);
+}
+
+.whats-new__close {
+  /* 36px: a touch target, not a mouse target. */
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.whats-new__close:hover,
+.whats-new__close:focus-visible {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.whats-new__body {
+  padding: 4px 18px 8px;
+  overflow-y: auto;
+}
+
+.whats-new__entry h3 {
+  margin: 18px 0 8px;
+  font-size: var(--size-base);
+  color: var(--text);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.whats-new__date {
+  font-family: var(--font-mono);
+  font-size: var(--size-xs);
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.whats-new__entry p {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.whats-new__entry ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.whats-new__entry li {
+  margin-bottom: 8px;
+}
+
+.whats-new__entry strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.whats-new__foot {
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.whats-new__ok {
+  padding: 9px 20px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--size-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.whats-new__ok:hover {
+  filter: brightness(1.05);
+}
+
+@media (max-width: 768px) {
+  .whats-new__scrim {
+    padding: 12px;
+  }
+  .whats-new {
+    max-height: 88vh;
+  }
+}
