@@ -17,6 +17,16 @@ entry; `scripts/release.sh` refuses to cut a tag without one.
   working. [Guide](https://github.com/Amelia-Mowers/tidework/blob/main/docs/SELF_HOSTING.md).
 - Already have a Matrix homeserver? You never needed any of that: open the app,
   choose **Custom server**, and sign in.
+- **A self-hosted copy of the app no longer offers our homeserver.** The sign-in
+  page listed the official TideWork server unconditionally, so an operator
+  running the app for their own team was serving a page that suggested somebody
+  else's service above their own. It now offers the server that build was
+  configured for, and nothing else.
+- **A clearer message when a server does not allow sign-ups.** Self-hosted
+  servers ship with registration closed, so pressing "Create account" against
+  one used to show `M_FORBIDDEN: Registration has been disabled` — which reads
+  as "you are not allowed". It now says the server does not allow self-service
+  sign-up, that this is deliberate, and to ask whoever runs it.
 
 ## 0.1.1 — 2026-08-07
 
