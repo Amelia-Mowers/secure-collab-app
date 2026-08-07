@@ -43,5 +43,17 @@ git history. To file or update work, prefer the workspace over editing markdown.
 - **Merging to main does NOT deploy.** A `v*` tag does. See
   [docs/RELEASING.md](./docs/RELEASING.md) — write the `CHANGELOG.md` entry
   first, then `scripts/release.sh <version>`.
+- **Keep `README.md` true in the same PR that makes it untrue.** It is the first
+  thing a visitor reads and the easiest thing to leave behind — its test-count
+  table had drifted by 50 UI tests and 10 e2e specs, and its "what is missing"
+  list still claimed search did not exist and there was no demo, both of which
+  had shipped. Stale docs that UNDERSELL are as wrong as ones that oversell.
+  Specifically, when a change affects any of these, edit them with it:
+  - what the product can do, or the honest limitations (`README.md` Status,
+    `STATUS.md` known gaps)
+  - the test-count table (`README.md`) — take the numbers from a real run
+  - how to build, run or release it (`README.md`, `docs/RELEASING.md`,
+    `CONTRIBUTING.md`)
+  - anything user-visible → also a `CHANGELOG.md` entry, in their words
 - Architecture rationale: `docs/adr/`. Status
   snapshot: `STATUS.md`.
