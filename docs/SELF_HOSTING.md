@@ -52,9 +52,8 @@ cd tidework/infra/selfhost
 cp .env.example .env
 $EDITOR .env          # set your domain and email; secrets are generated
 
-./setup.sh
-docker compose up -d
-./register-user.sh alice
+./setup.sh            # renders the config, makes the keys
+./bootstrap.sh        # starts it, creates your admin, prints your first invitation
 ```
 
 Then sign in at <https://app.tidework.io> with **Custom server**.
@@ -108,16 +107,20 @@ service above their own.
 
 ## How accounts get created
 
-**Registration is closed by default**, and that is deliberate: an open Matrix
-server is found and abused within days, and you would be the one paying for it.
+**The default is invitation-only.** People sign themselves up in the app, but
+only with a token you minted — so the server is not open to whoever finds it,
+and you are not creating an account by hand for every person.
 
-So the default flow is:
+`./bootstrap.sh` prints your first invitation; `./make-token.sh --uses 10
+--days 7` mints more. Users paste it into the *Invitation token* field on the
+Create account tab.
+
+You can still create accounts directly, and it is the right thing for a
+one-off:
 
 ```sh
-./register-user.sh alice          # you create the account
-```
-
-and the user then signs in normally. The app's **Sign in** tab works against
+./register-user.sh alice
+``` The app's **Sign in** tab works against
 your server exactly as it does against ours — password login is what the whole
 browser end-to-end suite exercises.
 
