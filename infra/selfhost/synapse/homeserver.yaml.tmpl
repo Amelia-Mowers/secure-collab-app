@@ -41,8 +41,9 @@ max_upload_size: 50M
 log_config: "/data/log.config"
 report_stats: false
 
-# Registration is ENABLED by default, and gated by an invitation token below —
-# so people sign themselves up, but only with a token you minted.
+# Set from .env, which ships both as `true`: registration is enabled, and gated
+# by an invitation token — people sign themselves up, but only with a token you
+# minted.
 #
 # These two move together because Synapse needs a verification mechanism to
 # actually allow sign-ups: enabling registration without one leaves a server
@@ -50,10 +51,9 @@ report_stats: false
 # either state. `registration_requires_token` below IS that mechanism.
 #
 # Turning the token requirement off leaves this server OPEN TO ANYONE who finds
-# it, with no email, captcha or invitation. Synapse does NOT stop you — checked
-# against 1.148, there is no config error for it. Open Matrix servers are found
-# by automation within days, and an abused one gets defederated by other
-# homeservers.
+# it, with no email, captcha or invitation. Synapse does NOT stop you — there is
+# no config error for it. Open Matrix servers are found by automation within
+# days, and an abused one gets defederated by other homeservers.
 enable_registration: ${SYNAPSE_OPEN_REGISTRATION}
 enable_registration_without_verification: ${SYNAPSE_OPEN_REGISTRATION}
 registration_shared_secret: "${SYNAPSE_REGISTRATION_SHARED_SECRET}"
@@ -90,10 +90,6 @@ rc_message:
 # token stage, and the dummy stage. Synapse's 0.5/s with a burst of 5 is sized
 # for one, so a team arriving together would be throttled part-way through the
 # handshake.
-#
-# (This was also blamed, wrongly, for an intermittent smoke-test failure. That
-# turned out to be a truncated token in the test's own parsing. The limits are
-# still worth raising for the reason above; they were not the bug.)
 rc_registration:
   per_second: 2
   burst_count: 30
