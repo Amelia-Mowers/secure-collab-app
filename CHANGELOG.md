@@ -7,6 +7,15 @@ these lines are read by people who do not know what a `RefCell` is.
 Format: newest first, `## <version> — <date>`. Every released version has an
 entry; `scripts/release.sh` refuses to cut a tag without one.
 
+## Unreleased
+
+- **Edit a formula from the cell it computes.** Click a computed value and the
+  formula opens right there, evaluated against your real rows as you type — so
+  you can see what it will produce before saving it over every row. Previously
+  the only way in was the column header's menu, several steps from the value you
+  were looking at, with no preview at all. Column names insert with a click, and
+  a formula that is broken everywhere says so instead of letting you save it.
+
 ## 0.1.3 — 2026-08-08
 
 - **Formula columns update as you type, not when you leave the page.** Editing a

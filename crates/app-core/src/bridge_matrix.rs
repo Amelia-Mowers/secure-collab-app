@@ -2507,6 +2507,23 @@ impl ConnectedWorkspace {
         Ok(json.to_string())
     }
 
+    /// Evaluate a formula against the first `limit` rows without saving it —
+    /// the formula editor's live preview. Local and read-only: nothing is
+    /// written and nothing is sent, so typing in the editor cannot touch the
+    /// room or the outbox.
+    #[wasm_bindgen(js_name = previewFormula)]
+    pub fn preview_formula(
+        &self,
+        table_id: String,
+        formula: String,
+        limit: usize,
+    ) -> Result<String, JsValue> {
+        let ws = self.inner.borrow();
+        ws.preview_formula(&table_id, &formula, limit)
+            .map(|v| v.to_string())
+            .map_err(|_| JsValue::from_str("Table not found"))
+    }
+
     /// Map of `table_id -> manual-ordering key` as a JSON object, for the UI's
     /// drag-to-reorder of the table list.
     #[wasm_bindgen(js_name = getTableOrderKeys)]

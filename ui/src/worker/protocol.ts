@@ -372,6 +372,7 @@ export const WORKSPACE_METHODS = new Set([
   'isEncrypted', 'undecryptableCount', 'connectionHealth', 'rejectedWrites',
   'keyBackupCaughtUp', 'flushKeyBackup', 'retryUndecryptable',
   'pendingUpdates', 'exportTableCsv', 'exportWorkspaceZip', 'previewCsvImport',
+  'previewFormula',
   // writes
   'createTable', 'renameTable', 'deleteTable', 'setTableOrder',
   'createView', 'deleteView',

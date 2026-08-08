@@ -95,6 +95,10 @@ export interface WorkspaceHandle {
   exportTableCsv?(tableId: string): string | Promise<string>
   /** The whole workspace as a zip — the same container the CLI reads. */
   exportWorkspaceZip?(name: string): Uint8Array | Promise<Uint8Array>
+  /** Evaluate a formula against the first `limit` rows WITHOUT saving it — the
+   *  formula editor's live preview. Read-only in the core: nothing is written
+   *  and nothing is sent, so typing in the editor cannot touch the room. */
+  previewFormula?(tableId: string, formula: string, limit: number): string | Promise<string>
   /** Audit local state against a full re-gather and repair any difference
    *  (issue 48f042ba). Expensive — user-initiated, never scheduled. */
   checkIntegrity?(): Promise<string>
