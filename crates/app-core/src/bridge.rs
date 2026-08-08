@@ -26,6 +26,10 @@ pub const LOCAL_USER_ID: &str = "@you:local.invalid";
 #[wasm_bindgen]
 pub struct WasmWorkspace {
     workspace: Workspace,
+    /// Monotonic across every import into this workspace, so a second CSV into
+    /// the same table cannot reuse the row ids the first one minted. A
+    /// per-call counter would restart at zero and overwrite them.
+    next_row: u64,
 }
 
 #[wasm_bindgen]
@@ -35,6 +39,7 @@ impl WasmWorkspace {
     pub fn new(id: String) -> Self {
         Self {
             workspace: Workspace::new(id),
+            next_row: 0,
         }
     }
 
@@ -293,9 +298,9 @@ impl WasmWorkspace {
         // Row ids only have to be unique within this workspace, and a local one
         // is never merged with another, so a counter is enough — no timestamp
         // needed, which also keeps this deterministic for tests.
-        let mut n = 0u64;
+        let n = &mut self.next_row;
         let result = archive.apply_to_workspace(&mut self.workspace, &mut |table, row| {
-            n += 1;
+            *n += 1;
             format!("row_{n}_{table}_{row}")
         });
         Ok(serde_json::json!({
@@ -350,6 +355,84 @@ impl WasmWorkspace {
                 crate::Error::TableNotFound => JsValue::from_str("Table not found"),
                 _ => JsValue::from_str("Failed to set table order"),
             })
+    }
+
+    // ── Import / export ─────────────────────────────────────────────────────
+    //
+    // These four mirror `ConnectedWorkspace` name-for-name, and that is what
+    // makes them visible: the Sidebar feature-detects each one
+    // (`typeof workspace.exportTableCsv === 'function'`) rather than being told
+    // which kind of workspace it has. Without them the demo silently rendered
+    // no import or export controls at all — not disabled, absent — so a visitor
+    // evaluating the product saw a version of it missing the feature that
+    // answers "can I get my data in, and back out again?".
+    //
+    // Nothing here needs a session. CSV and archive handling is workspace-level
+    // (ADR 0004); the only thing the Matrix bridge adds is sending the updates
+    // afterwards, and a local workspace discards them exactly as `deleteRow`
+    // and `importWorkspaceArchive` above do.
+
+    /// Export one table as a standalone CSV: headers are column names and
+    /// references render as labels, so it opens as an ordinary spreadsheet.
+    #[wasm_bindgen(js_name = exportTableCsv)]
+    pub fn export_table_csv(&self, table_id: String) -> Result<String, JsValue> {
+        crate::archive::table_to_csv(&self.workspace, &table_id)
+            .ok_or_else(|| JsValue::from_str("Table not found"))
+    }
+
+    /// Export the whole workspace as a zip — the same container the CLI reads,
+    /// so a demo export opens in the real product.
+    #[wasm_bindgen(js_name = exportWorkspaceZip)]
+    pub fn export_workspace_zip(&self, name: String) -> Result<Vec<u8>, JsValue> {
+        crate::archive::Archive::from_workspace(&self.workspace, name)
+            .to_zip()
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Inspect a CSV without importing it — see
+    /// [`crate::archive::preview_csv_import`], which both bridges share.
+    #[wasm_bindgen(js_name = previewCsvImport)]
+    pub fn preview_csv_import(
+        &self,
+        table_id: String,
+        csv: &str,
+        sample: usize,
+        overrides_json: &str,
+    ) -> String {
+        let overrides: Vec<crate::schema::ColumnDefinition> =
+            serde_json::from_str(overrides_json).unwrap_or_default();
+        crate::archive::preview_csv_import(&self.workspace, &table_id, csv, sample, &overrides)
+            .to_string()
+    }
+
+    /// Import a CSV into `table_id`, creating it as `table_name` if absent and
+    /// appending if not. Returns `{rowsWritten, issues}`, matching the Matrix
+    /// binding so the same caller handles both.
+    #[wasm_bindgen(js_name = importCsv)]
+    pub fn import_csv(
+        &mut self,
+        table_id: String,
+        table_name: String,
+        csv: String,
+        columns_json: String,
+    ) -> Result<String, JsValue> {
+        let confirmed: Vec<crate::schema::ColumnDefinition> =
+            serde_json::from_str(&columns_json).unwrap_or_default();
+        let table = crate::archive::csv_import_table(&table_id, &table_name, &csv, confirmed);
+
+        let n = &mut self.next_row;
+        let result = crate::archive::Archive {
+            name: table_name,
+            description: String::new(),
+            tables: vec![table],
+            views: Vec::new(),
+        }
+        .apply_to_workspace(&mut self.workspace, &mut |_, row| {
+            *n += 1;
+            format!("row_{n}_{row}")
+        });
+
+        Ok(crate::archive::import_result_json(&result).to_string())
     }
 
     /// Map of `table_id -> manual-ordering key` as a JSON object.

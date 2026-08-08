@@ -1489,6 +1489,121 @@ pub fn table_to_csv(workspace: &Workspace, table_id: &str) -> Option<String> {
     Some(write_csv(&rows))
 }
 
+/// Inspect a CSV without importing it — the data behind the preview step.
+/// Returns `{columns:[{id,name,type,options,existing}], rows, totalRows,
+/// issues}`, where `rows` is capped at `sample` records and `issues` is the
+/// full dry-run result, so the user sees the failure count before committing
+/// rather than after.
+///
+/// When `table_id` names a table that already exists, its live columns win on
+/// type and are flagged `existing`, so the preview shows what will actually
+/// happen rather than what the CSV alone suggests.
+///
+/// `overrides` is the column list as the user has edited it so far (empty on
+/// first open) — re-previewing after a type change re-validates against it.
+///
+/// Lives here, not in a bridge: both the Matrix-backed workspace and the
+/// local one offer import, and a second copy of this would be a second set of
+/// inference rules to keep in step.
+pub fn preview_csv_import(
+    workspace: &Workspace,
+    table_id: &str,
+    csv: &str,
+    sample: usize,
+    overrides: &[ColumnDefinition],
+) -> serde_json::Value {
+    let table = table_from_csv(table_id, table_id, csv);
+    let existing = workspace.get_table_schema(table_id);
+
+    // Precedence, weakest first: inferred from the CSV, the live column if the
+    // destination already has one by that name, then the user's own choice —
+    // which always wins, because inference is only a starting point.
+    let effective: Vec<ColumnDefinition> = table
+        .columns
+        .iter()
+        .map(|c| {
+            let live = existing
+                .as_ref()
+                .and_then(|s| s.columns.values().find(|e| e.name == c.name));
+            let chosen = overrides.iter().find(|o| o.name == c.name);
+            chosen.or(live).unwrap_or(c).clone()
+        })
+        .collect();
+
+    let columns: Vec<serde_json::Value> = table
+        .columns
+        .iter()
+        .zip(&effective)
+        .map(|(c, e)| {
+            serde_json::json!({
+                "id": e.id,
+                "name": c.name,
+                "type": column_type_name(&e.column_type),
+                "options": e.options,
+                "existing": existing
+                    .as_ref()
+                    .is_some_and(|s| s.columns.values().any(|x| x.name == c.name)),
+            })
+        })
+        .collect();
+
+    let header: Vec<&String> = table.columns.iter().map(|c| &c.name).collect();
+    let rows: Vec<Vec<String>> = table
+        .rows
+        .iter()
+        .take(sample)
+        .map(|r| {
+            header
+                .iter()
+                .map(|h| r.get(*h).cloned().unwrap_or_default())
+                .collect()
+        })
+        .collect();
+
+    let issues = validate_table(workspace, &table, &effective);
+
+    serde_json::json!({
+        "columns": columns,
+        "rows": rows,
+        "totalRows": table.rows.len(),
+        "issues": issues.iter().map(|i| serde_json::json!({
+            "row": i.row,
+            "column": i.column,
+            "message": i.message,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// Build the table an import will apply: the CSV parsed, with the user's
+/// confirmed column list matched onto it by header name. Anything they did not
+/// mention keeps its inferred type.
+pub fn csv_import_table(
+    table_id: &str,
+    table_name: &str,
+    csv: &str,
+    confirmed: Vec<ColumnDefinition>,
+) -> ArchiveTable {
+    let mut table = table_from_csv(table_id, table_name, csv);
+    for c in confirmed {
+        if let Some(target) = table.columns.iter_mut().find(|t| t.name == c.name) {
+            *target = c;
+        }
+    }
+    table
+}
+
+/// The `{rowsWritten, issues}` shape both bridges return from an import.
+pub fn import_result_json(result: &ImportResult) -> serde_json::Value {
+    serde_json::json!({
+        "rowsWritten": result.rows_written,
+        "issues": result.issues.iter().map(|i| serde_json::json!({
+            "row": i.row,
+            "column": i.column,
+            "message": i.message,
+        })).collect::<Vec<_>>(),
+    })
+}
+
 fn ordered_columns(def: &TableDefinition) -> Vec<ColumnDefinition> {
     let mut columns: Vec<ColumnDefinition> = def.columns.values().cloned().collect();
     // `None` sorts last (legacy columns predate ordering), then by id so the
@@ -1632,6 +1747,119 @@ mod tests {
     #[test]
     fn writing_is_deterministic() {
         assert_eq!(sample_archive().to_files(), sample_archive().to_files());
+    }
+
+    /// A workspace with `sample_archive` already applied — the "importing into
+    /// a table that already exists" case, which is where the preview's
+    /// precedence rules actually matter.
+    fn seeded_workspace() -> Workspace {
+        let mut ws = Workspace::new("w");
+        let mut n = 0u64;
+        sample_archive().apply_to_workspace(&mut ws, &mut |_, _| {
+            n += 1;
+            format!("r{n}")
+        });
+        ws
+    }
+
+    #[test]
+    fn preview_infers_types_and_counts_rows_without_writing() {
+        let ws = Workspace::new("w");
+        let csv = "Title,Count\na,1\nb,2\nc,3\n";
+        let p = preview_csv_import(&ws, "new_table", csv, 2, &[]);
+
+        assert_eq!(p["totalRows"], 3);
+        // `sample` caps the preview rows, not the count above it.
+        assert_eq!(p["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(p["columns"][0]["name"], "Title");
+        assert_eq!(p["columns"][1]["type"], "number");
+        // Nothing may be written by a preview.
+        assert!(ws.get_table_schema("new_table").is_none());
+    }
+
+    #[test]
+    fn preview_flags_existing_columns_and_takes_their_type() {
+        let ws = seeded_workspace();
+        // "Status" is a Select in the live table; the CSV alone would infer
+        // text from these two high-cardinality-looking values.
+        let csv = "Title,Status\nx,Todo\ny,Done\n";
+        let p = preview_csv_import(&ws, "tasks", csv, 8, &[]);
+
+        let status = p["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "Status")
+            .unwrap()
+            .clone();
+        assert_eq!(status["existing"], true);
+        assert_eq!(status["type"], "select");
+    }
+
+    #[test]
+    fn a_user_override_beats_both_the_csv_and_the_live_column() {
+        let ws = seeded_workspace();
+        let csv = "Title,Status\nx,Todo\n";
+        let mut override_col = col("status", "Status", ColumnType::Text);
+        override_col.options = None;
+
+        let p = preview_csv_import(&ws, "tasks", csv, 8, std::slice::from_ref(&override_col));
+        let status = p["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "Status")
+            .unwrap()
+            .clone();
+        // The live column says select, the user said text — the user wins.
+        assert_eq!(status["type"], "text");
+    }
+
+    #[test]
+    fn preview_reports_what_would_not_apply() {
+        let ws = seeded_workspace();
+        // "Nobody" is not a row in People, so this reference cannot resolve.
+        let csv = "Title,Owner\nx,Nobody\n";
+        let p = preview_csv_import(&ws, "tasks", csv, 8, &[]);
+        let issues = p["issues"].as_array().unwrap();
+        assert!(
+            !issues.is_empty(),
+            "an unresolvable reference should be reported before committing"
+        );
+    }
+
+    #[test]
+    fn confirmed_columns_are_matched_onto_the_csv_by_name() {
+        let mut chosen = col("status", "Status", ColumnType::Select);
+        chosen.options = Some(vec!["Todo".into()]);
+        let table = csv_import_table("tasks", "Tasks", "Title,Status\nx,Todo\n", vec![chosen]);
+
+        let status = table.columns.iter().find(|c| c.name == "Status").unwrap();
+        assert_eq!(status.column_type, ColumnType::Select);
+        // Untouched columns keep whatever the CSV implied.
+        let title = table.columns.iter().find(|c| c.name == "Title").unwrap();
+        assert_eq!(title.column_type, ColumnType::Text);
+    }
+
+    #[test]
+    fn an_import_appends_to_an_existing_table() {
+        let mut ws = seeded_workspace();
+        let before = ws.get_table_rows("tasks").unwrap().len();
+
+        let table = csv_import_table("tasks", "Tasks", "Title\nsecond\n", vec![]);
+        let result = Archive {
+            name: "Tasks".into(),
+            description: String::new(),
+            tables: vec![table],
+            views: Vec::new(),
+        }
+        .apply_to_workspace(&mut ws, &mut |_, row| format!("imported_{row}"));
+
+        assert_eq!(result.rows_written, 1);
+        assert_eq!(ws.get_table_rows("tasks").unwrap().len(), before + 1);
+        let json = import_result_json(&result);
+        assert_eq!(json["rowsWritten"], 1);
+        assert!(json["issues"].is_array());
     }
 
     #[test]
