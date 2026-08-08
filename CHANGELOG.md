@@ -9,6 +9,12 @@ entry; `scripts/release.sh` refuses to cut a tag without one.
 
 ## Unreleased
 
+- **Formula columns update as you type, not when you leave the page.** Editing a
+  cell a formula depends on left the computed value showing its old answer until
+  you switched views or reloaded — so a total could sit there contradicting the
+  numbers above it. It now recalculates as soon as the edit lands, in the grid,
+  cards, board and the single-record view.
+
 - **The demo can import and export, like the rest of the product.** Try it
   without an account and you could not get a CSV in or out — the buttons were
   not disabled, they were simply absent, so the demo quietly showed a version of

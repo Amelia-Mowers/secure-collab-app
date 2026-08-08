@@ -304,6 +304,43 @@ export function useTable(
     }
   }, [])
 
+  /**
+   * Does this table have any formula columns?
+   *
+   * Formula cells are computed at READ time in the core and never stored
+   * (`workspace.rs`), so they only change when rows are re-read. The optimistic
+   * path below patches the single edited cell in place — which is right for
+   * stored values and wrong for computed ones: every formula depending on that
+   * cell kept its old answer until something else forced a re-read, i.e. a view
+   * switch or a reload. The comment on the sync effect claimed "the mutation's
+   * own completion will refresh if needed"; it did not.
+   *
+   * Read once per table rather than per edit, and re-read on `syncCount` so a
+   * newly added formula column starts counting. Tables without formulas keep
+   * the cheap path — `getTableRows` is the hot call, and re-reading it on every
+   * keystroke-commit of every table would be a real cost for a case most
+   * tables do not have.
+   */
+  const hasFormulaRef = useRef(false)
+  useEffect(() => {
+    if (!workspace) {
+      hasFormulaRef.current = false
+      return
+    }
+    try {
+      const schema = JSON.parse(workspace.getTableSchema(tableId)) as {
+        columns?: Record<string, { column_type?: string }>
+      }
+      hasFormulaRef.current = Object.values(schema?.columns ?? {}).some(
+        c => c?.column_type === 'formula',
+      )
+    } catch {
+      // A table that isn't materialized yet — the mount fetch will retry, and
+      // being wrong here only costs a stale formula until the next sync.
+      hasFormulaRef.current = false
+    }
+  }, [workspace, tableId, syncCount])
+
   const fetchRows = useCallback(async (isInitial = true) => {
     if (!workspace) {
       setLoading(false)
@@ -373,6 +410,18 @@ export function useTable(
 
         // Apply to WASM + send to Matrix (may be async for ConnectedWorkspace)
         await workspace.updateCell(tableId, rowId, columnId, valueJson)
+
+        // Recompute this row's formula cells, which the optimistic patch above
+        // cannot: they are derived in the core at read time, so the only way to
+        // get the new answer is to read again.
+        //
+        // Only when this is the LAST write in flight. An earlier pending
+        // mutation may not have reached wasm yet, and re-reading would replace
+        // its optimistic value with the pre-edit one — a visible flicker back
+        // to the old text. That write does its own re-read when it lands.
+        if (hasFormulaRef.current && pendingMutationsRef.current === 1) {
+          await fetchRows(false)
+        }
 
         // Signal sibling tabs that something changed (no data sent)
         if (workspaceId) {
