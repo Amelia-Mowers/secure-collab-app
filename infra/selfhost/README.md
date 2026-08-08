@@ -7,22 +7,6 @@ This is **not** a copy of the hosted stack in `infra/`. That one also runs an
 OIDC provider, a Stripe integration and Synapse workers — none of which a
 self-hoster needs. TideWork signs in here with a username and password.
 
-## Quick start
-
-```sh
-cp .env.example .env
-$EDITOR .env          # domain + email; secrets are generated for you
-./setup.sh            # renders the config, makes the keys
-./bootstrap.sh        # starts it, creates your admin, prints your first invitation
-```
-
-`bootstrap.sh` ends by printing an **invitation token**. Give it to the people
-you want on the server: they open <https://app.tidework.io>, choose **Custom
-server**, enter your homeserver URL, and paste the invitation into the
-*Invitation token* field when creating an account.
-
-Nobody without an invitation can sign up. Mint more with `./make-token.sh`.
-
 ## Before you start
 
 **DNS.** Point `TIDEWORK_HOSTNAME` at this machine with an A/AAAA record, and
@@ -39,6 +23,22 @@ the delegation files `./setup.sh` prints.
 Postgres wants disk more than memory. The database only ever holds ciphertext,
 but ciphertext is not smaller than plaintext.
 
+## Quick start
+
+```sh
+cp .env.example .env
+$EDITOR .env          # domain + email; secrets are generated for you
+./setup.sh            # renders the config, makes the keys
+./bootstrap.sh        # starts it, creates your admin, prints your first invitation
+```
+
+`bootstrap.sh` ends by printing an **invitation token**. Give it to the people
+you want on the server: they open <https://app.tidework.io>, choose **Custom
+server**, enter your homeserver URL, and paste the invitation into the
+*Invitation token* field when creating an account.
+
+Nobody without an invitation can sign up. Mint more with `./make-token.sh`.
+
 ## What the settings do
 
 | Setting | Notes |
@@ -46,21 +46,25 @@ but ciphertext is not smaller than plaintext.
 | `TIDEWORK_SERVER_NAME` | Permanent. The `:server` half of every user ID |
 | `TIDEWORK_HOSTNAME` | Where Synapse answers; what the certificate is for |
 | `TIDEWORK_ACME_EMAIL` | Let's Encrypt expiry warnings |
-| `SYNAPSE_OPEN_REGISTRATION` | `false` by default — see below |
-| `SYNAPSE_REGISTRATION_REQUIRES_TOKEN` | With the above, self-serve sign-up gated by an invitation token |
+| `SYNAPSE_OPEN_REGISTRATION` | `true`, together with the line below — see *Accounts* |
+| `SYNAPSE_REGISTRATION_REQUIRES_TOKEN` | `true`. Self-serve sign-up, gated by an invitation token |
 | `TIDEWORK_FEDERATION` | `true` lets your users collaborate across servers |
-| `*_IMAGE` | Pinned to the versions our suites test against |
+| `*_IMAGE` | Pinned to the versions we test against |
 
-**Registration is closed by default.** Create accounts with
-`./register-user.sh`, which uses a shared secret and never puts it on the
-network.
+## Accounts
 
-**For a team, use invitation tokens instead of either extreme.** Set both
-`SYNAPSE_OPEN_REGISTRATION=true` and `SYNAPSE_REGISTRATION_REQUIRES_TOKEN=true`,
-then `./make-token.sh --uses 10`. People sign themselves up in the app with the
-token you give them, and nobody without one can. Fully open registration means
-anyone who finds the server can create an account — Synapse does not stop you,
-and an abused server gets defederated by other homeservers.
+**Invitation-only by default** — the two registration settings above are both
+`true`, which means people sign themselves up in the app but only with a token
+you minted. `./bootstrap.sh` prints your first one; `./make-token.sh --uses 10
+--days 7` mints more. Nobody without a token can sign up.
+
+To create an account yourself instead, `./register-user.sh alice`. It uses the
+shared secret and never puts it on the network.
+
+To close sign-up entirely, set `SYNAPSE_OPEN_REGISTRATION=false`. To open it to
+anyone, set `SYNAPSE_REGISTRATION_REQUIRES_TOKEN=false` — but an open Matrix
+server is found by automation within days, and an abused one gets defederated by
+other homeservers. Either way, re-run `./setup.sh && docker compose up -d`.
 
 ## Upgrading
 
@@ -95,20 +99,37 @@ bring it back — those decrypt data, they do not store it.
 ## Is it working?
 
 ```sh
-curl https://your.homeserver/_matrix/client/versions
+curl https://your.homeserver/_matrix/client/versions   # should return JSON
 docker compose ps
 docker compose logs -f synapse
 ```
 
-The stack itself is exercised on every change to this repository by
-`./smoke-test.sh`, which brings it up from nothing, registers a user, signs in
-the way TideWork does, and checks the homeserver capabilities the product needs.
-You can run it locally too — it uses a throwaway project name and cleans up
-after itself:
+`./smoke-test.sh` brings the whole stack up from nothing, registers a user,
+signs in the way TideWork does, and checks the capabilities the app needs. It
+uses a throwaway project name and cleans up after itself, so it is safe to run
+alongside a real deployment. CI runs it on every change to this repository.
 
-```sh
-./smoke-test.sh
-```
+### When it is not
+
+**No certificate / Caddy retries forever.** Port 80 must be reachable from the
+internet — Let's Encrypt uses it to validate, and a firewall or a router that
+only forwards 443 is the most common first-run failure. Check `docker compose
+logs caddy`.
+
+**The app cannot reach the server, but `curl` can.** If `TIDEWORK_SERVER_NAME`
+differs from `TIDEWORK_HOSTNAME`, the delegation documents at the server name
+need `Access-Control-Allow-Origin: *`. A browser will not follow them without
+it. `./setup.sh` prints the exact contents.
+
+**Sign-up is refused with "invalid registration token".** Tokens expire and have
+a use count. Mint a fresh one with `./make-token.sh`.
+
+**Imports stall part-way through.** Rate limits — see `rc_message` in
+`synapse/homeserver.yaml.tmpl`.
+
+**Synapse will not start after an edit.** Check `data/synapse/homeserver.yaml`,
+not the template. Re-running `./setup.sh` overwrites it from the template, which
+is where edits should go.
 
 ## Files
 
