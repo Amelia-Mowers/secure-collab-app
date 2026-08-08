@@ -7,6 +7,15 @@ these lines are read by people who do not know what a `RefCell` is.
 Format: newest first, `## <version> — <date>`. Every released version has an
 entry; `scripts/release.sh` refuses to cut a tag without one.
 
+## Unreleased
+
+- **The demo can import and export, like the rest of the product.** Try it
+  without an account and you could not get a CSV in or out — the buttons were
+  not disabled, they were simply absent, so the demo quietly showed a version of
+  TideWork missing the feature that answers "can I get my data back out?".
+  Import a CSV, export a table, or download the whole workspace as a zip; all of
+  it runs in the tab, with nothing sent anywhere.
+
 ## 0.1.2 — 2026-08-07
 
 - **Self-hosting is now a supported path, not a worked example.**

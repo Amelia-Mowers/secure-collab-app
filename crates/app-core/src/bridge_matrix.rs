@@ -2462,70 +2462,10 @@ impl ConnectedWorkspace {
         sample: usize,
         overrides_json: &str,
     ) -> String {
-        let table = crate::archive::table_from_csv(&table_id, &table_id, csv);
-        let ws = self.inner.borrow();
-        let existing = ws.get_table_schema(&table_id);
         let overrides: Vec<crate::schema::ColumnDefinition> =
             serde_json::from_str(overrides_json).unwrap_or_default();
-
-        // Precedence, weakest first: inferred from the CSV, the live column if
-        // the destination already has one by that name, then the user's own
-        // choice — which always wins, because inference is a starting point.
-        let effective: Vec<crate::schema::ColumnDefinition> = table
-            .columns
-            .iter()
-            .map(|c| {
-                let live = existing
-                    .as_ref()
-                    .and_then(|s| s.columns.values().find(|e| e.name == c.name));
-                let chosen = overrides.iter().find(|o| o.name == c.name);
-                chosen.or(live).unwrap_or(c).clone()
-            })
-            .collect();
-
-        let columns: Vec<serde_json::Value> = table
-            .columns
-            .iter()
-            .zip(&effective)
-            .map(|(c, e)| {
-                serde_json::json!({
-                    "id": e.id,
-                    "name": c.name,
-                    "type": crate::archive::column_type_name(&e.column_type),
-                    "options": e.options,
-                    "existing": existing
-                        .as_ref()
-                        .is_some_and(|s| s.columns.values().any(|x| x.name == c.name)),
-                })
-            })
-            .collect();
-
-        let header: Vec<&String> = table.columns.iter().map(|c| &c.name).collect();
-        let rows: Vec<Vec<String>> = table
-            .rows
-            .iter()
-            .take(sample)
-            .map(|r| {
-                header
-                    .iter()
-                    .map(|h| r.get(*h).cloned().unwrap_or_default())
-                    .collect()
-            })
-            .collect();
-
-        let issues = crate::archive::validate_table(&ws, &table, &effective);
-
-        serde_json::json!({
-            "columns": columns,
-            "rows": rows,
-            "totalRows": table.rows.len(),
-            "issues": issues.iter().map(|i| serde_json::json!({
-                "row": i.row,
-                "column": i.column,
-                "message": i.message,
-            })).collect::<Vec<_>>(),
-        })
-        .to_string()
+        let ws = self.inner.borrow();
+        crate::archive::preview_csv_import(&ws, &table_id, csv, sample, &overrides).to_string()
     }
 
     /// Import a CSV into `table_id`, creating it as `table_name` if absent and
@@ -2542,17 +2482,9 @@ impl ConnectedWorkspace {
         csv: String,
         columns_json: String,
     ) -> Result<String, JsValue> {
-        let mut table = crate::archive::table_from_csv(&table_id, &table_name, &csv);
-
-        // Apply the confirmed column list, matched to the CSV's headers by
-        // name. Anything the user didn't mention keeps its inferred type.
         let confirmed: Vec<crate::schema::ColumnDefinition> =
             serde_json::from_str(&columns_json).unwrap_or_default();
-        for c in confirmed {
-            if let Some(target) = table.columns.iter_mut().find(|t| t.name == c.name) {
-                *target = c;
-            }
-        }
+        let table = crate::archive::csv_import_table(&table_id, &table_name, &csv, confirmed);
 
         let stamp = js_sys::Date::now() as u64;
         let result = {
@@ -2570,17 +2502,9 @@ impl ConnectedWorkspace {
         // one request per cell and trip the homeserver rate limit. The flush
         // task coalesces and paces them, and the encrypted outbox makes the
         // import durable across a reload before it lands.
+        let json = crate::archive::import_result_json(&result);
         self.enqueue_updates(result.updates);
-
-        Ok(serde_json::json!({
-            "rowsWritten": result.rows_written,
-            "issues": result.issues.iter().map(|i| serde_json::json!({
-                "row": i.row,
-                "column": i.column,
-                "message": i.message,
-            })).collect::<Vec<_>>(),
-        })
-        .to_string())
+        Ok(json.to_string())
     }
 
     /// Map of `table_id -> manual-ordering key` as a JSON object, for the UI's
