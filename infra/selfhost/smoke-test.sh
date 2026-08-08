@@ -188,8 +188,13 @@ ok "sign-up without a token is challenged for one"
 # user runs, so it is what gets tested. It starts the stack, creates the admin
 # and mints the first invitation.
 SMOKE_COMPOSE="${COMPOSE[*]}" TIDEWORK_ADMIN_USER=smokeadmin TIDEWORK_ADMIN_PASSWORD=smoke-password-12345   bash ./bootstrap.sh > bootstrap.log 2>&1 || { cat bootstrap.log; fail "bootstrap.sh"; }
-REG_TOKEN=$(grep -oE 'Invitation  [A-Za-z0-9_-]+' bootstrap.log | awk '{print $2}')
-[ -n "$REG_TOKEN" ] || { cat bootstrap.log; fail "bootstrap.sh printed no invitation token"; }
+# Read the token from the file bootstrap writes, NOT from its human-readable
+# output. The previous version grepped the pretty block with a character class,
+# which truncated any token containing a character outside it — an invalid token
+# that failed two steps later as "the token stage did not complete", about one
+# run in four.
+REG_TOKEN=$(cat data/invitation.txt 2>/dev/null || true)
+[ -n "$REG_TOKEN" ] || { cat bootstrap.log; fail "bootstrap.sh produced no invitation token"; }
 ok "bootstrap.sh created the admin and minted an invitation"
 
 # With the token: the same two-stage handshake `complete_registration` performs.
