@@ -252,6 +252,8 @@ export function createWorkerWorkspace(
     exportWorkspaceZip: name => call('exportWorkspaceZip', name) as Promise<Uint8Array>,
     previewCsvImport: (tableId, csv, sample, overridesJson) =>
       call('previewCsvImport', tableId, csv, sample, overridesJson) as Promise<string>,
+    previewFormula: (tableId, formula, limit) =>
+      call('previewFormula', tableId, formula, limit) as Promise<string>,
     snapshot: () => call('snapshot') as Promise<string>,
 
     // ── Session-ish passthroughs ──────────────────────────────────────────────

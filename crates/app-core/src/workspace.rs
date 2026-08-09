@@ -12,6 +12,27 @@ use tables_over_matrix::{Cell, CellId, CellUpdate, Table, ROW_DELETED_COLUMN};
 fn value_is_empty(v: &serde_json::Value) -> bool {
     v.is_null() || v.as_str().is_some_and(|s| s.is_empty())
 }
+
+/// A cell as short display text, matching what the grid will show.
+///
+/// Strings render bare — `to_string()` on a JSON string wraps it in quotes,
+/// which in a preview reads as part of the result rather than as JSON syntax.
+/// Whole floats drop their `.0` for the same reason: arithmetic here is f64, so
+/// `Qty * Price` is 20.0, while the browser renders that cell as `20`. A
+/// preview that disagrees with the cell it is previewing is worse than none.
+fn render_label(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::Number(n) => match n.as_f64() {
+            Some(f) if f.fract() == 0.0 && f.is_finite() && f.abs() < 1e15 => {
+                format!("{}", f as i64)
+            }
+            _ => n.to_string(),
+        },
+        other => other.to_string(),
+    }
+}
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::info;
 
@@ -909,6 +930,84 @@ impl Workspace {
         Ok(rows)
     }
 
+    /// Evaluate `formula` against the first `limit` rows WITHOUT saving it —
+    /// the data behind the formula editor's live preview.
+    ///
+    /// Returns `{rows: [{label, value, error}], totalRows}`. `error` is null on
+    /// success; on failure `value` is empty and `error` carries the message,
+    /// kept as separate fields rather than the `#`-prefixed string a saved
+    /// formula renders into its cell. The editor can then show the failure as a
+    /// failure — the whole reason to have a preview is to see a mistake before
+    /// committing it to every row.
+    ///
+    /// A formula referring to another formula column sees that column's LAST
+    /// computed value, because the rows are materialized before this runs. Same
+    /// as a saved formula, which is the point: the preview must not be kinder
+    /// than the real thing.
+    pub fn preview_formula(
+        &self,
+        table_id: &str,
+        formula: &str,
+        limit: usize,
+    ) -> Result<serde_json::Value> {
+        let rows = self.get_table_rows(table_id)?;
+        let schema = self
+            .schema_manager
+            .get_table_schema(table_id)
+            .ok_or(crate::Error::TableNotFound)?;
+
+        let by_name: std::collections::HashMap<String, String> = schema
+            .columns
+            .values()
+            .map(|c| (c.name.clone(), c.id.clone()))
+            .collect();
+
+        // Label each preview row the way the user would recognise it: the
+        // first text column, in display order. A row id would be accurate and
+        // useless — the point is to check the formula against rows you know.
+        let mut text_columns: Vec<_> = schema
+            .columns
+            .values()
+            .filter(|c| matches!(c.column_type, crate::ColumnType::Text))
+            .collect();
+        text_columns.sort_by_key(|c| (c.order.unwrap_or(i64::MAX), c.id.clone()));
+        let label_column = text_columns.first().map(|c| c.id.clone());
+
+        let previews: Vec<serde_json::Value> = rows
+            .iter()
+            .take(limit)
+            .map(|row| {
+                let cells: std::collections::HashMap<String, serde_json::Value> =
+                    row.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+                let label = label_column
+                    .as_ref()
+                    .and_then(|id| row.get(id))
+                    .map(render_label)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "(untitled)".to_string());
+
+                match crate::formula::evaluate(formula, &cells, &by_name) {
+                    Ok(v) => serde_json::json!({
+                        "label": label,
+                        "value": render_label(&v),
+                        "error": serde_json::Value::Null,
+                    }),
+                    Err(e) => serde_json::json!({
+                        "label": label,
+                        "value": "",
+                        "error": e.to_string(),
+                    }),
+                }
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "rows": previews,
+            "totalRows": rows.len(),
+        }))
+    }
+
     /// Materialized rows WITHOUT read-time defaults applied — the storage
     /// truth, used internally where "is this cell actually empty" matters.
     fn raw_table_rows(
@@ -1111,6 +1210,96 @@ mod tests {
 
         let tables = workspace.list_tables();
         assert!(tables.contains(&"tasks".to_string()));
+    }
+
+    // ─── Formula preview (the formula editor's live preview) ────────────────
+
+    /// Two orders with a quantity and a price, plus an existing formula column
+    /// so the "formula referring to a formula" case is real rather than
+    /// hypothetical.
+    fn formula_fixture() -> Workspace {
+        let mut ws = Workspace::new("w");
+        ws.create_table(
+            TableDefinition::new("orders", "Orders")
+                .with_column(ColumnDefinition::new("item", "Item", ColumnType::Text).with_order(0))
+                .with_column(ColumnDefinition::new("qty", "Qty", ColumnType::Number))
+                .with_column(ColumnDefinition::new("price", "Price", ColumnType::Number))
+                .with_column(
+                    ColumnDefinition::new("total", "Total", ColumnType::Formula)
+                        .with_formula("Qty * Price"),
+                ),
+        )
+        .unwrap();
+        for (row, item, qty, price) in [("r1", "Widget", 2, 10), ("r2", "Gadget", 3, 5)] {
+            ws.update_cell("orders", row, "item", serde_json::json!(item))
+                .unwrap();
+            ws.update_cell("orders", row, "qty", serde_json::json!(qty))
+                .unwrap();
+            ws.update_cell("orders", row, "price", serde_json::json!(price))
+                .unwrap();
+        }
+        ws
+    }
+
+    #[test]
+    fn preview_evaluates_against_real_rows_and_labels_them() {
+        let ws = formula_fixture();
+        let p = ws.preview_formula("orders", "Qty * Price", 10).unwrap();
+
+        assert_eq!(p["totalRows"], 2);
+        let rows = p["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        // Labelled by the first text column, so the preview is recognisable.
+        assert_eq!(rows[0]["label"], "Widget");
+        assert_eq!(rows[0]["value"], "20");
+        assert!(rows[0]["error"].is_null());
+        assert_eq!(rows[1]["label"], "Gadget");
+        assert_eq!(rows[1]["value"], "15");
+    }
+
+    #[test]
+    fn preview_reports_an_error_per_row_instead_of_a_value() {
+        let ws = formula_fixture();
+        let p = ws.preview_formula("orders", "Qty * (", 10).unwrap();
+        let rows = p["rows"].as_array().unwrap();
+        // The failure must be visible AS a failure — the whole point of a
+        // preview is to see the mistake before it reaches every row.
+        assert!(
+            !rows[0]["error"].is_null(),
+            "a syntax error must be reported"
+        );
+        assert_eq!(rows[0]["value"], "");
+    }
+
+    #[test]
+    fn preview_saves_nothing() {
+        // Not `mut`, and that is the assertion in miniature: previewing takes
+        // `&self`, so the compiler already refuses to let it write.
+        let ws = formula_fixture();
+        let before = ws.get_table_rows("orders").unwrap();
+        ws.preview_formula("orders", "Qty * 1000", 10).unwrap();
+        assert_eq!(ws.get_table_rows("orders").unwrap(), before);
+        // And the column it is previewing FOR is untouched.
+        let schema = ws.get_table_schema("orders").unwrap();
+        assert_eq!(
+            schema.columns.get("total").unwrap().formula.as_deref(),
+            Some("Qty * Price")
+        );
+    }
+
+    #[test]
+    fn preview_is_capped_by_limit_but_reports_the_true_total() {
+        let ws = formula_fixture();
+        let p = ws.preview_formula("orders", "Qty", 1).unwrap();
+        assert_eq!(p["rows"].as_array().unwrap().len(), 1);
+        // A preview of 1 of 2 rows must not read as "this table has one row".
+        assert_eq!(p["totalRows"], 2);
+    }
+
+    #[test]
+    fn preview_of_a_missing_table_is_an_error_not_an_empty_preview() {
+        let ws = formula_fixture();
+        assert!(ws.preview_formula("nope", "Qty", 10).is_err());
     }
 
     // ─── Select defaults (issue b4b9c90f) ───────────────────────────────────

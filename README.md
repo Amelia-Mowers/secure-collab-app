@@ -115,10 +115,10 @@ change:
 
 | Suite | Count | What it proves |
 | --- | --- | --- |
-| Rust unit + property | 229 | LWW convergence, schema, archives, formulas |
-| UI (vitest) | 693 | Behaviour of hooks, cells, views — no snapshots |
+| Rust unit + property | 234 | LWW convergence, schema, archives, formulas |
+| UI (vitest) | 705 | Behaviour of hooks, cells, views — no snapshots |
 | Synapse integration | 57 | Two-client sync, encrypted round-trips, cold start, backup/recovery, SAS |
-| Browser e2e (Playwright) | 37 | Real WASM against a live homeserver: registration, recovery, verification, collaboration, multi-tab, reload persistence, templates, CSV import/export, and a guard that the wasm heap does not grow |
+| Browser e2e (Playwright) | 38 | Real WASM against a live homeserver: registration, recovery, verification, collaboration, multi-tab, reload persistence, templates, CSV import/export, formula editing, and a guard that the wasm heap does not grow |
 
 Counts as of 2026-08-08, from a real run — `cargo test`, `npm test -- --run`,
 `npx playwright test --list`, and the integration job. If you change them, take

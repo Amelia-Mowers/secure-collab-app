@@ -435,6 +435,22 @@ impl WasmWorkspace {
         Ok(crate::archive::import_result_json(&result).to_string())
     }
 
+    /// Evaluate a formula against the first `limit` rows without saving it —
+    /// the formula editor's live preview. Same binding on both workspaces, so
+    /// the editor works in the demo too.
+    #[wasm_bindgen(js_name = previewFormula)]
+    pub fn preview_formula(
+        &self,
+        table_id: String,
+        formula: String,
+        limit: usize,
+    ) -> Result<String, JsValue> {
+        self.workspace
+            .preview_formula(&table_id, &formula, limit)
+            .map(|v| v.to_string())
+            .map_err(|_| JsValue::from_str("Table not found"))
+    }
+
     /// Map of `table_id -> manual-ordering key` as a JSON object.
     #[wasm_bindgen(js_name = getTableOrderKeys)]
     pub fn get_table_order_keys(&self) -> String {

@@ -31,6 +31,7 @@ import { useTable, useMembers, useCurrentUserId, notifyWorkspaceChanged } from '
 import { Toolbar, ToolbarButton, ToolbarPrimaryButton, FilterIcon, SortIcon, PlusIcon } from '@/components/Toolbar'
 import { HistoryDrawer } from '@/views/history/HistoryDrawer'
 import { AddColumnModal, type NewColumnDef, type EditColumnInitial, type ReferenceTarget } from '@/components/AddColumnModal'
+import { FormulaEditorModal, PREVIEW_ROWS as FORMULA_PREVIEW_ROWS } from '@/components/FormulaEditorModal'
 import { CellDisplay, CellEditor, isComputedColumn, type CellColumn } from '@/cells/cellRegistry'
 import { FilterPanel } from '@/components/FilterPanel'
 import { applyFilters, type FilterCondition } from '@/lib/filters'
@@ -691,6 +692,36 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
     })
   }
 
+  // ── Formula editing, from the cell ────────────────────────────────────────
+  //
+  // Editing a formula used to mean leaving the value you were looking at:
+  // find the header, open its menu, edit a one-line field in column settings,
+  // save, and only then find out whether the expression was right. The editor
+  // below opens on the cell and evaluates against real rows as you type.
+  const [formulaColumn, setFormulaColumn] = useState<string | null>(null)
+
+  // Stable: the cell renderer below is memoized, and a fresh identity each
+  // render would defeat that.
+  const openFormulaEditor = React.useCallback((colId: string) => setFormulaColumn(colId), [])
+
+  /** Evaluate without saving. Feature-detected, like every other bridge call:
+   *  a workspace without the binding simply has no preview rather than
+   *  throwing into the modal's render. */
+  const previewFormula = React.useCallback(
+    async (formula: string) => {
+      if (!workspace || !tableId || typeof workspace.previewFormula !== 'function') {
+        return { rows: [], totalRows: 0 }
+      }
+      return JSON.parse(await workspace.previewFormula(tableId, formula, FORMULA_PREVIEW_ROWS))
+    },
+    [workspace, tableId],
+  )
+
+  const handleSaveFormula = (formula: string) => {
+    if (formulaColumn) handleUpdateColumn(formulaColumn, { formula })
+    setFormulaColumn(null)
+  }
+
   // Save edits from the modal: rename / retype / options / default in one patch.
   const handleSaveColumn = (def: NewColumnDef) => {
     if (!editingColumn) return
@@ -936,10 +967,19 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
             title={conflicted ? 'Your change was replaced by a newer edit' : undefined}
             onClick={e => {
               e.stopPropagation()
-              if (readOnly) return
               // A computed cell has nowhere to write back to — it is derived
-              // from the row every time it is read.
-              if (isComputedColumn(col.column_type)) return
+              // from the row every time it is read. So it opens the thing that
+              // DOES produce it: its formula. Before this, clicking a total
+              // that looked wrong did nothing at all, and the way to change it
+              // was three steps away in the column header's menu.
+              //
+              // Ahead of the readOnly guard on purpose: a viewer may open it
+              // and read the formula, and the editor gives them no way to save.
+              if (isComputedColumn(col.column_type)) {
+                openFormulaEditor(col.id)
+                return
+              }
+              if (readOnly) return
               // Ctrl/⌘ toggles the cell into the selection; shift ranges from
               // the anchor (issue e9898080). A plain click edits — and editing
               // a SELECTED cell fills every selected cell on commit, so the
@@ -957,7 +997,7 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
         )
       },
     }))
-  }, [visibleColumns, editing, referenceLookup, members, moveEditing, conflictCells, readOnly, selectedCells, handleCellSelect, commitToSelection, clearSelection])
+  }, [visibleColumns, editing, referenceLookup, members, moveEditing, conflictCells, readOnly, selectedCells, handleCellSelect, commitToSelection, clearSelection, openFormulaEditor])
 
   const table = useReactTable({
     data: filteredRows as TableRow[],
@@ -1373,7 +1413,19 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
                       <td key={col.id}>
                         <div
                           className="cell-click cell-shadow"
-                          onClick={() => { if (!isComputedColumn(col.column_type)) setEditing(cellKey) }}
+                          // A computed cell has nowhere to write back to, so it
+                          // opens the thing that DOES produce it — its formula —
+                          // rather than doing nothing, which is what a click on
+                          // a wrong-looking total used to do.
+                          onClick={() => {
+                            if (isComputedColumn(col.column_type)) openFormulaEditor(col.id)
+                            else setEditing(cellKey)
+                          }}
+                          title={
+                            isComputedColumn(col.column_type)
+                              ? `Computed by a formula — click to edit it`
+                              : undefined
+                          }
                         >
                           <CellDisplay column={cellColumn} value={value} lookup={referenceLookup} members={members} />
                         </div>
@@ -1394,6 +1446,27 @@ export function TableView({ workspace, syncCount }: TableViewProps) {
           onAdd={handleAddColumn}
           onClose={() => setIsAddingColumn(false)}
           referenceTargets={referenceTargets}
+        />
+      )}
+
+      {/* Formula editor, opened by clicking a computed cell */}
+      {formulaColumn && schema?.columns?.[formulaColumn] && (
+        <FormulaEditorModal
+          column={{
+            id: formulaColumn,
+            name: schema.columns[formulaColumn].name,
+            column_type: 'formula',
+            formula: schema.columns[formulaColumn].formula,
+          }}
+          columns={columnsMeta.map(c => ({
+            id: c.id,
+            name: c.name,
+            column_type: c.column_type,
+          }))}
+          preview={previewFormula}
+          onSave={handleSaveFormula}
+          onClose={() => setFormulaColumn(null)}
+          readOnly={readOnly}
         />
       )}
 

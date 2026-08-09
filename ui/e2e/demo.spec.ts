@@ -51,6 +51,59 @@ test('a stranger can use the product with no account', async ({ page }) => {
 })
 
 /**
+ * Editing a formula from the cell it produces.
+ *
+ * The old route was: notice a wrong value, find the column header, open its
+ * menu, edit a one-line field in column settings, save, and only then discover
+ * whether the new expression was right — with the answer already written across
+ * every row. This asserts the whole loop instead: click the value, see it
+ * evaluated against real rows, change it, and watch the grid follow.
+ *
+ * Run in the demo because it needs no account and the seeded Contacts table
+ * already has a formula column — and because the preview binding has to exist
+ * on the local workspace too, which is exactly the kind of gap that hides.
+ */
+test('a formula can be edited from the cell it computes', async ({ page }) => {
+  test.setTimeout(180_000)
+
+  const pageErrors: string[] = []
+  page.on('pageerror', e => pageErrors.push(String(e)))
+
+  await page.goto('/demo')
+  await expect(page).toHaveURL(/\/workspace\/demo$/, { timeout: 60_000 })
+  await page.locator('.sidebar__item-label', { hasText: /^Contacts$/ }).click()
+
+  // "Dana Whitfield" exists only because it was computed at read time.
+  const computed = page.getByText('Dana Whitfield').first()
+  await expect(computed).toBeVisible({ timeout: 60_000 })
+  await computed.click()
+
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible({ timeout: 30_000 })
+
+  // It opens on the formula that produced the cell, not an empty box.
+  const input = dialog.getByLabel('Formula')
+  await expect(input).not.toHaveValue('')
+
+  // The preview evaluates against real rows — the point of the whole dialog.
+  await expect(dialog.getByText('Dana Whitfield').first()).toBeVisible({ timeout: 30_000 })
+
+  // Change it and save; the grid must follow without a reload.
+  // Referred to by column id: the evaluator resolves references as
+  // identifiers, and "Last name" is not one.
+  await input.fill('upper(last_name)')
+  const save = dialog.getByRole('button', { name: 'Save' })
+  await expect(save).toBeEnabled({ timeout: 30_000 })
+  // Previewed before it is committed: the new answer is on screen already.
+  await expect(dialog.getByText('WHITFIELD').first()).toBeVisible({ timeout: 30_000 })
+  await save.click()
+
+  await expect(dialog).toBeHidden({ timeout: 30_000 })
+  await expect(page.getByText('WHITFIELD').first()).toBeVisible({ timeout: 30_000 })
+  expect(pageErrors, `page errors editing a formula:\n${pageErrors.join('\n')}`).toEqual([])
+})
+
+/**
  * Import and export, in the demo.
  *
  * These controls are feature-detected, not configured: the Sidebar renders each
