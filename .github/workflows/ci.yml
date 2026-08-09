@@ -112,6 +112,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          # The wasm bridge only compiles for this target — see the last step.
+          targets: wasm32-unknown-unknown
       # Lint core library (no WASM or Matrix features)
       - name: Clippy (core)
         run: cargo clippy -p tables-over-matrix --no-default-features --all-targets -- -D warnings
@@ -128,6 +130,21 @@ jobs:
       # matrix-native; this is the only job that compiles the cli crate).
       - name: Clippy (cli)
         run: cargo clippy -p tidework-cli --all-targets -- -D warnings
+      # Lint the WASM BRIDGE. Every step above uses either no-default-features
+      # or matrix-native, and `bridge_matrix.rs` is gated on
+      # `cfg(all(feature = "wasm", feature = "matrix"))` — so until this step
+      # existed, the largest and most-edited file in the crate was linted by
+      # nothing. The only job that touched it was WASM Build, which is a
+      # compile, not a lint, and seven warnings had quietly accumulated.
+      #
+      # `--target wasm32-unknown-unknown` is load-bearing. With the host target
+      # these features compile NOTHING and clippy prints `Finished`, which
+      # reads exactly like a pass.
+      #
+      # No `--all-targets`: the crate's tests are native-only, and asking for
+      # them here would build a test harness that cannot link for wasm.
+      - name: Clippy (app-core wasm bridge)
+        run: cargo clippy -p app-core --no-default-features --features wasm,matrix-wasm --target wasm32-unknown-unknown -- -D warnings
 
   wasm:
     name: WASM Build

@@ -1168,13 +1168,6 @@ impl DeviceVerification {
 /// Key for coalescing pending cell updates: (table_id, row_id, column_id).
 type CellKey = (String, String, String);
 
-/// A workspace backed by a Matrix room with real-time sync.
-///
-/// This wraps the local `Workspace` and adds:
-/// - Sending cell updates to the room on every write
-/// - A sync loop that receives updates from other clients
-/// - A JS callback for change notifications
-
 /// Workspace roles as Matrix power levels. Deliberately the standard rungs:
 /// 100 is the room creator's default, 0 is `events_default`, and anything below
 /// `events_default` cannot send events at all — which is what makes a viewer
@@ -1218,6 +1211,12 @@ fn power_level_for_role(role: &str) -> Option<i64> {
     }
 }
 
+/// A workspace backed by a Matrix room with real-time sync.
+///
+/// Wraps the local [`Workspace`] and adds:
+/// - sending cell updates to the room on every write;
+/// - a sync loop that receives updates from other clients;
+/// - a JS callback for change notifications.
 #[wasm_bindgen]
 pub struct ConnectedWorkspace {
     /// Shared workspace state (Rc<RefCell> for WASM single-threaded access)
@@ -2858,32 +2857,9 @@ impl ConnectedWorkspace {
         }
         self.flushing.set(true);
 
-        let client = self.client.clone();
-        let room_id = self.room_id.clone();
-        let pending = Rc::clone(&self.pending);
-        let flushing = Rc::clone(&self.flushing);
-        let send_failures = Rc::clone(&self.send_failures);
-        let last_send_ok_ms = Rc::clone(&self.last_send_ok_ms);
-        let inner = Rc::clone(&self.inner);
-        let rejected_writes = Rc::clone(&self.rejected_writes);
-        let last_reject_reason = Rc::clone(&self.last_reject_reason);
-        let queue_listener = Rc::clone(&self.queue_listener);
-
+        let ctx = FlushContext::of(self);
         spawn_local(async move {
-            flush_pending(
-                client,
-                room_id,
-                pending,
-                flushing,
-                send_failures,
-                last_send_ok_ms,
-                inner,
-                rejected_writes,
-                last_reject_reason,
-                queue_listener,
-                first_delay_ms,
-            )
-            .await;
+            flush_pending(ctx, first_delay_ms).await;
         });
     }
 
@@ -3038,7 +3014,13 @@ fn trigger_key_backup(client: &Client) {
     });
 }
 
-async fn flush_pending(
+/// Everything the flush loop needs from the workspace that scheduled it.
+///
+/// These were ten separate parameters, every one an `Rc::clone` of a field —
+/// so adding any state to the loop meant editing the struct, the ten clones,
+/// and the ten arguments in step, and a misordered pair of same-typed handles
+/// would have compiled.
+struct FlushContext {
     client: Client,
     room_id: OwnedRoomId,
     pending: Rc<RefCell<HashMap<CellKey, CellUpdate>>>,
@@ -3049,8 +3031,41 @@ async fn flush_pending(
     rejected_writes: Rc<Cell<u32>>,
     last_reject_reason: Rc<RefCell<Option<String>>>,
     queue_listener: Rc<RefCell<Option<js_sys::Function>>>,
-    first_delay_ms: u64,
-) {
+}
+
+impl FlushContext {
+    fn of(ws: &ConnectedWorkspace) -> Self {
+        Self {
+            client: ws.client.clone(),
+            room_id: ws.room_id.clone(),
+            pending: Rc::clone(&ws.pending),
+            flushing: Rc::clone(&ws.flushing),
+            send_failures: Rc::clone(&ws.send_failures),
+            last_send_ok_ms: Rc::clone(&ws.last_send_ok_ms),
+            inner: Rc::clone(&ws.inner),
+            rejected_writes: Rc::clone(&ws.rejected_writes),
+            last_reject_reason: Rc::clone(&ws.last_reject_reason),
+            queue_listener: Rc::clone(&ws.queue_listener),
+        }
+    }
+}
+
+async fn flush_pending(ctx: FlushContext, first_delay_ms: u64) {
+    // Destructured so the loop below reads exactly as it did when these were
+    // parameters.
+    let FlushContext {
+        client,
+        room_id,
+        pending,
+        flushing,
+        send_failures,
+        last_send_ok_ms,
+        inner,
+        rejected_writes,
+        last_reject_reason,
+        queue_listener,
+    } = ctx;
+
     const DEBOUNCE_MS: u64 = 300;
     const MAX_BACKOFF_MS: u64 = 8_000;
     let mut backoff_ms = first_delay_ms;
@@ -3107,7 +3122,7 @@ async fn flush_pending(
                 // waiting for the SDK's next sync response to trigger it.
                 trigger_key_backup(&client);
             }
-            SendOutcome::Retryable(_) => {
+            SendOutcome::Retryable => {
                 // Still in `pending` (nothing was drained) — just back off.
                 // Floor at the debounce: an immediate-flush task starts from 0,
                 // and 0 × 2 = 0 would spin hot against a rate limit.
@@ -3167,9 +3182,14 @@ async fn flush_pending(
 /// The fate of one flush attempt (ADR 0003 phase 3).
 enum SendOutcome {
     Sent,
-    /// Transient (rate limit, network, 5xx, room cache not ready): re-queue
-    /// and retry with backoff.
-    Retryable(Vec<CellUpdate>),
+    /// Transient (rate limit, network, 5xx, room cache not ready): retry with
+    /// backoff.
+    ///
+    /// Carries nothing on purpose. A retryable failure drains nothing from
+    /// `pending`, so the updates are still queued and handing the batch back
+    /// would suggest a re-queue that does not happen — the payload was there,
+    /// unread, and read as if it were the mechanism.
+    Retryable,
     /// Permanent: retrying can never succeed. The caller drops the batch,
     /// reverts the cells to converged state, and surfaces `reason`.
     Rejected {
@@ -3197,8 +3217,9 @@ fn is_permanent_send_error(err: &matrix_sdk::Error) -> bool {
 /// as a REJECTION the caller must surface, not a silent drop.
 async fn send_batch(client: &Client, room_id: &OwnedRoomId, batch: Vec<CellUpdate>) -> SendOutcome {
     let Some(room) = client.get_room(room_id) else {
-        // Room not available yet; retry the whole batch on the next pass.
-        return SendOutcome::Retryable(batch);
+        // Room not available yet; the batch stays in `pending` for the next
+        // pass.
+        return SendOutcome::Retryable;
     };
 
     // Fail closed: never emit workspace data into a non-encrypted room. This is
@@ -3234,6 +3255,6 @@ async fn send_batch(client: &Client, room_id: &OwnedRoomId, batch: Vec<CellUpdat
             updates: batch,
             reason: format!("the server rejected the change: {e}"),
         },
-        Err(_) => SendOutcome::Retryable(batch),
+        Err(_) => SendOutcome::Retryable,
     }
 }
