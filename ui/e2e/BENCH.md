@@ -110,6 +110,12 @@ Two things keep that from being worse than it sounds:
   are complementary — a snapshot cannot help a *new* device, which is the worse
   case and the one a new collaborator meets.
 
+  > **Both have since shipped** (see the Status table). Left as written because
+  > this section is a dated record of what was known on 2026-08-01, and
+  > rewriting it would hide the order in which the shape was understood.
+  > Re-measured 2026-08-09 at 100 rows in a realistically-edited room:
+  > **25.0 s cold, 2.8 s warm — 88% off**, walk stopping on `covered`.
+
 ## The 10k story
 
 Constants all measured: **~7 ms per event walked**, **~0.14 ms per cell**, a
