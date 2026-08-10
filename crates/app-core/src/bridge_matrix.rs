@@ -516,6 +516,28 @@ impl MatrixSession {
         Ok(room.room_id().to_string())
     }
 
+    /// Request access to a workspace with an invite link's token.
+    ///
+    /// SESSION level, not workspace level, and that is the whole point: the
+    /// person following a link is not in the room yet, so they have no
+    /// `ConnectedWorkspace` to call. They knock, and an admin's client admits
+    /// them (issue 5e362d42).
+    ///
+    /// The token travels as the knock's reason, which the homeserver can read.
+    /// That is not the exposure it looks like — the server already controls
+    /// membership outright, so it never needed the token to add a member.
+    #[wasm_bindgen(js_name = knockWithToken)]
+    pub async fn knock_with_token(&self, room_id: String, token: String) -> Result<(), JsValue> {
+        let owned: OwnedRoomId = room_id
+            .as_str()
+            .try_into()
+            .map_err(|_| JsValue::from_str("That invite link points at an invalid workspace."))?;
+        tables_over_matrix::MatrixClient::from_parts(self.client.clone(), owned)
+            .knock_with_token(&room_id, &token)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     /// Join an existing room by ID.
     #[wasm_bindgen(js_name = joinRoom)]
     pub async fn join_room(&self, room_id: String) -> Result<(), JsValue> {

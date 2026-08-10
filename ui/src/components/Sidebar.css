@@ -445,3 +445,39 @@
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
+
+/* Invite links (issue 5e362d42) — a link anyone can accept, next to the
+   Matrix-ID field which is now the advanced path. */
+.share-modal__link {
+  margin-bottom: 16px;
+}
+
+.share-modal__link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.share-modal__link-row .share-modal__input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+}
+
+.share-modal__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.share-modal__advanced {
+  margin-bottom: 8px;
+}
+
+.share-modal__advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+}

@@ -116,7 +116,7 @@ change:
 | Suite | Count | What it proves |
 | --- | --- | --- |
 | Rust unit + property | 248 | LWW convergence, schema, archives, formulas |
-| UI (vitest) | 705 | Behaviour of hooks, cells, views — no snapshots |
+| UI (vitest) | 712 | Behaviour of hooks, cells, views — no snapshots |
 | Synapse integration | 61 | Two-client sync, encrypted round-trips, cold start, backup/recovery, SAS |
 | Browser e2e (Playwright) | 38 | Real WASM against a live homeserver: registration, recovery, verification, collaboration, multi-tab, reload persistence, templates, CSV import/export, formula editing, and a guard that the wasm heap does not grow |
 
