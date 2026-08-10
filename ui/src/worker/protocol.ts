@@ -372,7 +372,7 @@ export const WORKSPACE_METHODS = new Set([
   'isEncrypted', 'undecryptableCount', 'connectionHealth', 'rejectedWrites',
   'keyBackupCaughtUp', 'flushKeyBackup', 'retryUndecryptable',
   'pendingUpdates', 'exportTableCsv', 'exportWorkspaceZip', 'previewCsvImport',
-  'previewFormula',
+  'previewFormula', 'listInviteLinks', 'listKnocks',
   // writes
   'createTable', 'renameTable', 'deleteTable', 'setTableOrder',
   'createView', 'deleteView',
@@ -381,6 +381,8 @@ export const WORKSPACE_METHODS = new Set([
   'updateCell', 'deleteRow', 'applyUpdate', 'importCsv', 'importWorkspaceZip',
   'importWorkspaceArchive',
   'restorePendingUpdates',
+  // invite links (issue 5e362d42) — writes: each publishes room state
+  'createInviteLink', 'revokeInviteLink', 'admitKnock',
   // membership / roles
   'inviteUser', 'listMembers', 'myRole', 'setUserRole', 'leaveWorkspace',
   // history
@@ -403,7 +405,11 @@ export const WORKSPACE_WRITE_METHODS = new Set([
   'addColumn', 'updateColumn', 'deleteColumn', 'reorderColumns', 'setColumnWidth',
   'updateCell', 'deleteRow', 'applyUpdate', 'importCsv', 'importWorkspaceZip',
   'importWorkspaceArchive',
-  'restorePendingUpdates', 'rollbackTo', 'checkIntegrity',
+  'restorePendingUpdates',
+  // Deliberately NOT the invite-link methods. They publish ROOM STATE, not
+  // cells, so re-pushing the read model after one would cost a full push to
+  // show a grid that cannot have changed.
+  'rollbackTo', 'checkIntegrity',
   // Applies the updates from events that have just become decryptable, so the
   // grid must be re-pushed — the whole point is that data appears.
   'retryUndecryptable',

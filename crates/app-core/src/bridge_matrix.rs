@@ -1667,6 +1667,125 @@ impl ConnectedWorkspace {
         Ok(())
     }
 
+    // ── Invite links (issue 5e362d42) ───────────────────────────────────
+    //
+    // Every one of these forwards to `tables_over_matrix::MatrixClient`, which
+    // holds the single implementation shared with the CLI. The rules that
+    // validate a token are in `tables_over_matrix::invite`, tested natively.
+
+    /// Wrap the session and room this workspace already has, so the shared
+    /// implementation can be called without building a second client.
+    fn invite_client(&self) -> tables_over_matrix::MatrixClient {
+        tables_over_matrix::MatrixClient::from_parts(self.client.clone(), self.room_id.clone())
+    }
+
+    /// Mint an invite link and open this workspace to knocking.
+    ///
+    /// Returns `{token, tokenId, url}`. The token is returned ONCE and is not
+    /// recoverable afterwards — what the room stores is a hash, because room
+    /// state is not encrypted.
+    ///
+    /// `validForMs` and `usesAllowed` are optional; omitting both makes a link
+    /// that does not expire and admits any number of people.
+    #[wasm_bindgen(js_name = createInviteLink)]
+    pub async fn create_invite_link(
+        &self,
+        app_base_url: String,
+        valid_for_ms: Option<f64>,
+        uses_allowed: Option<u32>,
+    ) -> Result<String, JsValue> {
+        let now = js_sys::Date::now() as u64;
+        let client = self.invite_client();
+        let new = client
+            .create_invite_link(now, valid_for_ms.map(|d| d as u64), uses_allowed)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+        Ok(serde_json::json!({
+            "token": new.token,
+            "tokenId": new.token_id,
+            "url": tables_over_matrix::invite::invite_url(
+                &app_base_url,
+                self.room_id.as_str(),
+                &new.token,
+            ),
+        })
+        .to_string())
+    }
+
+    /// Every invite link on this workspace, live or not, as a JSON array of
+    /// `{tokenId, createdBy, createdTs, expiresTs, usesAllowed, uses, revoked}`.
+    ///
+    /// Revoked and expired links are included: an admin needs to see that a
+    /// link existed to reason about who got in.
+    #[wasm_bindgen(js_name = listInviteLinks)]
+    pub async fn list_invite_links(&self) -> Result<String, JsValue> {
+        let client = self.invite_client();
+        let links = client
+            .list_invite_links()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        let out: Vec<serde_json::Value> = links
+            .into_iter()
+            .map(|(token_id, c)| {
+                serde_json::json!({
+                    "tokenId": token_id,
+                    "createdBy": c.created_by,
+                    "createdTs": c.created_ts,
+                    "expiresTs": c.expires_ts,
+                    "usesAllowed": c.uses_allowed,
+                    "uses": c.uses,
+                    "revoked": c.revoked,
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string(&out).unwrap_or_else(|_| "[]".into()))
+    }
+
+    /// Stop a link admitting anyone else. The record of it stays.
+    #[wasm_bindgen(js_name = revokeInviteLink)]
+    pub async fn revoke_invite_link(&self, token_id: String) -> Result<(), JsValue> {
+        let client = self.invite_client();
+        client
+            .revoke_invite_link(&token_id)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
+    /// Everyone waiting to be let in, as `[{userId, token}]`.
+    ///
+    /// `token` is what they presented; a knock with no reason, or one from a
+    /// person who found the room some other way, comes back with `null` and is
+    /// never auto-admitted.
+    #[wasm_bindgen(js_name = listKnocks)]
+    pub async fn list_knocks(&self) -> Result<String, JsValue> {
+        let client = self.invite_client();
+        let knocks = client
+            .list_knocks()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+        let out: Vec<serde_json::Value> = knocks
+            .into_iter()
+            .map(|(user_id, token)| serde_json::json!({ "userId": user_id, "token": token }))
+            .collect();
+        Ok(serde_json::to_string(&out).unwrap_or_else(|_| "[]".into()))
+    }
+
+    /// Admit a knocker whose token verifies, and count the use.
+    ///
+    /// Errors rather than admitting when the token is wrong, revoked, expired
+    /// or used up — the message is the one to show, and it distinguishes those
+    /// cases because they send someone to very different next steps.
+    #[wasm_bindgen(js_name = admitKnock)]
+    pub async fn admit_knock(&self, user_id: String, token: String) -> Result<(), JsValue> {
+        let now = js_sys::Date::now() as u64;
+        let client = self.invite_client();
+        client
+            .admit_knock(&user_id, &token, now)
+            .await
+            .map_err(|e| JsValue::from_str(&format!("{e}")))
+    }
+
     /// The signed-in user's MXID — the viewer that `@me` filters resolve to.
     /// `None` only if the client somehow has no session.
     #[wasm_bindgen(js_name = currentUserId)]

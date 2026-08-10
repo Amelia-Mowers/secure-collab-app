@@ -99,6 +99,20 @@ export interface WorkspaceHandle {
    *  formula editor's live preview. Read-only in the core: nothing is written
    *  and nothing is sent, so typing in the editor cannot touch the room. */
   previewFormula?(tableId: string, formula: string, limit: number): string | Promise<string>
+  /** Invite links (issue 5e362d42). A Matrix invite names a user, and the
+   *  holder of a link has no user id until they sign up — so the room accepts
+   *  knocks, the link carries a secret, and an admin's client verifies it and
+   *  admits the knocker. */
+  createInviteLink?(
+    appBaseUrl: string,
+    validForMs?: number,
+    usesAllowed?: number,
+  ): Promise<string> | string
+  listInviteLinks?(): Promise<string> | string
+  revokeInviteLink?(tokenId: string): Promise<void> | void
+  /** Everyone waiting to be let in, as `[{userId, token}]`. */
+  listKnocks?(): Promise<string> | string
+  admitKnock?(userId: string, token: string): Promise<void> | void
   /** Audit local state against a full re-gather and repair any difference
    *  (issue 48f042ba). Expensive — user-initiated, never scheduled. */
   checkIntegrity?(): Promise<string>
