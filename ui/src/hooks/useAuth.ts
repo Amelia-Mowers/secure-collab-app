@@ -306,6 +306,10 @@ interface AuthState {
   refreshWorkspaces: () => Promise<void>
   listInvitedRooms: () => Promise<InvitedRoom[]>
   acceptInvite: (roomId: string) => Promise<WorkspaceEntry>
+  /** Request access to a workspace with an invite link's token (issue
+   *  5e362d42). Session-level on purpose: the person following a link is not
+   *  in the room yet, so there is no workspace to ask. */
+  knockWithToken: (roomId: string, token: string) => Promise<void>
   declineInvite: (roomId: string) => Promise<void>
 
   /** Start the session-level sync loop. Call this on pages where no
@@ -1983,6 +1987,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // ── knockWithToken: ask to be let in, presenting an invite link ────────────
+  const knockWithToken = useCallback(async (roomId: string, token: string): Promise<void> => {
+    const ms = matrixSessionRef.current
+    if (!ms) throw new Error('Not signed in')
+    if (typeof ms.knockWithToken !== 'function') {
+      throw new Error('This build cannot follow invite links.')
+    }
+    await ms.knockWithToken(roomId, token)
+  }, [])
+
   // ── acceptInvite: join an invited room and add it to workspaces ────────────
   const acceptInvite = useCallback(
     async (roomId: string): Promise<WorkspaceEntry> => {
@@ -2265,6 +2279,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshWorkspaces,
     listInvitedRooms,
     acceptInvite,
+    knockWithToken,
     declineInvite,
     startSessionSync,
     stopSessionSync,

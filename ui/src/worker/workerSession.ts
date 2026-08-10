@@ -66,6 +66,8 @@ export interface WorkerSession {
   listInvitedRooms(): Promise<string>
   createRoom(name: string): Promise<string>
   joinRoom(roomId: string): Promise<void>
+  /** Ask to be let into a workspace with an invite link's token. */
+  knockWithToken(roomId: string, token: string): Promise<void>
   declineInvite(roomId: string): Promise<void>
   getDisplayName(): Promise<string>
   setDisplayName(name: string): Promise<void>
@@ -151,6 +153,9 @@ export function wrapSession(client: MatrixWorkerClient, info: SessionInfo): Work
     listInvitedRooms: () => call('listInvitedRooms') as Promise<string>,
     createRoom: name => call('createRoom', name) as Promise<string>,
     joinRoom: roomId => call('joinRoom', roomId) as Promise<void>,
+    // Following an invite link. Session-level because the person following one
+    // is not in the room yet (issue 5e362d42).
+    knockWithToken: (roomId, token) => call('knockWithToken', roomId, token) as Promise<void>,
     declineInvite: roomId => call('declineInvite', roomId) as Promise<void>,
     getDisplayName: () => call('getDisplayName') as Promise<string>,
     setDisplayName: name => call('setDisplayName', name) as Promise<void>,

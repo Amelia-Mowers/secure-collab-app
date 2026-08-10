@@ -31,7 +31,7 @@ import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { TrialBadge } from '@/components/TrialStatus'
 import { buildTableDefinition, type TableTemplate } from '@/tableTemplates'
 import './Sidebar.css'
-import { ROLE_LABELS, type Role, type WorkspaceMember } from '@/lib/roles'
+import { ROLE_LABELS, canAdminister, type Role, type WorkspaceMember } from '@/lib/roles'
 import { useRole } from '@/hooks/useRole'
 import { LeaveWorkspaceModal } from './LeaveWorkspaceModal'
 
@@ -161,13 +161,51 @@ const UserIcon = () => (
 interface ShareModalProps {
   workspace: any
   onClose: () => void
+  /** Whether this member may manage the workspace. Minting a link writes room
+   *  state, which the homeserver refuses below admin — so without this the
+   *  button would be offered to everyone and fail only on click. */
+  canManage: boolean
 }
 
-function ShareModal({ workspace, onClose }: ShareModalProps) {
+export function ShareModal({ workspace, onClose, canManage }: ShareModalProps) {
   const [userId, setUserId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [link, setLink] = useState<string | null>(null)
+  const [linkLoading, setLinkLoading] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const canLink =
+    canManage && !!workspace && typeof workspace.createInviteLink === 'function'
+
+  /** Mint a link. The token comes back once and is not recoverable — the room
+   *  stores a hash, because room state is not encrypted. */
+  const handleCreateLink = async () => {
+    if (!workspace || typeof workspace.createInviteLink !== 'function') return
+    setLinkLoading(true)
+    setError(null)
+    try {
+      const raw = await workspace.createInviteLink(window.location.origin, undefined, undefined)
+      setLink((JSON.parse(raw) as { url: string }).url)
+      setCopied(false)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLinkLoading(false)
+    }
+  }
+
+  const handleCopy = async () => {
+    if (!link) return
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+    } catch {
+      // Clipboard blocked (insecure origin, or permission denied). The input
+      // below holds the link and is selectable, so there is still a way.
+    }
+  }
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -196,11 +234,55 @@ function ShareModal({ workspace, onClose }: ShareModalProps) {
           <h2 className="share-modal__title">Share workspace</h2>
           <button className="share-modal__close ghost" onClick={onClose} aria-label="Close">×</button>
         </div>
-        <p className="share-modal__description">
-          Invite someone by their Matrix user ID (e.g. <code>@user:server</code>).
-          The server part is the homeserver domain without the port.
-          They'll see it as a pending invitation on their Workspaces page.
-        </p>
+        {canLink && (
+          <div className="share-modal__link">
+            <p className="share-modal__description">
+              Send someone a link. They can accept with an account they already
+              have, or create one — no Matrix ID needed.
+            </p>
+            {link ? (
+              <>
+                <div className="share-modal__link-row">
+                  <input
+                    className="share-modal__input"
+                    value={link}
+                    readOnly
+                    onFocus={e => e.currentTarget.select()}
+                    aria-label="Invite link"
+                  />
+                  <button type="button" className="primary" onClick={handleCopy}>
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                {/* Said here rather than discovered later: admitting happens in
+                    a member's browser, because there is deliberately no server
+                    that could do it for an end-to-end encrypted workspace. */}
+                <p className="share-modal__hint">
+                  They join automatically while you or another member has
+                  TideWork open. If nobody does, their request waits.
+                </p>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="primary"
+                onClick={handleCreateLink}
+                disabled={linkLoading}
+              >
+                {linkLoading ? 'Creating…' : 'Create invite link'}
+              </button>
+            )}
+          </div>
+        )}
+
+        <details className="share-modal__advanced">
+          <summary>Invite by Matrix ID instead</summary>
+          <p className="share-modal__description">
+            For someone on another homeserver, or who already knows their ID
+            (e.g. <code>@user:server</code>). They will see a pending invitation
+            on their Workspaces page.
+          </p>
+        </details>
         <form className="share-modal__form" onSubmit={handleInvite}>
           <input
             type="text"
@@ -1207,6 +1289,7 @@ export function Sidebar({
       {showShareModal && workspace && (
         <ShareModal
           workspace={workspace}
+          canManage={canAdminister(myRole)}
           onClose={() => { setShowShareModal(false); loadMembers() }}
         />
       )}

@@ -343,6 +343,7 @@ export const SESSION_METHODS = new Set([
   'userId', 'getDisplayName', 'setDisplayName', 'sessionData',
   // rooms
   'listRooms', 'listInvitedRooms', 'createRoom', 'joinRoom', 'declineInvite',
+  'knockWithToken',
   // sync
   'initialSync',
   // recovery / secure backup

@@ -13,6 +13,8 @@ import { EntryView } from './views/entry/EntryView'
 import { CardView } from './views/card/CardView'
 import { ViewRouter } from './views/ViewRouter'
 import { SignInPage } from './views/auth/SignInPage'
+import { JoinPage } from './views/auth/JoinPage'
+import { useAutoAdmit } from './hooks/useAutoAdmit'
 import { OauthCallbackPage } from './views/auth/OauthCallbackPage'
 import { TrialGate } from './components/TrialStatus'
 import { UpdateBanner } from './components/UpdateBanner'
@@ -74,6 +76,11 @@ function WorkspaceShell() {
     setNavOpen(false)
   }, [location.pathname])
   const { workspace, loading, error, syncCount } = useWorkspace(decodedWorkspaceId, matrixSession)
+
+  // Let in anyone knocking with a valid invite link, while this workspace is
+  // open. There is deliberately no server-side party that could do it instead
+  // (issue 5e362d42), so it happens in a member's browser or not at all.
+  useAutoAdmit(workspace, syncCount)
 
   if (loading || (!workspace && !error)) {
     return (
@@ -265,6 +272,10 @@ export default function App() {
       <WhatsNewModal />
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
+        {/* Following a workspace invite link. Outside RequireAuth on purpose:
+            the whole point is that someone with no account can arrive here
+            (issue 5e362d42). */}
+        <Route path="/join" element={<JoinPage />} />
         {/* OAuth popup redirect target — posts the callback URL to the opener
             (which holds the WASM client mid-flow) and closes. No auth guard:
             it runs while the user is still signing in. */}

@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth, InvitedRoom } from '@/hooks/useAuth'
+import { readPendingInvite } from '@/views/auth/JoinPage'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { TrialBadge } from '@/components/TrialStatus'
 import { getWasmModule } from '@/wasm/loader'
@@ -95,6 +96,13 @@ export function WorkspacesPage() {
 
   // ── Pending invitations ──────────────────────────────────────
   const [invitations, setInvitations] = useState<InvitedRoom[]>([])
+
+  // Resume a half-followed invite link. Signing in navigates here, and the
+  // link's fragment does not survive that round trip — so /join stashes it and
+  // this hop sends the user back to finish (issue 5e362d42).
+  useEffect(() => {
+    if (readPendingInvite()) navigate('/join', { replace: true })
+  }, [navigate])
   const [inviteLoading, setInviteLoading] = useState<string | null>(null)
 
   // Start the session-level sync loop when the page is mounted and a Matrix

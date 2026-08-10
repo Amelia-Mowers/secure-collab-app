@@ -9,6 +9,16 @@ entry; `scripts/release.sh` refuses to cut a tag without one.
 
 ## Unreleased
 
+- **Share a workspace with a link.** Inviting someone used to mean knowing their
+  full Matrix ID, which meant they had to already have an account. Now you can
+  create a link and send it: they accept with an account they have, or make one
+  (with the same free trial as any other account), and land in the workspace.
+  They join automatically while you or another member has TideWork open — there
+  is no server of ours that could let them in instead, because a server with
+  that power over an end-to-end encrypted workspace is exactly what TideWork
+  does not have. Inviting by Matrix ID is still there, under *Invite by Matrix
+  ID instead*.
+
 - **Edit a formula from the cell it computes.** Click a computed value and the
   formula opens right there, evaluated against your real rows as you type — so
   you can see what it will produce before saving it over every row. Previously
