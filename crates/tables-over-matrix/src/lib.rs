@@ -105,8 +105,125 @@ pub const REORDER_GRACE_MS: u64 = 30_000;
 ///
 /// A full gather (`fast_path == false`) never stops early, and a page with no
 /// parseable timestamps cannot justify stopping.
+/// Has compaction already covered every live cell, so the walk can stop?
+///
+/// Three conditions, and the middle one is the whole reason this is a named
+/// function rather than an `if`:
+///
+/// * the page added no cell we had not already seen — the signal that recent
+///   events already carry a current value for everything live;
+/// * the page was fully READABLE. A page yields no new cells when compaction
+///   covered them, and equally when we could not decrypt a single event on it.
+///   Those are indistinguishable by cell count, and stopping on the second
+///   truncates the walk silently: the workspace comes up with holes and nothing
+///   anywhere reports an error. Undecryptable history is a reason to keep
+///   walking, not evidence of completeness;
+/// * we have seen something at all, so an empty first page cannot end a walk
+///   before it starts.
+///
+/// A full gather (`stop_when_covered == false`) never stops early — the
+/// integrity check compares a complete re-gather against local state, and a
+/// shortcut would make it agree with itself by construction.
+pub fn coverage_reached(
+    stop_when_covered: bool,
+    page_new_cells: usize,
+    page_undecryptable: usize,
+    seen_any_cell: bool,
+) -> bool {
+    stop_when_covered && page_new_cells == 0 && page_undecryptable == 0 && seen_any_cell
+}
+
 pub fn backfill_caught_up(fast_path: bool, page_oldest: Option<u64>, stop_before: u64) -> bool {
     fast_path && page_oldest.is_some_and(|t| t.saturating_add(REORDER_GRACE_MS) < stop_before)
+}
+
+#[cfg(test)]
+mod walk_rules {
+    use super::*;
+
+    // ── coverage_reached ────────────────────────────────────────────────────
+
+    #[test]
+    fn a_covered_page_stops_the_walk() {
+        assert!(coverage_reached(true, 0, 0, true));
+    }
+
+    #[test]
+    fn an_unreadable_page_does_not_count_as_covered() {
+        // THE point of the rule. A page yields no new cells when compaction
+        // covered them, and equally when not one event on it could be
+        // decrypted. Stopping on the second brings the workspace up with holes
+        // and reports nothing — the failure this guard exists to prevent, and
+        // the reason the condition is not simply `page_new_cells == 0`.
+        assert!(!coverage_reached(true, 0, 1, true));
+        assert!(!coverage_reached(true, 0, 500, true));
+    }
+
+    #[test]
+    fn a_page_that_added_cells_never_stops_the_walk() {
+        assert!(!coverage_reached(true, 1, 0, true));
+        // Not even when it also had unreadable events on it.
+        assert!(!coverage_reached(true, 1, 1, true));
+    }
+
+    #[test]
+    fn an_empty_first_page_cannot_end_a_walk_before_it_starts() {
+        assert!(!coverage_reached(true, 0, 0, false));
+    }
+
+    #[test]
+    fn a_full_gather_never_takes_the_shortcut() {
+        // The integrity check compares a complete re-gather against local
+        // state; stopping early would make it agree with itself by
+        // construction and prove nothing.
+        assert!(!coverage_reached(false, 0, 0, true));
+    }
+
+    // ── backfill_caught_up (the REORDER_GRACE_MS boundary) ──────────────────
+
+    #[test]
+    fn a_page_well_past_the_marker_stops_an_incremental_walk() {
+        let marker = 1_000_000;
+        assert!(backfill_caught_up(
+            true,
+            Some(marker - REORDER_GRACE_MS - 1),
+            marker
+        ));
+    }
+
+    #[test]
+    fn the_grace_margin_is_exclusive_at_its_boundary() {
+        // Exactly one margin behind the marker must NOT stop the walk. This is
+        // the line that lost 8 events in production on 2026-07-25: stream order
+        // and origin_server_ts disagree under Synapse workers, and an
+        // off-by-one here truncates the walk permanently — the running marker
+        // advances past the skipped events, so no later start refetches them.
+        let marker = 1_000_000;
+        assert!(!backfill_caught_up(
+            true,
+            Some(marker - REORDER_GRACE_MS),
+            marker
+        ));
+        assert!(!backfill_caught_up(true, Some(marker), marker));
+    }
+
+    #[test]
+    fn a_full_gather_never_stops_at_the_marker() {
+        assert!(!backfill_caught_up(false, Some(0), u64::MAX));
+    }
+
+    #[test]
+    fn a_page_with_no_readable_timestamp_cannot_justify_stopping() {
+        assert!(!backfill_caught_up(true, None, u64::MAX));
+    }
+
+    #[test]
+    fn an_early_epoch_page_does_not_underflow_into_stopping() {
+        // saturating_add, not add: a timestamp near zero with the margin added
+        // must stay comparable rather than wrapping.
+        assert!(backfill_caught_up(true, Some(0), u64::MAX));
+        assert!(!backfill_caught_up(true, Some(u64::MAX), 0));
+    }
 }
 
 /// What a history walk actually did — returned rather than only logged,
