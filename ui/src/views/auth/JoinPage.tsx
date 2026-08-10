@@ -80,8 +80,16 @@ export function JoinPage() {
   // one, but an account whose session has not finished restoring must WAIT
   // rather than be told to sign in — that would send a signed-in user back to
   // the sign-in page for a second or two on every follow.
-  const { username, accounts, matrixSession, knockWithToken, listInvitedRooms, acceptInvite } =
-    useAuth()
+  const {
+    username,
+    accounts,
+    matrixSession,
+    knockWithToken,
+    listInvitedRooms,
+    acceptInvite,
+    startSessionSync,
+    stopSessionSync,
+  } = useAuth()
 
   const [phase, setPhase] = useState<Phase>('reading')
   const [error, setError] = useState<string | null>(null)
@@ -143,6 +151,18 @@ export function JoinPage() {
     setPhase('joined')
     navigate(`/workspace/${encodeURIComponent(invite.roomId)}`, { replace: true })
   }, [invite, listInvitedRooms, acceptInvite, navigate])
+
+  // Sync while we wait, or nothing ever arrives.
+  //
+  // `listInvitedRooms` reads the SDK's local store, and only the session sync
+  // loop fills it. Every other page that shows invitations starts that loop;
+  // this one did not, so being admitted changed nothing on screen and the
+  // invitee waited forever next to a workspace they had already been let into.
+  useEffect(() => {
+    if (phase !== 'waiting') return
+    startSessionSync()
+    return () => stopSessionSync()
+  }, [phase, startSessionSync, stopSessionSync])
 
   // Poll for the invite an admin's client produces when it admits us.
   useEffect(() => {

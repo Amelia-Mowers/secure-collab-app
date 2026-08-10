@@ -19,6 +19,17 @@ import { useEffect, useRef } from 'react'
  * admins would make links silently stop working for teams whose admin is on
  * holiday, which is the failure this whole design is trying to avoid.
  */
+/**
+ * How often to look for knocks, on top of reacting to sync.
+ *
+ * Reacting to `syncCount` alone is not enough: that counter tracks WORKSPACE
+ * DATA, and a knock is a membership state event, which changes no cell. A link
+ * followed while the inviter sat on an idle workspace would therefore wait for
+ * the next unrelated edit — indistinguishable, from the invitee's side, from
+ * nobody being online at all.
+ */
+const POLL_MS = 8000
+
 export function useAutoAdmit(workspace: any, syncCount?: number) {
   // Never admit the same person twice for one token. Two ticks can overlap when
   // a sync lands mid-flight, and the second would count a second use against a
@@ -30,12 +41,13 @@ export function useAutoAdmit(workspace: any, syncCount?: number) {
     if (!workspace) return
     if (typeof workspace.listKnocks !== 'function') return
     if (typeof workspace.admitKnock !== 'function') return
-    if (running.current) return
-
     let cancelled = false
-    running.current = true
 
-    void (async () => {
+    const sweep = async () => {
+      // One sweep at a time: two overlapping ticks would both see the same
+      // knock, and the second would count a second use against a limited link.
+      if (running.current) return
+      running.current = true
       try {
         const knocks = JSON.parse(await workspace.listKnocks()) as Array<{
           userId: string
@@ -64,10 +76,14 @@ export function useAutoAdmit(workspace: any, syncCount?: number) {
       } finally {
         running.current = false
       }
-    })()
+    }
+
+    void sweep()
+    const handle = setInterval(() => void sweep(), POLL_MS)
 
     return () => {
       cancelled = true
+      clearInterval(handle)
     }
   }, [workspace, syncCount])
 }

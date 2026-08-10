@@ -31,7 +31,7 @@ import { computeReorderWrites, type OrderRow } from '@/fractionalIndex'
 import { TrialBadge } from '@/components/TrialStatus'
 import { buildTableDefinition, type TableTemplate } from '@/tableTemplates'
 import './Sidebar.css'
-import { ROLE_LABELS, type Role, type WorkspaceMember } from '@/lib/roles'
+import { ROLE_LABELS, canAdminister, type Role, type WorkspaceMember } from '@/lib/roles'
 import { useRole } from '@/hooks/useRole'
 import { LeaveWorkspaceModal } from './LeaveWorkspaceModal'
 
@@ -161,9 +161,13 @@ const UserIcon = () => (
 interface ShareModalProps {
   workspace: any
   onClose: () => void
+  /** Whether this member may manage the workspace. Minting a link writes room
+   *  state, which the homeserver refuses below admin — so without this the
+   *  button would be offered to everyone and fail only on click. */
+  canManage: boolean
 }
 
-function ShareModal({ workspace, onClose }: ShareModalProps) {
+export function ShareModal({ workspace, onClose, canManage }: ShareModalProps) {
   const [userId, setUserId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -172,7 +176,8 @@ function ShareModal({ workspace, onClose }: ShareModalProps) {
   const [linkLoading, setLinkLoading] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  const canLink = !!workspace && typeof workspace.createInviteLink === 'function'
+  const canLink =
+    canManage && !!workspace && typeof workspace.createInviteLink === 'function'
 
   /** Mint a link. The token comes back once and is not recoverable — the room
    *  stores a hash, because room state is not encrypted. */
@@ -1284,6 +1289,7 @@ export function Sidebar({
       {showShareModal && workspace && (
         <ShareModal
           workspace={workspace}
+          canManage={canAdminister(myRole)}
           onClose={() => { setShowShareModal(false); loadMembers() }}
         />
       )}
