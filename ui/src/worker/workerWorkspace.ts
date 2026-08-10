@@ -254,6 +254,12 @@ export function createWorkerWorkspace(
       call('previewCsvImport', tableId, csv, sample, overridesJson) as Promise<string>,
     previewFormula: (tableId, formula, limit) =>
       call('previewFormula', tableId, formula, limit) as Promise<string>,
+    createInviteLink: (appBaseUrl, validForMs, usesAllowed) =>
+      call('createInviteLink', appBaseUrl, validForMs, usesAllowed) as Promise<string>,
+    listInviteLinks: () => call('listInviteLinks') as Promise<string>,
+    revokeInviteLink: tokenId => call('revokeInviteLink', tokenId) as Promise<void>,
+    listKnocks: () => call('listKnocks') as Promise<string>,
+    admitKnock: (userId, token) => call('admitKnock', userId, token) as Promise<void>,
     snapshot: () => call('snapshot') as Promise<string>,
 
     // ── Session-ish passthroughs ──────────────────────────────────────────────

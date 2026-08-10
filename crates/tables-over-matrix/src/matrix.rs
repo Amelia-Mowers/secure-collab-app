@@ -523,6 +523,19 @@ mod matrix_impl {
     }
 
     impl MatrixClient {
+        /// Wrap an SDK client and room that already exist.
+        ///
+        /// The wasm bridge holds both and must not build a second session, so
+        /// this is how it reaches the shared implementation of things like
+        /// invite links rather than growing its own copy — which is the seam
+        /// that once left the demo silently without import/export.
+        pub fn from_parts(client: Client, room_id: OwnedRoomId) -> Self {
+            Self {
+                client,
+                room_id: Some(room_id),
+            }
+        }
+
         /// Create a new Matrix client for the given homeserver.
         pub async fn new(homeserver_url: &str) -> Result<Self> {
             let client = Client::builder()
@@ -924,6 +937,220 @@ mod matrix_impl {
                 BackupState::Enabled
             )
         }
+        // ── Invite links (issue 5e362d42) ───────────────────────────────
+        //
+        // A Matrix invite names a user, and the holder of a link has no user id
+        // until they sign up — so the link cannot be an invite. Instead the
+        // room accepts KNOCKS, the link carries a secret, and an admin's client
+        // verifies the secret and admits the knocker. The secret and its rules
+        // live in `crate::invite`, with no Matrix in them; this is the I/O.
+
+        /// Allow knocking on this room, so a link-holder has a door to knock
+        /// on at all. Rooms are created invite-only, which is the right default
+        /// and stays it — this is called only when a link is minted.
+        ///
+        /// Needs room version 7 or later. Synapse's default has been past that
+        /// for years, but a room created by another client on an older version
+        /// will refuse, and the error says so rather than leaving a link that
+        /// silently cannot be used.
+        pub async fn allow_knocking(&self) -> Result<()> {
+            use matrix_sdk::ruma::events::room::join_rules::{JoinRule, RoomJoinRulesEventContent};
+            let room = self.get_room()?;
+            room.send_state_event(RoomJoinRulesEventContent::new(JoinRule::Knock))
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "could not open this workspace to invite links (a room created \
+                         on an old room version cannot accept knocks): {e}"
+                    )
+                })?;
+            Ok(())
+        }
+
+        /// Mint an invite link and publish the state event that validates it.
+        ///
+        /// Returns the secret, which is not recoverable afterwards: what is
+        /// stored is a hash. Losing it means minting another link, which is the
+        /// correct trade — the alternative is a copy of the secret sitting in
+        /// unencrypted room state where the server can read it.
+        pub async fn create_invite_link(
+            &self,
+            now_ms: u64,
+            valid_for_ms: Option<u64>,
+            uses_allowed: Option<u32>,
+        ) -> Result<crate::invite::NewInvite> {
+            let creator = self
+                .client
+                .user_id()
+                .map(|u| u.to_string())
+                .unwrap_or_default();
+            let new = crate::invite::mint(creator, now_ms, valid_for_ms, uses_allowed)
+                .map_err(|e| anyhow::anyhow!("could not generate an invite token: {e}"))?;
+
+            self.allow_knocking().await?;
+
+            let room = self.get_room()?;
+            room.send_state_event_for_key(
+                &new.token_id,
+                InviteLinkEventContent {
+                    invite: new.content.clone(),
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("could not publish the invite link: {e}"))?;
+
+            Ok(new)
+        }
+
+        /// Every invite link on this room, live or not, as `(token_id,
+        /// content)`. Revoked and expired links are included: an admin needs to
+        /// see that a link existed to reason about who got in.
+        pub async fn list_invite_links(
+            &self,
+        ) -> Result<Vec<(String, crate::invite::InviteContent)>> {
+            use matrix_sdk::ruma::events::StateEventType;
+            let room = self.get_room()?;
+            let events = room
+                .get_state_events(StateEventType::from(crate::invite::INVITE_STATE_TYPE))
+                .await
+                .map_err(|e| anyhow::anyhow!("could not read invite links: {e}"))?;
+
+            let mut out = Vec::new();
+            for raw in events {
+                // `get_state_events` yields sync OR stripped state depending on
+                // whether we have joined; both carry the same JSON, so unwrap
+                // the enum rather than handling two shapes downstream.
+                let json = match &raw {
+                    matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Sync(e) => {
+                        e.json().get().to_owned()
+                    }
+                    matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Stripped(e) => {
+                        e.json().get().to_owned()
+                    }
+                };
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&json) else {
+                    continue;
+                };
+                let Some(state_key) = value.get("state_key").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                // A redacted or half-written event is skipped rather than
+                // failing the list: one bad link must not hide the others.
+                if let Some(content) =
+                    value
+                        .get("content")
+                        .and_then(|c| c.get("invite"))
+                        .and_then(|i| {
+                            serde_json::from_value::<crate::invite::InviteContent>(i.clone()).ok()
+                        })
+                {
+                    out.push((state_key.to_string(), content));
+                }
+            }
+            Ok(out)
+        }
+
+        /// Find the link a token belongs to, without validating it.
+        async fn find_invite_link(
+            &self,
+            token: &str,
+        ) -> Result<Option<(String, crate::invite::InviteContent)>> {
+            let id = crate::invite::token_id(token);
+            Ok(self
+                .list_invite_links()
+                .await?
+                .into_iter()
+                .find(|(state_key, _)| *state_key == id))
+        }
+
+        /// Stop a link admitting anyone else.
+        ///
+        /// The state event is rewritten rather than removed: an admin must be
+        /// able to tell a revoked link from one that never existed.
+        pub async fn revoke_invite_link(&self, token_id: &str) -> Result<()> {
+            let room = self.get_room()?;
+            let (_, mut content) = self
+                .list_invite_links()
+                .await?
+                .into_iter()
+                .find(|(key, _)| key == token_id)
+                .ok_or_else(|| anyhow::anyhow!("no such invite link"))?;
+            content.revoked = true;
+            room.send_state_event_for_key(token_id, InviteLinkEventContent { invite: content })
+                .await
+                .map_err(|e| anyhow::anyhow!("could not revoke the invite link: {e}"))?;
+            Ok(())
+        }
+
+        /// Knock on a room, presenting the link's token as the reason.
+        ///
+        /// The reason is visible to the homeserver. That is not the exposure it
+        /// appears to be: the server already controls membership outright, so it
+        /// never needed the token to add a member. See `crate::invite`.
+        pub async fn knock_with_token(&self, room_id: &str, token: &str) -> Result<()> {
+            use matrix_sdk::ruma::OwnedRoomOrAliasId;
+            let target: OwnedRoomOrAliasId = room_id
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid room id: {room_id}"))?;
+            self.client
+                .knock(target, Some(token.to_string()), Vec::new())
+                .await
+                .map_err(|e| anyhow::anyhow!("could not request access: {e}"))?;
+            Ok(())
+        }
+
+        /// Everyone currently knocking, as `(user_id, reason)`.
+        ///
+        /// The reason carries the token they presented, which is what lets an
+        /// admin's client admit them without asking anybody anything.
+        pub async fn list_knocks(&self) -> Result<Vec<(String, Option<String>)>> {
+            let room = self.get_room()?;
+            let members = room
+                .members(matrix_sdk::RoomMemberships::KNOCK)
+                .await
+                .map_err(|e| anyhow::anyhow!("could not read knocks: {e}"))?;
+            Ok(members
+                .into_iter()
+                .map(|m| {
+                    let reason = m.event().reason().map(|r| r.to_string());
+                    (m.user_id().to_string(), reason)
+                })
+                .collect())
+        }
+
+        /// Admit a knocker if their token is valid, and count the use.
+        ///
+        /// Admitting is an ordinary invite, which is what lets the new member
+        /// read history: the invite carries shared history, so the keys come
+        /// from this client rather than from the server.
+        ///
+        /// The use count is written BEFORE the invite. Reversed, a client that
+        /// died between the two would have admitted someone on a single-use
+        /// link that still reads as unused.
+        pub async fn admit_knock(&self, user_id: &str, token: &str, now_ms: u64) -> Result<()> {
+            use matrix_sdk::ruma::OwnedUserId;
+
+            let (token_id, mut content) = self
+                .find_invite_link(token)
+                .await?
+                .ok_or(crate::invite::InviteError::NotFound)?;
+            crate::invite::verify(&content, token, now_ms)?;
+
+            let user: OwnedUserId = user_id
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid user id: {user_id}"))?;
+
+            let room = self.get_room()?;
+            content.uses = content.uses.saturating_add(1);
+            room.send_state_event_for_key(&token_id, InviteLinkEventContent { invite: content })
+                .await
+                .map_err(|e| anyhow::anyhow!("could not record the invite use: {e}"))?;
+
+            room.invite_user_by_id(&user)
+                .await
+                .map_err(|e| anyhow::anyhow!("could not admit {user_id}: {e}"))?;
+            Ok(())
+        }
     }
 
     // ── Native CLI support: persistent SQLite store + session save/restore ──
@@ -1261,217 +1488,6 @@ mod matrix_impl {
             Ok(room.room_id().to_string())
         }
 
-        // ── Invite links (issue 5e362d42) ───────────────────────────────
-        //
-        // A Matrix invite names a user, and the holder of a link has no user id
-        // until they sign up — so the link cannot be an invite. Instead the
-        // room accepts KNOCKS, the link carries a secret, and an admin's client
-        // verifies the secret and admits the knocker. The secret and its rules
-        // live in `crate::invite`, with no Matrix in them; this is the I/O.
-
-        /// Allow knocking on this room, so a link-holder has a door to knock
-        /// on at all. Rooms are created invite-only, which is the right default
-        /// and stays it — this is called only when a link is minted.
-        ///
-        /// Needs room version 7 or later. Synapse's default has been past that
-        /// for years, but a room created by another client on an older version
-        /// will refuse, and the error says so rather than leaving a link that
-        /// silently cannot be used.
-        pub async fn allow_knocking(&self) -> Result<()> {
-            use matrix_sdk::ruma::events::room::join_rules::{JoinRule, RoomJoinRulesEventContent};
-            let room = self.get_room()?;
-            room.send_state_event(RoomJoinRulesEventContent::new(JoinRule::Knock))
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "could not open this workspace to invite links (a room created \
-                         on an old room version cannot accept knocks): {e}"
-                    )
-                })?;
-            Ok(())
-        }
-
-        /// Mint an invite link and publish the state event that validates it.
-        ///
-        /// Returns the secret, which is not recoverable afterwards: what is
-        /// stored is a hash. Losing it means minting another link, which is the
-        /// correct trade — the alternative is a copy of the secret sitting in
-        /// unencrypted room state where the server can read it.
-        pub async fn create_invite_link(
-            &self,
-            now_ms: u64,
-            valid_for_ms: Option<u64>,
-            uses_allowed: Option<u32>,
-        ) -> Result<crate::invite::NewInvite> {
-            let creator = self.user_id().unwrap_or_default();
-            let new = crate::invite::mint(creator, now_ms, valid_for_ms, uses_allowed)
-                .map_err(|e| anyhow::anyhow!("could not generate an invite token: {e}"))?;
-
-            self.allow_knocking().await?;
-
-            let room = self.get_room()?;
-            room.send_state_event_for_key(
-                &new.token_id,
-                InviteLinkEventContent {
-                    invite: new.content.clone(),
-                },
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("could not publish the invite link: {e}"))?;
-
-            Ok(new)
-        }
-
-        /// Every invite link on this room, live or not, as `(token_id,
-        /// content)`. Revoked and expired links are included: an admin needs to
-        /// see that a link existed to reason about who got in.
-        pub async fn list_invite_links(
-            &self,
-        ) -> Result<Vec<(String, crate::invite::InviteContent)>> {
-            use matrix_sdk::ruma::events::StateEventType;
-            let room = self.get_room()?;
-            let events = room
-                .get_state_events(StateEventType::from(crate::invite::INVITE_STATE_TYPE))
-                .await
-                .map_err(|e| anyhow::anyhow!("could not read invite links: {e}"))?;
-
-            let mut out = Vec::new();
-            for raw in events {
-                // `get_state_events` yields sync OR stripped state depending on
-                // whether we have joined; both carry the same JSON, so unwrap
-                // the enum rather than handling two shapes downstream.
-                let json = match &raw {
-                    matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Sync(e) => {
-                        e.json().get().to_owned()
-                    }
-                    matrix_sdk::deserialized_responses::RawAnySyncOrStrippedState::Stripped(e) => {
-                        e.json().get().to_owned()
-                    }
-                };
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(&json) else {
-                    continue;
-                };
-                let Some(state_key) = value.get("state_key").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                // A redacted or half-written event is skipped rather than
-                // failing the list: one bad link must not hide the others.
-                if let Some(content) =
-                    value
-                        .get("content")
-                        .and_then(|c| c.get("invite"))
-                        .and_then(|i| {
-                            serde_json::from_value::<crate::invite::InviteContent>(i.clone()).ok()
-                        })
-                {
-                    out.push((state_key.to_string(), content));
-                }
-            }
-            Ok(out)
-        }
-
-        /// Find the link a token belongs to, without validating it.
-        async fn find_invite_link(
-            &self,
-            token: &str,
-        ) -> Result<Option<(String, crate::invite::InviteContent)>> {
-            let id = crate::invite::token_id(token);
-            Ok(self
-                .list_invite_links()
-                .await?
-                .into_iter()
-                .find(|(state_key, _)| *state_key == id))
-        }
-
-        /// Stop a link admitting anyone else.
-        ///
-        /// The state event is rewritten rather than removed: an admin must be
-        /// able to tell a revoked link from one that never existed.
-        pub async fn revoke_invite_link(&self, token_id: &str) -> Result<()> {
-            let room = self.get_room()?;
-            let (_, mut content) = self
-                .list_invite_links()
-                .await?
-                .into_iter()
-                .find(|(key, _)| key == token_id)
-                .ok_or_else(|| anyhow::anyhow!("no such invite link"))?;
-            content.revoked = true;
-            room.send_state_event_for_key(token_id, InviteLinkEventContent { invite: content })
-                .await
-                .map_err(|e| anyhow::anyhow!("could not revoke the invite link: {e}"))?;
-            Ok(())
-        }
-
-        /// Knock on a room, presenting the link's token as the reason.
-        ///
-        /// The reason is visible to the homeserver. That is not the exposure it
-        /// appears to be: the server already controls membership outright, so it
-        /// never needed the token to add a member. See `crate::invite`.
-        pub async fn knock_with_token(&self, room_id: &str, token: &str) -> Result<()> {
-            use matrix_sdk::ruma::OwnedRoomOrAliasId;
-            let target: OwnedRoomOrAliasId = room_id
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("invalid room id: {room_id}"))?;
-            self.client
-                .knock(target, Some(token.to_string()), Vec::new())
-                .await
-                .map_err(|e| anyhow::anyhow!("could not request access: {e}"))?;
-            Ok(())
-        }
-
-        /// Everyone currently knocking, as `(user_id, reason)`.
-        ///
-        /// The reason carries the token they presented, which is what lets an
-        /// admin's client admit them without asking anybody anything.
-        pub async fn list_knocks(&self) -> Result<Vec<(String, Option<String>)>> {
-            let room = self.get_room()?;
-            let members = room
-                .members(matrix_sdk::RoomMemberships::KNOCK)
-                .await
-                .map_err(|e| anyhow::anyhow!("could not read knocks: {e}"))?;
-            Ok(members
-                .into_iter()
-                .map(|m| {
-                    let reason = m.event().reason().map(|r| r.to_string());
-                    (m.user_id().to_string(), reason)
-                })
-                .collect())
-        }
-
-        /// Admit a knocker if their token is valid, and count the use.
-        ///
-        /// Admitting is an ordinary invite, which is what lets the new member
-        /// read history: the invite carries shared history, so the keys come
-        /// from this client rather than from the server.
-        ///
-        /// The use count is written BEFORE the invite. Reversed, a client that
-        /// died between the two would have admitted someone on a single-use
-        /// link that still reads as unused.
-        pub async fn admit_knock(&self, user_id: &str, token: &str, now_ms: u64) -> Result<()> {
-            use matrix_sdk::ruma::OwnedUserId;
-
-            let (token_id, mut content) = self
-                .find_invite_link(token)
-                .await?
-                .ok_or(crate::invite::InviteError::NotFound)?;
-            crate::invite::verify(&content, token, now_ms)?;
-
-            let user: OwnedUserId = user_id
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("invalid user id: {user_id}"))?;
-
-            let room = self.get_room()?;
-            content.uses = content.uses.saturating_add(1);
-            room.send_state_event_for_key(&token_id, InviteLinkEventContent { invite: content })
-                .await
-                .map_err(|e| anyhow::anyhow!("could not record the invite use: {e}"))?;
-
-            room.invite_user_by_id(&user)
-                .await
-                .map_err(|e| anyhow::anyhow!("could not admit {user_id}: {e}"))?;
-            Ok(())
-        }
-
         /// List joined rooms tagged as TideWork workspaces. Requires a prior
         /// sync so the SDK knows the joined room list. Returns `(room_id, name)`.
         pub async fn list_workspaces(&self) -> Result<Vec<WorkspaceInfo>> {
@@ -1776,7 +1792,10 @@ mod matrix_impl {
 
     /// One invite link's validity, as room state. Carries a HASH of the token,
     /// never the token — room state is not encrypted (see `crate::invite`).
-    #[cfg(feature = "matrix-native")]
+    ///
+    /// NOT gated to `matrix-native`, unlike the workspace marker beside it:
+    /// the browser needs invite links too, and a second copy over there is the
+    /// seam that left the demo silently without import/export.
     #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, EventContent)]
     #[ruma_event(type = "io.tidework.invite", kind = State, state_key_type = String)]
     pub struct InviteLinkEventContent {
