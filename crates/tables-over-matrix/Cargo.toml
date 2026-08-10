@@ -53,6 +53,10 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"],
 
 # Additional dependencies
 indexmap = { version = "2.1", features = ["serde"] }
+# Invite-link tokens are stored in room state as a SHA-256, never in the clear
+# (see src/invite.rs). Already in the tree via the SDK's crypto stack, so this
+# unifies onto that version rather than adding a crate.
+sha2 = "0.10"
 url = "2.5"
 
 [dev-dependencies]

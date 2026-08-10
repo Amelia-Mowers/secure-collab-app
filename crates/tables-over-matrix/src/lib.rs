@@ -32,6 +32,7 @@
 pub mod cell;
 pub mod coldstart;
 pub mod compaction;
+pub mod invite;
 pub mod table;
 
 #[cfg(feature = "matrix")]
