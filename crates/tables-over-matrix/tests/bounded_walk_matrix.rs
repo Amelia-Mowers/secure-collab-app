@@ -141,3 +141,16 @@ async fn test_exhaustive_walk_reads_everything() {
         CELLS * ROUNDS
     );
 }
+
+// The third rule the coverage stop depends on — that an UNREADABLE page must
+// not count as a covered one — is tested in `crate::coverage_reached` rather
+// than here.
+//
+// It was attempted here first and could not be built honestly. Reaching a page
+// that is unreadable RATHER than covered needs a device holding room keys for
+// part of a room and not the rest, with the unreadable part NEWER than the
+// readable part. Joining part-way gives the opposite order: the walk correctly
+// stops on the readable pages before it ever reaches the older unreadable ones,
+// so the fixture produced `undecryptable: 0, stopped: "covered"` and proved
+// nothing. Forcing it would mean rotating a Megolm session out from under a
+// joined member — a great deal of crypto to arrange for a three-term predicate.

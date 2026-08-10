@@ -1721,18 +1721,17 @@ mod matrix_impl {
                     stop_reason = "reached marker";
                     break;
                 }
-                // Coverage stop: this page told us nothing new, so compaction
-                // has already put a current value for every live cell in the
-                // slice we have walked. Requires having seen something at all,
-                // so an empty first page cannot end the walk immediately.
-                // The undecryptable guard is the difference between "compaction
-                // already covered everything" and "we could not read this page".
-                // Both look like zero new cells; only the first means we are done.
-                if stop_when_covered
-                    && page_new_cells == 0
-                    && page_undecryptable == 0
-                    && !seen_cells.is_empty()
-                {
+                // Coverage stop. The rule lives in `crate::coverage_reached`,
+                // where it can be tested without a homeserver — building a page
+                // that is unreadable RATHER than covered needs a device holding
+                // keys for some of a room and not the rest, which is a great
+                // deal of crypto to arrange for a three-term predicate.
+                if crate::coverage_reached(
+                    stop_when_covered,
+                    page_new_cells,
+                    page_undecryptable,
+                    !seen_cells.is_empty(),
+                ) {
                     stop_reason = "covered";
                     break;
                 }
